@@ -30,11 +30,20 @@ const DEFAULT_CONFIG: AgentConfig = {
  * Does NOT create the directory — the caller (or startup commands) can mkdir.
  */
 export function resolveAgentHome(): string {
+	return resolveAgentHomeDetailed().path;
+}
+
+/**
+ * Resolve $AGENT_HOME, reporting whether it came from the env or the default.
+ * The auto-scaffolder uses `explicit` to decide whether it's safe to create
+ * files under the resolved path.
+ */
+export function resolveAgentHomeDetailed(): { path: string; explicit: boolean } {
 	const fromEnv = process.env.AGENT_HOME;
 	if (fromEnv && fromEnv.trim()) {
-		return resolve(fromEnv);
+		return { path: resolve(fromEnv), explicit: true };
 	}
-	return resolve(join(homedir(), ".agent"));
+	return { path: resolve(join(homedir(), ".agent")), explicit: false };
 }
 
 /**
