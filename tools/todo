@@ -1,0 +1,963 @@
+#!/usr/bin/env python3
+# ---
+# name: todo
+# brief: Task tracking across personal and project boards
+# description: |
+#   Unified task tracker. Manages central tasks.yml and project todo.yml files.
+#   Supports status lifecycle, dispatch (claim/release), filtering, and
+#   cross-project views. See docs/todo-system.md for the full spec.
+# arguments: "[add|list|show|done|drop|claim|release|edit|review|summary] [args] [options]"
+# ---
+#
+# Usage:
+#   todo                                    Show actionable dashboard
+#   todo add "text" [--project P] [--priority high] [--owner kira] [--due DATE] [--source kira] [--tags t1,t2]
+#   todo list [--project P] [--status S] [--owner O] [--priority P] [--stale N] [--due-soon N] [--tags t1,t2]
+#   todo show <id> [--project P]
+#   todo drop <id> [--project P] [--reason "..."]
+#   todo backlog <id> [--project P]         Move task to backlog (kept but hidden from dashboard)
+#   todo claim <id> [--project P]
+#   todo release <id> [--project P]
+#   todo edit <id> [--project P] --<field> <value>
+#   todo clean [--archive-after N] [--stale N]  Archive old done/dropped, flag stale
+#   todo search <query> [--archive]          Search tasks by text (active only; --archive includes archive)
+#   todo review                             Stale/due items for review
+#   todo summary                            Compact output for orientation
+
+import fcntl
+import os
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import yaml
+
+AGENT_HOME = Path(os.environ.get("AGENT_HOME", Path.home() / ".agent"))
+CENTRAL_PATH = AGENT_HOME / "tasks.yml"
+PROJECTS_DIR = AGENT_HOME / "projects"
+AGENT_ID = os.environ.get("AGENT_SESSION_ID", os.environ.get("AGENT_ID", ""))
+
+VALID_STATUSES = {"open", "ready", "claimed", "in-progress", "done", "dropped", "blocked", "backlog"}
+VALID_PRIORITIES = {"high", "normal", "low"}
+VALID_OWNERS = {"beth", "kira", "any"}
+
+TODAY = date.today()
+
+
+# ---------------------------------------------------------------------------
+# YAML I/O with file locking
+# ---------------------------------------------------------------------------
+
+def load(path: Path) -> dict:
+    if not path.exists():
+        return {"next_id": 1, "tasks": []}
+    text = path.read_text()
+    data = yaml.safe_load(text)
+    if not data:
+        return {"next_id": 1, "tasks": []}
+    data.setdefault("next_id", 1)
+    data.setdefault("tasks", [])
+    return data
+
+
+def save(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False,
+                  allow_unicode=True, width=120)
+
+
+def atomic_update(path: Path, updater) -> object:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        save(path, {"next_id": 1, "tasks": []})
+
+    with open(path, "r+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            data = yaml.safe_load(f.read())
+            if not data:
+                data = {"next_id": 1, "tasks": []}
+            data.setdefault("next_id", 1)
+            data.setdefault("tasks", [])
+            result = updater(data)
+            f.seek(0)
+            f.truncate()
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False,
+                      allow_unicode=True, width=120)
+            return result
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+# ---------------------------------------------------------------------------
+# Path resolution
+# ---------------------------------------------------------------------------
+
+def resolve_target(project: str | None) -> tuple[Path, str | None]:
+    """Return (file_path, project_name) for the target todo file."""
+    if project:
+        return PROJECTS_DIR / project / "todo.yml", project
+    return CENTRAL_PATH, None
+
+
+def find_task(task_id: str, project: str | None = None):
+    """Find a task by ID, optionally scoped to a project.
+
+    task_id can be "42" or "kiln#42". Returns (path, project, task) or raises.
+    """
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+
+    try:
+        tid = int(task_id)
+    except ValueError:
+        print(f"Error: invalid task ID '{task_id}'", file=sys.stderr)
+        sys.exit(1)
+
+    if project:
+        path = PROJECTS_DIR / project / "todo.yml"
+        data = load(path)
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                return path, project, t
+        print(f"Error: task {project}#{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    # Check central first
+    data = load(CENTRAL_PATH)
+    for t in data["tasks"]:
+        if t["id"] == tid:
+            return CENTRAL_PATH, None, t
+
+    # Check all projects
+    if PROJECTS_DIR.exists():
+        for pdir in sorted(PROJECTS_DIR.iterdir()):
+            todo = pdir / "todo.yml"
+            if todo.exists():
+                pdata = load(todo)
+                for t in pdata["tasks"]:
+                    if t["id"] == tid:
+                        return todo, pdir.name, t
+
+    print(f"Error: task #{tid} not found", file=sys.stderr)
+    sys.exit(1)
+
+
+def all_todo_files() -> list[tuple[Path, str | None]]:
+    """Return all (todo_path, project_name) pairs."""
+    files = []
+    if CENTRAL_PATH.exists():
+        files.append((CENTRAL_PATH, None))
+    if PROJECTS_DIR.exists():
+        for pdir in sorted(PROJECTS_DIR.iterdir()):
+            todo = pdir / "todo.yml"
+            if todo.exists():
+                files.append((todo, pdir.name))
+    return files
+
+
+def archive_path_for(todo_path: Path) -> Path:
+    """Return the archive file path for a given todo file."""
+    if todo_path.name == "tasks.yml":
+        return todo_path.parent / "tasks.archive.yml"
+    return todo_path.parent / "todo.archive.yml"
+
+
+def all_tasks() -> list[tuple[str | None, dict]]:
+    """Return all active tasks as (project, task) tuples."""
+    results = []
+    for path, project in all_todo_files():
+        data = load(path)
+        for t in data["tasks"]:
+            results.append((project, t))
+    return results
+
+
+def all_archive_tasks() -> list[tuple[str | None, dict]]:
+    """Return all archived tasks as (project, task) tuples."""
+    results = []
+    for todo_path, project in all_todo_files():
+        arch = archive_path_for(todo_path)
+        if arch.exists():
+            data = load(arch)
+            for t in data["tasks"]:
+                results.append((project, t))
+    # Also check for archive files without a matching active file
+    if CENTRAL_PATH.parent.exists():
+        arch = CENTRAL_PATH.parent / "tasks.archive.yml"
+        if arch.exists() and not CENTRAL_PATH.exists():
+            data = load(arch)
+            for t in data["tasks"]:
+                results.append((None, t))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+def task_ref(project: str | None, task: dict) -> str:
+    if project:
+        return f"{project}#{task['id']}"
+    return f"#{task['id']}"
+
+
+def format_due(task: dict) -> str:
+    due = task.get("due")
+    if not due:
+        return ""
+    if isinstance(due, str):
+        due = date.fromisoformat(due)
+    delta = (due - TODAY).days
+    if delta < 0:
+        return f"overdue {-delta}d"
+    if delta == 0:
+        return "due today"
+    if delta == 1:
+        return "due tomorrow"
+    return f"due in {delta}d"
+
+
+def format_task_line(project: str | None, task: dict, show_status: bool = False) -> str:
+    ref = task_ref(project, task)
+    text = task["text"]
+    parts = [f"  {ref:<14} {text}"]
+
+    due_str = format_due(task)
+    if due_str:
+        parts.append(f"  ({due_str})")
+
+    owner = task.get("owner", "")
+    assignee = task.get("assignee", "")
+    if show_status:
+        parts.append(f"  [{task.get('status', '?')}]")
+    if assignee:
+        parts.append(f"  {owner} ({assignee})")
+    elif owner:
+        parts.append(f"  {owner}")
+
+    return "".join(parts)
+
+
+def format_task_detail(project: str | None, task: dict) -> str:
+    ref = task_ref(project, task)
+    lines = [f"{ref}: {task['text']}", ""]
+    fields = ["status", "priority", "owner", "assignee", "project",
+              "created", "touched", "due", "source", "tags"]
+    for f in fields:
+        v = task.get(f)
+        if v is not None and v != "" and v != []:
+            lines.append(f"  {f}: {v}")
+    notes = task.get("notes", "")
+    if notes:
+        lines.append(f"\n  Notes:\n  {notes.strip()}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+
+def parse_args(args: list[str]) -> tuple[str, list[str], dict[str, str]]:
+    """Parse into (action, positional_args, flags)."""
+    if not args:
+        return "dashboard", [], {}
+
+    action = args[0]
+    positional = []
+    flags = {}
+    i = 1
+    while i < len(args):
+        if args[i].startswith("--"):
+            key = args[i][2:]
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                flags[key] = args[i + 1]
+                i += 2
+            else:
+                flags[key] = "true"
+                i += 1
+        else:
+            positional.append(args[i])
+            i += 1
+
+    return action, positional, flags
+
+
+def parse_date(s: str) -> str:
+    """Parse a date string. Supports ISO format and relative dates."""
+    s = s.lower().strip()
+    if s == "today":
+        return str(TODAY)
+    if s == "tomorrow":
+        return str(TODAY + timedelta(days=1))
+    if s in ("next week", "nextweek"):
+        return str(TODAY + timedelta(days=7))
+    # Try weekday names
+    weekdays = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+                "friday": 4, "saturday": 5, "sunday": 6}
+    if s in weekdays:
+        target = weekdays[s]
+        days_ahead = target - TODAY.weekday()
+        if days_ahead <= 0:
+            days_ahead += 7
+        return str(TODAY + timedelta(days=days_ahead))
+    # ISO format passthrough
+    return s
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
+
+def cmd_dashboard():
+    """Smart default view — what's actionable now."""
+    tasks = all_tasks()
+    active = [(p, t) for p, t in tasks if t.get("status") not in ("done", "dropped", "backlog")]
+    backlog_count = sum(1 for _, t in tasks if t.get("status") == "backlog")
+
+    # Group by urgency
+    due_overdue = []
+    in_progress = []
+    ready = []
+    recent_open = []
+
+    for p, t in active:
+        status = t.get("status", "open")
+        due = t.get("due")
+        if due:
+            if isinstance(due, str):
+                due = date.fromisoformat(due)
+            if (due - TODAY).days <= 1:
+                due_overdue.append((p, t))
+                continue
+
+        if status == "in-progress":
+            in_progress.append((p, t))
+        elif status in ("ready", "claimed"):
+            ready.append((p, t))
+        elif status == "open":
+            recent_open.append((p, t))
+        elif status == "blocked":
+            pass  # skip blocked from dashboard
+
+    output = []
+
+    if due_overdue:
+        output.append("Due/overdue:")
+        for p, t in due_overdue:
+            output.append(format_task_line(p, t))
+        output.append("")
+
+    if in_progress:
+        output.append("In progress:")
+        for p, t in in_progress:
+            output.append(format_task_line(p, t))
+        output.append("")
+
+    if ready:
+        output.append("Ready to claim:")
+        for p, t in ready[:10]:
+            output.append(format_task_line(p, t))
+        if len(ready) > 10:
+            output.append(f"  ... +{len(ready) - 10} more")
+        output.append("")
+
+    if recent_open:
+        # Show most recent 5
+        recent_open.sort(key=lambda x: x[1].get("created", ""), reverse=True)
+        shown = recent_open[:5]
+        output.append("Open:")
+        for p, t in shown:
+            output.append(format_task_line(p, t))
+        if len(recent_open) > 5:
+            output.append(f"  ... +{len(recent_open) - 5} more")
+        output.append("")
+
+    if not output:
+        output.append("No tasks.")
+
+    # Counts
+    total = len(active)
+    blocked = sum(1 for _, t in active if t.get("status") == "blocked")
+    extras = []
+    if blocked:
+        extras.append(f"{blocked} blocked")
+    if backlog_count:
+        extras.append(f"{backlog_count} in backlog")
+    if extras:
+        output.append(f"Total: {total} active ({', '.join(extras)})")
+    else:
+        output.append(f"Total: {total} active")
+
+    print("\n".join(output))
+
+
+def cmd_add(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo add \"task text\" [--project P] [--priority high] ...", file=sys.stderr)
+        sys.exit(1)
+
+    text = " ".join(positional)
+    project = flags.get("project")
+    path, proj_name = resolve_target(project)
+
+    def updater(data):
+        tid = data["next_id"]
+        data["next_id"] = tid + 1
+        task = {
+            "id": tid,
+            "text": text,
+            "status": flags.get("status", "open"),
+            "priority": flags.get("priority", "normal"),
+            "owner": flags.get("owner", "any"),
+            "assignee": None,
+            "project": proj_name or flags.get("project"),
+            "created": str(TODAY),
+            "touched": str(TODAY),
+            "due": parse_date(flags["due"]) if "due" in flags else None,
+            "source": flags.get("source", "beth"),
+            "tags": [t.strip() for t in flags["tags"].split(",")] if "tags" in flags else [],
+            "notes": flags.get("note", flags.get("notes", "")),
+        }
+
+        # Validate
+        if task["status"] not in VALID_STATUSES:
+            print(f"Error: invalid status '{task['status']}'", file=sys.stderr)
+            sys.exit(1)
+        if task["priority"] not in VALID_PRIORITIES:
+            print(f"Error: invalid priority '{task['priority']}'", file=sys.stderr)
+            sys.exit(1)
+
+        data["tasks"].append(task)
+        return task
+
+    task = atomic_update(path, updater)
+    ref = task_ref(proj_name, task)
+    print(f"Added {ref}: \"{text}\" ({task['status']}, {task['priority']}, {task['owner']})")
+
+
+def cmd_show(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo show <id> [--project P]", file=sys.stderr)
+        sys.exit(1)
+    _, proj, task = find_task(positional[0], flags.get("project"))
+    print(format_task_detail(proj, task))
+
+
+def cmd_done(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo done <id> [--project P] [--note \"...\"]", file=sys.stderr)
+        sys.exit(1)
+
+    path, proj_name, found_task = find_task(positional[0], flags.get("project"))
+    tid = found_task["id"]
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                t["status"] = "done"
+                t["touched"] = str(TODAY)
+                note = flags.get("note", "")
+                if note:
+                    existing = t.get("notes", "")
+                    stamp = f"[{TODAY}] Done: {note}"
+                    t["notes"] = f"{existing}\n{stamp}".strip()
+                return t
+        print(f"Error: task {task_ref(proj_name, {'id': tid})} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Done: {task_ref(proj_name, task)} — {task['text']}")
+
+
+def cmd_drop(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo drop <id> [--reason \"...\"]", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = positional[0]
+    project = flags.get("project")
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+    tid = int(task_id)
+    path, _ = resolve_target(project)
+    proj_name = project
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                t["status"] = "dropped"
+                t["touched"] = str(TODAY)
+                reason = flags.get("reason", "")
+                if reason:
+                    existing = t.get("notes", "")
+                    stamp = f"[{TODAY}] Dropped: {reason}"
+                    t["notes"] = f"{existing}\n{stamp}".strip()
+                return t
+        print(f"Error: task #{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Dropped: {task_ref(proj_name, task)} — {task['text']}")
+
+
+def cmd_backlog(positional: list[str], flags: dict[str, str]):
+    """Move a task to backlog — kept but hidden from dashboard and default list."""
+    if not positional:
+        print("Usage: todo backlog <id> [--project P]", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = positional[0]
+    project = flags.get("project")
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+    tid = int(task_id)
+    path, _ = resolve_target(project)
+    proj_name = project
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                t["status"] = "backlog"
+                t["touched"] = str(TODAY)
+                return t
+        print(f"Error: task #{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Backlogged: {task_ref(proj_name, task)} — {task['text']}")
+
+
+def cmd_claim(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo claim <id>", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = positional[0]
+    project = flags.get("project")
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+    tid = int(task_id)
+    path, _ = resolve_target(project)
+    proj_name = project
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                if t["status"] not in ("ready", "open"):
+                    print(f"Error: can't claim task with status '{t['status']}'", file=sys.stderr)
+                    sys.exit(1)
+                t["status"] = "in-progress"
+                t["assignee"] = AGENT_ID or "unknown"
+                t["touched"] = str(TODAY)
+                return t
+        print(f"Error: task #{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Claimed: {task_ref(proj_name, task)} — {task['text']}")
+
+
+def cmd_release(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo release <id>", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = positional[0]
+    project = flags.get("project")
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+    tid = int(task_id)
+    path, _ = resolve_target(project)
+    proj_name = project
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                t["status"] = "ready"
+                t["assignee"] = None
+                t["touched"] = str(TODAY)
+                return t
+        print(f"Error: task #{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Released: {task_ref(proj_name, task)} — {task['text']}")
+
+
+def cmd_edit(positional: list[str], flags: dict[str, str]):
+    if not positional:
+        print("Usage: todo edit <id> --<field> <value>", file=sys.stderr)
+        sys.exit(1)
+
+    task_id = positional[0]
+    project = flags.get("project")
+    if "#" in task_id:
+        project, task_id = task_id.split("#", 1)
+    tid = int(task_id)
+    path, _ = resolve_target(project)
+    proj_name = project
+
+    # Fields that can be edited
+    editable = {"text", "status", "priority", "owner", "due", "tags", "notes", "assignee"}
+    updates = {k: v for k, v in flags.items() if k in editable}
+
+    if not updates:
+        print("Error: no fields to edit. Use --<field> <value>.", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse special values
+    if "due" in updates:
+        updates["due"] = parse_date(updates["due"]) if updates["due"] != "none" else None
+    if "tags" in updates:
+        updates["tags"] = [t.strip() for t in updates["tags"].split(",")]
+    if "status" in updates and updates["status"] not in VALID_STATUSES:
+        print(f"Error: invalid status '{updates['status']}'", file=sys.stderr)
+        sys.exit(1)
+    if "priority" in updates and updates["priority"] not in VALID_PRIORITIES:
+        print(f"Error: invalid priority '{updates['priority']}'", file=sys.stderr)
+        sys.exit(1)
+
+    def updater(data):
+        for t in data["tasks"]:
+            if t["id"] == tid:
+                for k, v in updates.items():
+                    t[k] = v
+                t["touched"] = str(TODAY)
+                return t
+        print(f"Error: task #{tid} not found", file=sys.stderr)
+        sys.exit(1)
+
+    task = atomic_update(path, updater)
+    print(f"Updated: {task_ref(proj_name, task)} — {', '.join(f'{k}={v}' for k, v in updates.items())}")
+
+
+def cmd_list(flags: dict[str, str]):
+    tasks = all_tasks()
+
+    # Apply filters
+    project_filter = flags.get("project")
+    status_filter = flags.get("status")
+    owner_filter = flags.get("owner")
+    priority_filter = flags.get("priority")
+    stale_days = int(flags["stale"]) if "stale" in flags else None
+    due_soon_days = int(flags["due-soon"]) if "due-soon" in flags else None
+    tag_filter = set(flags["tags"].split(",")) if "tags" in flags else None
+
+    filtered = []
+    for p, t in tasks:
+        # Default: hide done/dropped/backlog unless explicitly filtering for them
+        if not status_filter and t.get("status") in ("done", "dropped", "backlog"):
+            continue
+        if project_filter and p != project_filter:
+            continue
+        if status_filter and t.get("status") != status_filter:
+            continue
+        if owner_filter and t.get("owner") != owner_filter:
+            continue
+        if priority_filter and t.get("priority") != priority_filter:
+            continue
+        if tag_filter:
+            task_tags = set(t.get("tags", []))
+            if not tag_filter & task_tags:
+                continue
+        if stale_days:
+            touched = t.get("touched", t.get("created", ""))
+            if touched:
+                td = date.fromisoformat(str(touched))
+                if (TODAY - td).days < stale_days:
+                    continue
+        if due_soon_days is not None:
+            due = t.get("due")
+            if not due:
+                continue
+            dd = date.fromisoformat(str(due))
+            if (dd - TODAY).days > due_soon_days:
+                continue
+
+        filtered.append((p, t))
+
+    if not filtered:
+        print("No tasks match filters.")
+        return
+
+    # Sort: priority (high first), then created
+    priority_order = {"high": 0, "normal": 1, "low": 2}
+    filtered.sort(key=lambda x: (priority_order.get(x[1].get("priority", "normal"), 1),
+                                  x[1].get("created", "")))
+
+    for p, t in filtered:
+        print(format_task_line(p, t, show_status=True))
+
+    print(f"\n{len(filtered)} task(s)")
+
+
+def cmd_search(positional: list[str], flags: dict[str, str]):
+    """Search tasks by text. Active only by default; --archive includes archive."""
+    if not positional:
+        print("Usage: todo search <query> [--archive]", file=sys.stderr)
+        sys.exit(1)
+
+    query = " ".join(positional).lower()
+    include_archive = "archive" in flags
+
+    def matches(task: dict) -> bool:
+        text = task.get("text", "").lower()
+        notes = task.get("notes", "").lower()
+        tags = " ".join(task.get("tags", [])).lower()
+        return query in text or query in notes or query in tags
+
+    results = []
+
+    for project, t in all_tasks():
+        if matches(t):
+            results.append((project, t, False))
+
+    if include_archive:
+        for project, t in all_archive_tasks():
+            if matches(t):
+                results.append((project, t, True))
+
+    if not results:
+        print(f"No tasks matching \"{query}\".")
+        return
+
+    for project, t, is_archived in results:
+        ref = task_ref(project, t)
+        status = t.get("status", "?")
+        label = f"[{status}, archived]" if is_archived else f"[{status}]"
+        print(f"  {ref:<14} {t['text']}  {label}")
+
+    print(f"\n{len(results)} result(s)")
+
+
+def cmd_clean(flags: dict[str, str]):
+    """Archive old done/dropped tasks, nudge about stale items."""
+    archive_after = int(flags.get("archive-after", 3))
+    stale_days = int(flags.get("stale", 7))
+
+    total_archived = 0
+    archived_done = 0
+    archived_dropped = 0
+    archived_refs = []
+    review_count = 0
+
+    for todo_path, project in all_todo_files():
+        arch_path = archive_path_for(todo_path)
+
+        def updater(data):
+            nonlocal total_archived, archived_done, archived_dropped, archived_refs
+            to_archive = []
+            keep = []
+
+            for t in data["tasks"]:
+                if t.get("status") in ("done", "dropped"):
+                    touched = t.get("touched", t.get("created", ""))
+                    if touched:
+                        td = date.fromisoformat(str(touched))
+                        if (TODAY - td).days >= archive_after:
+                            to_archive.append(t)
+                            continue
+                keep.append(t)
+
+            if to_archive:
+                # Append to archive file
+                arch_data = load(arch_path)
+                for t in to_archive:
+                    t["archived"] = str(TODAY)
+                    arch_data["tasks"].append(t)
+                    ref = task_ref(project, t)
+                    archived_refs.append(ref)
+                    if t["status"] == "done":
+                        archived_done += 1
+                    else:
+                        archived_dropped += 1
+                    total_archived += 1
+                save(arch_path, arch_data)
+                data["tasks"] = keep
+
+        atomic_update(todo_path, updater)
+
+    # Count stale active tasks
+    for _, t in all_tasks():
+        if t.get("status") in ("done", "dropped"):
+            continue
+        touched = t.get("touched", t.get("created", ""))
+        if touched:
+            td = date.fromisoformat(str(touched))
+            if (TODAY - td).days >= stale_days:
+                review_count += 1
+
+    # Output
+    if total_archived:
+        parts = []
+        if archived_done:
+            parts.append(f"{archived_done} done")
+        if archived_dropped:
+            parts.append(f"{archived_dropped} dropped")
+        print(f"Archived {total_archived} task(s) ({', '.join(parts)}): {', '.join(archived_refs)}")
+    else:
+        print("Nothing to archive.")
+
+    if review_count:
+        print(f"{review_count} stale task(s) — run `todo review`")
+
+
+def cmd_review():
+    """Surface items needing attention."""
+    tasks = all_tasks()
+    active = [(p, t) for p, t in tasks if t.get("status") not in ("done", "dropped", "backlog")]
+
+    output = []
+
+    # Overdue
+    overdue = []
+    for p, t in active:
+        due = t.get("due")
+        if due:
+            dd = date.fromisoformat(str(due))
+            if dd < TODAY:
+                overdue.append((p, t))
+    if overdue:
+        output.append("OVERDUE:")
+        for p, t in overdue:
+            output.append(format_task_line(p, t))
+        output.append("")
+
+    # Stale (untouched 7+ days)
+    stale = []
+    for p, t in active:
+        touched = t.get("touched", t.get("created", ""))
+        if touched:
+            td = date.fromisoformat(str(touched))
+            if (TODAY - td).days >= 7:
+                stale.append((p, t, (TODAY - td).days))
+    if stale:
+        stale.sort(key=lambda x: x[2], reverse=True)
+        output.append("STALE (7+ days untouched):")
+        for p, t, days in stale:
+            ref = task_ref(p, t)
+            output.append(f"  {ref:<14} {t['text']}  ({days}d)")
+        output.append("")
+
+    # No owner
+    unowned = [(p, t) for p, t in active if not t.get("owner") or t.get("owner") == "any"]
+    if unowned:
+        output.append("NEEDS OWNER:")
+        for p, t in unowned:
+            output.append(format_task_line(p, t))
+        output.append("")
+
+    # Blocked
+    blocked = [(p, t) for p, t in active if t.get("status") == "blocked"]
+    if blocked:
+        output.append("BLOCKED:")
+        for p, t in blocked:
+            output.append(format_task_line(p, t))
+        output.append("")
+
+    if not output:
+        output.append("Nothing needs attention. All clear.")
+
+    print("\n".join(output))
+
+
+def cmd_summary():
+    """Compact summary for orientation injection."""
+    tasks = all_tasks()
+    active = [(p, t) for p, t in tasks if t.get("status") not in ("done", "dropped", "backlog")]
+
+    due = []
+    in_progress = []
+    ready = []
+    open_count = 0
+    blocked_count = 0
+
+    for p, t in active:
+        status = t.get("status", "open")
+        d = t.get("due")
+        if d:
+            dd = date.fromisoformat(str(d))
+            if (dd - TODAY).days <= 2:
+                due.append(f"{t['text']} ({format_due(t)})")
+
+        if status == "in-progress":
+            ref = task_ref(p, t)
+            in_progress.append(f"{ref} {t['text']}")
+        elif status in ("ready", "claimed"):
+            ready.append(t["text"])
+        elif status == "open":
+            open_count += 1
+        elif status == "blocked":
+            blocked_count += 1
+
+    lines = []
+    if due:
+        lines.append(f"[{len(due)} due] {', '.join(due[:3])}")
+    if in_progress:
+        lines.append(f"[{len(in_progress)} in-progress] {', '.join(in_progress[:3])}")
+    if ready:
+        lines.append(f"[{len(ready)} ready] {', '.join(ready[:3])}")
+
+    counts = []
+    if open_count:
+        counts.append(f"{open_count} open")
+    if blocked_count:
+        counts.append(f"{blocked_count} blocked")
+    if counts:
+        lines.append(f"[{', '.join(counts)}]")
+
+    if not lines:
+        lines.append("No tasks.")
+
+    print("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    action, positional, flags = parse_args(sys.argv[1:])
+
+    match action:
+        case "dashboard":
+            cmd_dashboard()
+        case "add":
+            cmd_add(positional, flags)
+        case "show":
+            cmd_show(positional, flags)
+        case "done":
+            cmd_done(positional, flags)
+        case "drop":
+            cmd_drop(positional, flags)
+        case "backlog":
+            cmd_backlog(positional, flags)
+        case "claim":
+            cmd_claim(positional, flags)
+        case "release":
+            cmd_release(positional, flags)
+        case "edit":
+            cmd_edit(positional, flags)
+        case "list":
+            cmd_list(flags)
+        case "clean":
+            cmd_clean(flags)
+        case "search":
+            cmd_search(positional, flags)
+        case "review":
+            cmd_review()
+        case "summary":
+            cmd_summary()
+        case _:
+            # If first arg isn't an action, treat as "add" shorthand
+            if not action.startswith("-"):
+                cmd_add([action] + positional, flags)
+            else:
+                print(f"Unknown action: {action}", file=sys.stderr)
+                sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

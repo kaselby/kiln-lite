@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# ---
+# name: message
+# description: Send, read, list, clear, and inspect messages via kiln-lite's file-based inbox system.
+# usage: message <send|read|list|clear|stats|subscribe|unsubscribe> [args]
+# ---
+#
+# Subcommands:
+#   send <to> <summary> [--body <text> | --stdin] [--priority normal|high]
+#   read <id-prefix>
+#   list [--unread|--all]
+#   clear                     move all unread messages to .read/
+#   stats                     counts of unread / read / total
+#   subscribe <channel>       (v1 stub)
+#   unsubscribe <channel>     (v1 stub)
+#
+# Requires env: $AGENT_HOME, $AGENT_ID, $INBOX.
+
+set -euo pipefail
+
+: "${AGENT_HOME:?AGENT_HOME not set — is kiln-lite loaded?}"
+: "${AGENT_ID:?AGENT_ID not set — is kiln-lite loaded?}"
+: "${INBOX:?INBOX not set — is kiln-lite loaded?}"
+
+INBOX_ROOT="${AGENT_HOME}/inbox"
+
+die() { echo "message: $*" >&2; exit 1; }
+
+usage() {
+	cat <<'EOF' >&2
+Usage:
+  message send <to-agent-id> <summary> [--body <text> | --stdin] [--priority normal|high]
+  message read <id-prefix>
+  message list [--unread|--all]
+  message subscribe <channel>      (v1: stubbed)
+  message unsubscribe <channel>    (v1: stubbed)
+EOF
+	exit 1
+}
+
+# Generate a compact UUID-ish suffix without depending on uuidgen.
+mkid() {
+	local ts rand
+	ts=$(date -u +%Y%m%dT%H%M%SZ)
+	if [ -r /dev/urandom ]; then
+		rand=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
+	else
+		rand="$RANDOM$RANDOM"
+	fi
+	printf '%s-%s' "$ts" "$rand"
+}
+
+cmd_send() {
+	local to="" summary="" body="" priority="normal" use_stdin=0
+	if [ $# -lt 2 ]; then
+		die "send requires <to-agent-id> <summary>"
+	fi
+	to="$1"; shift
+	summary="$1"; shift
+
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--body) body="${2:-}"; shift 2 ;;
+			--stdin) use_stdin=1; shift ;;
+			--priority) priority="${2:-normal}"; shift 2 ;;
+			--help|-h) usage ;;
+			*) die "unknown flag: $1" ;;
+		esac
+	done
+
+	if [ "$use_stdin" -eq 1 ]; then
+		body="$(cat)"
+	fi
+
+	case "$priority" in
+		normal|high) ;;
+		*) die "priority must be normal or high, got: $priority" ;;
+	esac
+
+	local target_dir="${INBOX_ROOT}/${to}"
+	mkdir -p "$target_dir"
+
+	local id
+	id="$(mkid)"
+	local path="${target_dir}/${id}.md"
+	local ts
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	{
+		printf -- '---\n'
+		printf 'from: %s\n' "$AGENT_ID"
+		printf 'to: %s\n' "$to"
+		# Quote summary YAML-safely: wrap in double quotes, escape inner dquotes + backslashes
+		local esc
+		esc="$(printf '%s' "$summary" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
+		printf 'summary: "%s"\n' "$esc"
+		printf 'timestamp: %s\n' "$ts"
+		printf 'priority: %s\n' "$priority"
+		printf -- '---\n\n'
+		printf '%s\n' "$body"
+	} > "$path"
+
+	echo "sent: $id -> $to"
+}
+
+cmd_list() {
+	local mode="unread"
+	case "${1:-}" in
+		--unread) mode="unread" ;;
+		--all) mode="all" ;;
+		"" ) ;;
+		*) die "unknown flag: ${1}" ;;
+	esac
+
+	local dir="$INBOX"
+	local listed=0
+
+	if [ "$mode" = "unread" ] || [ "$mode" = "all" ]; then
+		if [ -d "$dir" ]; then
+			for f in "$dir"/*.md; do
+				[ -f "$f" ] || continue
+				print_msg_entry "$f" "unread"
+				listed=1
+			done
+		fi
+	fi
+	if [ "$mode" = "all" ]; then
+		if [ -d "$dir/.read" ]; then
+			for f in "$dir/.read"/*.md; do
+				[ -f "$f" ] || continue
+				print_msg_entry "$f" "read"
+				listed=1
+			done
+		fi
+	fi
+
+	[ "$listed" = 1 ] || echo "(no messages)"
+}
+
+print_msg_entry() {
+	local f="$1" status="$2"
+	local id base from summary ts
+	base=$(basename "$f" .md)
+	id="$base"
+	# Light frontmatter parsing — first block between --- markers.
+	from=$(awk '/^---$/{n++; if(n==2) exit; next} n==1 && /^from:/{sub(/^from: */,""); print; exit}' "$f" || true)
+	summary=$(awk '/^---$/{n++; if(n==2) exit; next} n==1 && /^summary:/{sub(/^summary: */,""); gsub(/^"|"$/, ""); print; exit}' "$f" || true)
+	ts=$(awk '/^---$/{n++; if(n==2) exit; next} n==1 && /^timestamp:/{sub(/^timestamp: */,""); print; exit}' "$f" || true)
+	printf '[%s] %s  %s  %s  — %s\n' "$status" "$id" "${from:-?}" "${ts:-?}" "${summary:-(no summary)}"
+}
+
+cmd_read() {
+	[ $# -ge 1 ] || die "read requires an id prefix"
+	local prefix="$1"
+	local dir="$INBOX"
+	local match=""
+	# Look in unread first, then .read/.
+	for d in "$dir" "$dir/.read"; do
+		[ -d "$d" ] || continue
+		for f in "$d"/${prefix}*.md; do
+			[ -f "$f" ] || continue
+			match="$f"
+			break
+		done
+		[ -n "$match" ] && break
+	done
+	[ -n "$match" ] || die "no message matching: $prefix"
+	cat "$match"
+}
+
+cmd_subscribe() {
+	echo "channels unavailable (no daemon in v1) — noop" >&2
+	exit 0
+}
+
+cmd_unsubscribe() {
+	echo "channels unavailable (no daemon in v1) — noop" >&2
+	exit 0
+}
+
+main() {
+	[ $# -ge 1 ] || usage
+	local sub="$1"; shift
+	case "$sub" in
+		send) cmd_send "$@" ;;
+		list) cmd_list "$@" ;;
+		read) cmd_read "$@" ;;
+		subscribe) cmd_subscribe "$@" ;;
+		unsubscribe) cmd_unsubscribe "$@" ;;
+		-h|--help|help) usage ;;
+		*) die "unknown subcommand: $sub" ;;
+	esac
+}
+
+main "$@"
