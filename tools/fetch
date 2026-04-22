@@ -22,7 +22,33 @@
 
 set -euo pipefail
 
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+# Chrome binary for headless fallback. Respects $CHROME if set; otherwise
+# probes platform-typical locations.
+resolve_chrome() {
+    if [ -n "${CHROME:-}" ] && [ -x "$CHROME" ]; then
+        printf '%s' "$CHROME"
+        return 0
+    fi
+    local candidates=(
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        "/Applications/Chromium.app/Contents/MacOS/Chromium"
+    )
+    # Linux: resolve via PATH
+    for bin in google-chrome google-chrome-stable chromium chromium-browser; do
+        if command -v "$bin" >/dev/null 2>&1; then
+            command -v "$bin"
+            return 0
+        fi
+    done
+    for c in "${candidates[@]}"; do
+        if [ -x "$c" ]; then
+            printf '%s' "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+CHROME="$(resolve_chrome || true)"
 VENV="${KILN_LITE_PYTHON:-python3}"
 
 if [ $# -eq 0 ]; then
@@ -76,8 +102,9 @@ print(result)
 
 # ---- Slow path: Chrome headless ----
 fetch_js() {
-    if [ ! -x "$CHROME" ]; then
+    if [ -z "${CHROME:-}" ] || [ ! -x "$CHROME" ]; then
         echo "Error: Chrome not found — cannot render JS pages" >&2
+        echo "Hint: install Chrome/Chromium, or set CHROME=/path/to/binary" >&2
         return 1
     fi
 

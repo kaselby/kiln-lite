@@ -141,6 +141,17 @@ export default function (pi: ExtensionAPI): void {
 		if (watcher) watcher.markAllSeen();
 	});
 
+	// --- resources_discover: register $AGENT_HOME/skills as a skill path ---
+	// Pi fires this event at session_start and on /reload. We point it at the
+	// user's agent-home skills dir so Pi loads every SKILL.md under it. The
+	// bootstrap script copies kiln-lite's bundled skills (messaging, etc.)
+	// into this directory, making agent-home the single source of truth.
+	pi.on("resources_discover", async (_event, _ctx) => {
+		if (!state) return;
+		const skillsDir = join(state.agentHome, "skills");
+		return { skillPaths: [skillsDir] };
+	});
+
 	// --- session_shutdown: cleanup ---
 	pi.on("session_shutdown", async (_event, _ctx) => {
 		if (watcher) {

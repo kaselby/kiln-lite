@@ -45,6 +45,7 @@ From source while iterating:
 ```bash
 cd /path/to/kiln-lite
 npm install
+./bootstrap.sh ~/.my-agent      # scaffold an agent home (see Quick start)
 pi -e ./extensions/kiln-lite/index.ts     # load extension for this pi run only
 ```
 
@@ -56,31 +57,45 @@ pi install git:github.com/<your-handle>/kiln-lite
 
 ## Quick start
 
-1. Set `$AGENT_HOME` (or use the default `~/.agent/`)
-2. Drop an `agent.yml` there:
+`bootstrap.sh <agent-home>` scaffolds the directory layout, copies bundled
+skills into place, and creates a Python venv with the bundled-tool deps
+installed. It writes a commented `agent.yml` template — edit the agent name
+and any `context_injection` entries you want.
 
-```yaml
-name: pi
-system_prompt: system.md
-
-context_injection:
-  - path: memory/core.md
-    label: Core Memory
-  - path: memory/volatile.md
-    label: Volatile
-    dynamic: true
-
-startup:
-  - "echo 'kiln-lite online'"
-
-cleanup: |
-  [Session ending]
-  Write a session summary to {summary_path}. Cover what you worked on,
-  key decisions, anything left unfinished.
+```bash
+./bootstrap.sh ~/.my-agent
+# edit ~/.my-agent/agent.yml — set `name`, wire context_injection, etc.
+AGENT_HOME=~/.my-agent pi -e ./extensions/kiln-lite/index.ts
 ```
 
-3. Run `pi` — the extension loads, assigns you an agent ID, exports env vars
-   (`$AGENT_HOME`, `$AGENT_ID`, `$INBOX`, etc), and hooks the lifecycle.
+The resulting home looks like:
+
+```
+~/.my-agent/
+├── agent.yml         # config (edit this)
+├── memory/           # your memory files (Core/Volatile/sessions — your shape)
+├── scratch/          # working notes
+├── tools/            # your own shell tools (override bundled by shared name)
+├── inbox/            # per-session inboxes live at inbox/<agent-id>/
+├── sessions/         # session id files + cleanup summaries
+├── skills/           # active skills — bundled ones copied here by bootstrap
+└── venv/             # python venv with bundled-tool deps
+```
+
+Re-running bootstrap flags:
+
+| Flag                | Effect                                                     |
+|---------------------|------------------------------------------------------------|
+| *(none, target full)* | Refuses. Use one of the below.                           |
+| `--force`           | Overwrite existing scaffolding (destructive)               |
+| `--upgrade-deps`    | Only: refresh Python deps in the venv                      |
+| `--refresh-skills`  | Only: recopy `<repo>/skills/*` into `$AGENT_HOME/skills/`  |
+
+Skills are a single source of truth: `$AGENT_HOME/skills/`. The extension
+registers it via Pi's `resources_discover` event, so any `SKILL.md` you drop
+in there is picked up on next session or `/reload`. kiln-lite's bundled skills
+(currently just `messaging`) are installed by `bootstrap.sh` — you can edit
+them freely after install; re-running with `--refresh-skills` overwrites.
 
 ## Layout
 
@@ -112,10 +127,12 @@ kiln-lite/
 ## Runtime dependencies
 
 - **Node** ≥ 20 (Pi's requirement)
-- **Python 3** — for `fetch`, `web-search`, `todo` (+ `PyYAML` for `todo`,
-  `requests` for `web-search`)
-- **Optional**: `fd` (faster `seek`), headless Chrome (JS fallback in `fetch`),
-  `claude` CLI (for `explore`)
+- **Python 3** — bootstrap creates a venv at `$AGENT_HOME/venv/` and installs
+  from `requirements.txt` (`PyYAML` for `todo`, `trafilatura` for `fetch`;
+  `web-search` is stdlib-only). The extension prepends `venv/bin` to `PATH`
+  at `session_start` so tools with `#!/usr/bin/env python3` resolve to the venv.
+- **Optional**: `fd` (faster `seek`), headless Chrome/Chromium (JS fallback in
+  `fetch` — set `$CHROME` to override path), `claude` CLI (for `explore`)
 - **API keys** (for `web-search`): `TAVILY_API_KEY` or `EXA_API_KEY`, read from
   environment or `$AGENT_HOME/credentials/`
 
