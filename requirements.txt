@@ -1,0 +1,11 @@
+# Python dependencies for kiln-lite's bundled tools.
+# Installed into $AGENT_HOME/venv/ by bootstrap.sh.
+#
+# If you add a bundled tool with new deps, append here and re-run bootstrap
+# with --upgrade-deps.
+
+# todo: YAML task board files
+PyYAML>=6.0
+
+# fetch: HTML -> readable text extraction
+trafilatura>=1.12
