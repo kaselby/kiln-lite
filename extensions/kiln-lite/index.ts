@@ -15,13 +15,14 @@ import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 
-import { resolveAgentHome, loadAgentConfig } from "./config.ts";
+import { resolveAgentHomeDetailed, loadAgentConfig } from "./config.ts";
 import { generateAgentId } from "./identity.ts";
 import { buildEnv, applyEnv } from "./env.ts";
 import { composeSystemPrompt, preloadStaticInjection } from "./prompt.ts";
 import { discoverTools, registerShellTools, renderToolIndex } from "./tools.ts";
 import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
+import { ensureScaffold } from "./bootstrap.ts";
 import type { SessionState } from "./types.ts";
 
 export default function (pi: ExtensionAPI): void {
@@ -38,7 +39,17 @@ export default function (pi: ExtensionAPI): void {
 			if (ctx.hasUI) ctx.ui.notify(msg, "warning");
 		};
 
-		const agentHome = resolveAgentHome();
+		const { path: agentHome, explicit: explicitHome } = resolveAgentHomeDetailed();
+
+		// First-run auto-scaffold: if AGENT_HOME is set explicitly and lacks an
+		// agent.yml, invoke bootstrap.sh. This is a no-op on subsequent launches.
+		await ensureScaffold({
+			agentHome,
+			explicitHome,
+			ui: ctx.hasUI ? { notify: ctx.ui.notify.bind(ctx.ui), setWorkingMessage: ctx.ui.setWorkingMessage.bind(ctx.ui) } : undefined,
+			warn,
+		});
+
 		try {
 			mkdirSync(agentHome, { recursive: true });
 		} catch (err) {

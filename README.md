@@ -40,32 +40,48 @@ files, you decide what's in them.
 
 ## Install
 
-From source while iterating:
+One-step (recommended): install the extension and let it auto-scaffold
+your agent home on first launch.
 
 ```bash
+# Local path install (during dev, or once you've cloned the repo)
 cd /path/to/kiln-lite
 npm install
-./bootstrap.sh ~/.my-agent      # scaffold an agent home (see Quick start)
-pi -e ./extensions/kiln-lite/index.ts     # load extension for this pi run only
+pi install .
+
+# First launch with AGENT_HOME set triggers auto-scaffold
+AGENT_HOME=~/.my-agent pi
 ```
 
-From git (once pushed):
+Or from git (once pushed):
 
 ```bash
 pi install git:github.com/<your-handle>/kiln-lite
+AGENT_HOME=~/.my-agent pi
+```
+
+The first launch notices `$AGENT_HOME/agent.yml` is missing and invokes
+`bootstrap.sh` automatically — creating the standard layout, copying
+bundled skills, and building a Python venv. Subsequent launches see the
+scaffold and skip straight to session start.
+
+If `AGENT_HOME` is unset, the extension falls back to built-in defaults
+and does **not** auto-scaffold (we don't want to silently create
+`~/.agent/`). To opt into auto-scaffold, set `AGENT_HOME` explicitly.
+
+One-shot for extension-only iteration:
+
+```bash
+pi -e ./extensions/kiln-lite/index.ts
 ```
 
 ## Quick start
 
-`bootstrap.sh <agent-home>` scaffolds the directory layout, copies bundled
-skills into place, and creates a Python venv with the bundled-tool deps
-installed. It writes a commented `agent.yml` template — edit the agent name
-and any `context_injection` entries you want.
+To scaffold manually (without running Pi):
 
 ```bash
 ./bootstrap.sh ~/.my-agent
-# edit ~/.my-agent/agent.yml — set `name`, wire context_injection, etc.
-AGENT_HOME=~/.my-agent pi -e ./extensions/kiln-lite/index.ts
+# then edit ~/.my-agent/agent.yml — set `name`, wire context_injection, etc.
 ```
 
 The resulting home looks like:
@@ -82,7 +98,7 @@ The resulting home looks like:
 └── venv/             # python venv with bundled-tool deps
 ```
 
-Re-running bootstrap flags:
+Re-running bootstrap flags (for explicit re-scaffolds):
 
 | Flag                | Effect                                                     |
 |---------------------|------------------------------------------------------------|
@@ -90,6 +106,13 @@ Re-running bootstrap flags:
 | `--force`           | Overwrite existing scaffolding (destructive)               |
 | `--upgrade-deps`    | Only: refresh Python deps in the venv                      |
 | `--refresh-skills`  | Only: recopy `<repo>/skills/*` into `$AGENT_HOME/skills/`  |
+
+## Uninstall
+
+```bash
+pi remove <same-source-string>    # e.g. 'pi remove .' or 'pi remove git:...'
+rm -rf ~/.my-agent                 # agent home is separate — Pi doesn't touch it
+```
 
 Skills are a single source of truth: `$AGENT_HOME/skills/`. The extension
 registers it via Pi's `resources_discover` event, so any `SKILL.md` you drop
