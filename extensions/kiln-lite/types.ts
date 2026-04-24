@@ -29,7 +29,7 @@ export interface AgentConfig {
 	tools_dir: string;
 	/** Directory for per-agent inboxes (relative to $AGENT_HOME). */
 	inbox_dir: string;
-	/** Directory for session ID files + summaries (relative to $AGENT_HOME). */
+	/** Directory for session summaries (relative to $AGENT_HOME). */
 	sessions_dir: string;
 }
 

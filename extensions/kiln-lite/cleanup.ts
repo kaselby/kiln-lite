@@ -1,11 +1,17 @@
 /**
  * Cleanup-on-exit flow.
  *
- * Three slash commands:
+ * Slash commands:
  *   /wrapup  — run the cleanup turn, then shut down (primary)
- *   /exit    — alias for /wrapup (overrides Pi's builtin)
- *   /quit    — alias for /wrapup (overrides Pi's builtin)
+ *   /exit    — alias for /wrapup (pi has no built-in /exit slash command,
+ *              so this routes through our extension handler normally)
  *   /fq      — force quit: skip cleanup, shut down immediately (escape hatch)
+ *
+ * Note: we do NOT register /quit. Pi's interactive mode hardcodes
+ * `if (text === "/quit") shutdown()` in its editor submit handler, which runs
+ * before extension command dispatch, so an extension /quit handler is never
+ * invoked. Ctrl+C (double) and Ctrl+D also call shutdown() directly and
+ * bypass extension commands. Users who want cleanup must use /wrapup or /exit.
  *
  * Flow (when config.cleanup is non-empty):
  *   1. Render cleanup template with {today}, {agent_id}, {session_uuid}, {summary_path}
@@ -17,7 +23,7 @@
  * If config.cleanup is empty/unset: skip the cleanup turn entirely, shut down
  * immediately. Simple case.
  *
- * Escape hatch: a second /wrapup (or /exit, /quit) while cleanup is in flight
+ * Escape hatch: a second /wrapup (or /exit) while cleanup is in flight
  * force-exits — same effect as /fq.
  */
 
@@ -134,8 +140,13 @@ export function createCleanupDispatcher(
 }
 
 /**
- * Register /wrapup, /exit, /quit (all run cleanup then shutdown), and /fq
+ * Register /wrapup and /exit (both run cleanup then shutdown), and /fq
  * (pure exit, skips cleanup).
+ *
+ * /quit is intentionally NOT registered — see the file-level comment. Pi's
+ * interactive mode intercepts /quit before extension dispatch, so registering
+ * it only produces a misleading autocomplete-conflict warning without ever
+ * firing our handler.
  *
  * Second invocation of a cleanup command during in-flight cleanup force-exits
  * (escape hatch for an agent stuck in a bad cleanup turn).
@@ -155,14 +166,11 @@ export function registerExitCommands(pi: ExtensionAPI, dispatcher: CleanupDispat
 		handler: wrapupHandler,
 	});
 
-	// Override Pi's builtins so standard exits run cleanup too. Agents and
-	// users alike expect /exit and /quit to Just Work; keeping them aligned
-	// with /wrapup prevents accidental data loss.
+	// /exit is not a pi built-in slash command (pi only binds it as a
+	// keybinding action name for Ctrl+D), so registering it here routes
+	// through the normal extension command dispatcher. This lets users
+	// reach for the conventional /exit and still get cleanup.
 	pi.registerCommand("exit", {
-		description: "Run the cleanup flow (summary, memory updates) then exit",
-		handler: wrapupHandler,
-	});
-	pi.registerCommand("quit", {
 		description: "Run the cleanup flow (summary, memory updates) then exit",
 		handler: wrapupHandler,
 	});

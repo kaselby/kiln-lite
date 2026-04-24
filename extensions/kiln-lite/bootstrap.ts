@@ -29,6 +29,7 @@ export interface ScaffoldDeps {
 	ui?: {
 		notify: (msg: string, type?: "info" | "warning" | "error") => void;
 		setWorkingMessage: (msg?: string) => void;
+		confirm: (title: string, message: string) => Promise<boolean>;
 	};
 	/** Warn sink — also used for info-level messages when no UI. */
 	warn: (msg: string) => void;
@@ -81,8 +82,36 @@ export async function ensureScaffold(deps: ScaffoldDeps): Promise<boolean> {
 		warn(`kiln-lite: first run — scaffolding ${agentHome}...`);
 	}
 
+	// bootstrap.sh needs `uv` for venv + deps. Since we spawn bootstrap with
+	// stdin=ignore, its own interactive uv-install prompt can't run — so we
+	// do the consent handshake here (using pi's UI, if any) and pass
+	// AUTO_INSTALL_UV=1 through env when the user agrees. Without UI we let
+	// bootstrap.sh error out with its actionable non-TTY message.
+	const childEnv: NodeJS.ProcessEnv = { ...process.env };
+	if (!hasOnPath("uv")) {
+		if (ui) {
+			ui.setWorkingMessage();
+			const ok = await ui.confirm(
+				"Install uv?",
+				"kiln-lite needs `uv` for Python version management and package install. " +
+					"Install it now via the official installer (https://astral.sh/uv/install.sh)?",
+			);
+			if (!ok) {
+				ui.notify(
+					"kiln-lite: uv install declined — aborting scaffold. Install uv manually and relaunch.",
+					"warning",
+				);
+				return false;
+			}
+			childEnv.AUTO_INSTALL_UV = "1";
+			ui.setWorkingMessage(`kiln-lite: scaffolding ${agentHome}`);
+		}
+		// else: no UI — let bootstrap.sh's own non-TTY guard print the
+		// "set AUTO_INSTALL_UV=1" hint. Headless users can opt in via env.
+	}
+
 	try {
-		await spawnBootstrap(bootstrapScript, agentHome);
+		await spawnBootstrap(bootstrapScript, agentHome, childEnv);
 		if (ui) ui.notify(`kiln-lite: scaffold complete at ${agentHome}`, "info");
 		return true;
 	} catch (err) {
@@ -94,6 +123,20 @@ export async function ensureScaffold(deps: ScaffoldDeps): Promise<boolean> {
 	} finally {
 		if (ui) ui.setWorkingMessage();
 	}
+}
+
+/** Return true if `name` resolves to an executable on the current PATH. */
+function hasOnPath(name: string): boolean {
+	const path = process.env.PATH ?? "";
+	for (const dir of path.split(":")) {
+		if (!dir) continue;
+		try {
+			if (existsSync(join(dir, name))) return true;
+		} catch {
+			// ignore
+		}
+	}
+	return false;
 }
 
 /**
@@ -110,11 +153,15 @@ function resolveBootstrapScript(): string | null {
 }
 
 /** Spawn bootstrap.sh <agent-home> and resolve when it exits cleanly. */
-function spawnBootstrap(script: string, agentHome: string): Promise<void> {
+function spawnBootstrap(
+	script: string,
+	agentHome: string,
+	env: NodeJS.ProcessEnv,
+): Promise<void> {
 	return new Promise<void>((res, rej) => {
 		const child = spawn("bash", [script, agentHome], {
 			stdio: ["ignore", "inherit", "inherit"],
-			env: process.env,
+			env,
 		});
 		child.on("error", rej);
 		child.on("close", (code) => {

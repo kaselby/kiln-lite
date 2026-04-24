@@ -1,108 +1,164 @@
 ---
 name: messaging
-description: Inter-session messaging via file-based inboxes. Use when you need to coordinate with other agent sessions on this machine — send a message, check your inbox, list peer agents, or hand off work. Activate when asked to communicate between sessions or coordinate with a peer.
+description: Inter-session messaging via kiln-lite's daemon + file-based inboxes. Use when coordinating with peer sessions — DMs, channel broadcasts, peer discovery, inbox management. Activate when the task involves talking to other agents.
 ---
 
 # Messaging
 
-Every kiln-lite session has a unique agent ID and a file-based inbox under
-`$AGENT_HOME/inbox/<agent-id>/`. Sessions communicate by writing markdown files
-into each other's inboxes. Same-machine only. No daemon. No network.
+Every kiln-lite session has a unique agent ID and a file-based inbox at
+`$AGENT_HOME/inbox/<agent-id>/`. Sessions communicate by dropping markdown
+files into each other's inboxes — directly (DM) or through a channel
+(broadcast to subscribers).
 
-The extension watches your inbox — if a message arrives while you're idle it
-becomes a user turn; if you're mid-work, a `[INBOX: N unread]` suffix is
-appended to your next tool result so you can check when convenient.
+Behind the scenes, a Node daemon (`~/.kl/daemon/`) owns channel subscriptions,
+session presence, and inbox routing. It **autostarts on first use** and
+self-exits when no sessions are alive for 30 s — you never have to start
+or stop it manually. If you're curious, `kl-msg status` confirms it's there.
 
-**This skill bundles two scripts:** `message` (send/read/manage your inbox)
-and `sessions` (discover active peers). Both expect the kiln-lite extension
-to be loaded (for env vars + inbox delivery). Invoke them via bash using
-the paths below.
+The extension watches your inbox transparently: idle-arriving messages
+become user turns; mid-work arrivals add an `[INBOX: N unread]` suffix to
+your next tool result so you can check when convenient. Delivered messages
+get moved into `$INBOX/.read/` so the unread list stays tight.
 
-## Using the `message` script
+**Full reference:** see `docs/messaging.md` in the kiln-lite repo — wire
+protocol, file format, delivery semantics, gotchas.
 
-The script lives inside this skill at:
+## Using the `message` command
 
-```
-<this-skill-dir>/scripts/message
-```
+`message` and `sessions` are bundled shell tools — on `$PATH` in every
+kiln-lite session, invokable by bare name. Daemon-bound subcommands of
+`message` (`send`, `publish`, `subscribe`, `unsubscribe`,
+`list-subscriptions`, `status`) talk to the daemon via `kl-msg`.
+File-based subcommands (`read`, `list`) read your inbox directly — no
+daemon needed. For session discovery, use `sessions` (not `message`).
 
-Invoke it with bash. Arguments:
+### Direct messages
 
 ```bash
-bash <skill-dir>/scripts/message send <to-agent-id> "<summary>" --body "<text>"
-bash <skill-dir>/scripts/message send <to-agent-id> "<summary>" --stdin <<'EOF'
+message send <to-agent-id> "<summary>" --body "<text>"
+message send <to-agent-id> "<summary>" --stdin <<'EOF'
 multi-line body
 EOF
-bash <skill-dir>/scripts/message send <to-agent-id> "<summary>" --body "urgent" --priority high
-
-bash <skill-dir>/scripts/message list [--unread|--all]
-bash <skill-dir>/scripts/message read <id-prefix>
-bash <skill-dir>/scripts/message clear          # move unread -> .read/
-bash <skill-dir>/scripts/message stats          # counts
-
-bash <skill-dir>/scripts/message subscribe <channel>    # v1 stub — no daemon yet
-bash <skill-dir>/scripts/message unsubscribe <channel>  # v1 stub
+message send <to-agent-id> "<summary>" --body "urgent" --priority high
 ```
 
-The script reads `$AGENT_HOME`, `$AGENT_ID`, and `$INBOX` from the environment
-(set by the kiln-lite extension). Don't pass them explicitly.
+### Channels
+
+```bash
+message subscribe <channel>
+message unsubscribe <channel>
+message list-subscriptions
+
+message publish <channel> "<summary>" --body "<text>"
+message publish <channel> "<summary>" --stdin <<'EOF'
+longer broadcast body
+EOF
+```
+
+Publish fans out to every subscriber ≠ sender — you don't receive a copy of
+your own broadcast. The channel's full history lives at
+`~/.kl/daemon/channels/<channel>/history.jsonl` if you need to see what you
+sent.
+
+### Reading your inbox
+
+```bash
+message list                 # unread (default)
+message list --all           # unread + read
+message read <id-prefix>     # print a message body
+```
+
+### Peer discovery + daemon status
+
+```bash
+sessions                        # list active sessions (daemon-first, tmux fallback)
+sessions show <agent-id>        # detail view for a specific peer
+message status                  # daemon pid, uptime, counts
+```
+
+`sessions` is the canonical tool for peer discovery. It queries the
+daemon's presence registry first; if the daemon is unreachable, it falls
+back to tmux session listing.
 
 ## Addressing
 
-Each session has an agent ID shaped `<name>-<adjective>-<noun>` — e.g.
-`pi-bright-raven`. The ID is deterministic from the Pi session UUID, so
-`/resume`-ing recovers the same ID.
+Agent IDs are shaped `<name>-<adjective>-<noun>` — e.g. `beth-bright-raven`.
+Deterministic from the Pi session UUID, so `/resume` recovers the same ID.
+You can also address any session you've been messaged by (the `from:` line
+in their message frontmatter is the literal address).
 
-Use the `sessions` script (also shipped inside this skill) for peer discovery:
-
-```bash
-bash <skill-dir>/scripts/sessions list               # all active agents + unread counts
-bash <skill-dir>/scripts/sessions show <agent-id>    # metadata for a specific peer
-bash <skill-dir>/scripts/sessions resolve <uuid>     # uuid -> agent-id
-```
-
-Under the hood, `sessions` reads the `.id` files the kiln-lite extension
-maintains at `$AGENT_HOME/sessions/*.id` (one per active session). Stale entries
-can linger if a session crashed without cleanup.
-
-## Message format
-
-Messages are plain markdown with YAML frontmatter:
+## Message file format
 
 ```markdown
 ---
-from: pi-bright-raven
-to: pi-still-wren
+from: beth-bright-raven
+to: beth-still-wren
 summary: Ready for your review
 timestamp: 2026-04-22T10:15:00Z
 priority: normal
+channel: kiln-docs              # present for channel messages; omitted for DMs
 ---
 
-Body text.
+Body text. Can be multiple paragraphs.
 ```
 
-## Delivery semantics (happens automatically, no action needed)
+Filenames: `<YYYYMMDDTHHMMSSZ>-<16-hex>.md`. Timestamp-prefixed so
+sorted listings are chronological; hex suffix prevents collisions.
 
-- **Peer idle**: message appears as a user turn on their side immediately
-- **Peer busy**: `[INBOX: N unread]` suffix on their next tool result; they
-  read the body when convenient
+## Delivery semantics
 
-Read messages are moved to `$INBOX/.read/` — keeps the active inbox small.
+Automatic — no action needed. What happens:
 
-## Channels (v1 stubs)
+- **Peer idle**: the message is delivered as a user turn on their side.
+- **Peer busy**: `[INBOX: N unread]` is appended to their next tool result;
+  they `message read <id>` when convenient.
 
-`message subscribe`/`unsubscribe` log "channels unavailable (no daemon)". The
-interface is stable for a future daemon port — don't expect broadcasts yet.
+On delivery, the `.md` file moves into `$INBOX/.read/` so it stops showing
+up in unread lists. Read messages are still reachable via `message read <id>`
+(the lookup checks both the unread and `.read/` dirs).
+
+## Conventions
+
+- **Summary is for notifications; body is for detail.** A good summary lets
+  the recipient decide whether to interrupt their current thread. Keep it
+  to one line.
+- **DM for 1:1, channels for broadcast.** `send` per recipient is fine
+  for N=2-3; a channel is cleaner beyond that.
+- **Subscribe early, unsubscribe rarely.** Subscriptions are cheap — one
+  JSON file, one set entry. Leaving a stale sub until session end is fine.
+- **Reply in the same mode you received.** Channel → reply on the channel.
+  DM → reply with `send <to=from>`. Mixing looks like you missed context.
 
 ## Environment
 
-The extension exports these to every child process (startup commands, tools,
-scripts you invoke via bash):
+The extension exports these to every child process (startup commands,
+tools, scripts you invoke via bash):
 
 | Var             | Meaning                                         |
 |-----------------|-------------------------------------------------|
-| `AGENT_HOME`    | Resolved agent home (default `~/.agent/`)       |
+| `AGENT_HOME`    | Resolved agent home (default `~/.kl/agent/`)    |
 | `AGENT_ID`      | Your session's ID                               |
-| `AGENT_NAME`    | The name component (e.g. `pi`)                  |
+| `AGENT_NAME`    | The name component (e.g. `beth`)                |
 | `SESSION_UUID`  | Pi session UUID                                 |
 | `INBOX`         | `$AGENT_HOME/inbox/$AGENT_ID/`                  |
+
+The `message` and `sessions` tools read all of these from the env
+automatically.
+
+## Gotchas
+
+- **Publishing to a channel you subscribe to doesn't add a copy to your
+  own inbox** — fanout excludes the sender. Channel history at
+  `~/.kl/daemon/channels/<channel>/history.jsonl` has the canonical record.
+- **Mid-turn inbox pings piggy-back on tool results.** A turn with no tool
+  calls gets no ping. Usually fine (next turn catches it), but worth
+  remembering if you're expecting live fanout during a tool-less turn.
+- **Dead-peer DMs fall back to last-known inbox.** If you DM a session
+  that registered once and exited without clean deregister, the daemon
+  uses the stored `inbox_path` from `known-sessions.json`. Usually this
+  works; if the recipient has since deleted their inbox dir, the write
+  silently fails.
+- **Subscriptions don't survive `deregister`.** The daemon removes a
+  session's subscription file when the session ends. If you want persistent
+  subs per *agent* across sessions, re-subscribe at startup (e.g. via an
+  `agent.yml:startup` command).

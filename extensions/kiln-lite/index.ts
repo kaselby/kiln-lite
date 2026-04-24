@@ -4,13 +4,12 @@
  * Wires together agent.yml loading, identity generation, system prompt assembly,
  * startup commands, shell tool registration, inbox watching, and the cleanup flow.
  *
- * See ./types.ts for the shared SessionState shape, and the design spec at
- * https://github.com/.../kiln-lite/blob/main/docs/design-spec-v1.md.
+ * See ./types.ts for the shared SessionState shape, and docs/extension.md
+ * for the lifecycle wiring in prose.
  */
 
-import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
@@ -19,16 +18,18 @@ import { resolveAgentHomeDetailed, loadAgentConfig } from "./config.ts";
 import { generateAgentId } from "./identity.ts";
 import { buildEnv, applyEnv } from "./env.ts";
 import { composeSystemPrompt, preloadStaticInjection } from "./prompt.ts";
-import { discoverTools, registerShellTools, renderToolIndex } from "./tools.ts";
+import { discoverTools, renderToolIndex } from "./tools.ts";
 import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
 import { ensureScaffold } from "./bootstrap.ts";
 import type { SessionState } from "./types.ts";
+import { DaemonClient } from "../../src/client/index.ts";
 
 export default function (pi: ExtensionAPI): void {
 	let state: SessionState | null = null;
 	let watcher: InboxWatcher | null = null;
 	let toolIndexBlock = "";
+	let daemon: DaemonClient | null = null;
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
 
@@ -46,7 +47,13 @@ export default function (pi: ExtensionAPI): void {
 		await ensureScaffold({
 			agentHome,
 			explicitHome,
-			ui: ctx.hasUI ? { notify: ctx.ui.notify.bind(ctx.ui), setWorkingMessage: ctx.ui.setWorkingMessage.bind(ctx.ui) } : undefined,
+			ui: ctx.hasUI
+				? {
+						notify: ctx.ui.notify.bind(ctx.ui),
+						setWorkingMessage: ctx.ui.setWorkingMessage.bind(ctx.ui),
+						confirm: ctx.ui.confirm.bind(ctx.ui),
+					}
+				: undefined,
 			warn,
 		});
 
@@ -58,12 +65,23 @@ export default function (pi: ExtensionAPI): void {
 
 		const config = loadAgentConfig(agentHome, warn);
 		const sessionUuid = inferSessionUuid(ctx);
-		const agentId = generateAgentId(config.name, sessionUuid);
+		// Prefer an explicit AGENT_ID from env (set by `kl` when launching) over
+		// deterministic UUID-derivation. This keeps the tmux session name, the
+		// extension's agent-id, and the agent-home inbox directory all in sync
+		// from spawn time. Raw `pi` launches (no kl) still derive from the Pi
+		// session UUID — /resume then recovers the same id.
+		const envAgentId = process.env.AGENT_ID;
+		const agentId =
+			envAgentId && /^[a-z0-9_-]+$/i.test(envAgentId)
+				? envAgentId
+				: generateAgentId(config.name, sessionUuid);
 		const env = buildEnv({ agentHome, agentId, sessionUuid, config });
 		// Hoist env vars onto process.env so ALL child processes inherit them —
-		// including Pi's built-in `bash` tool when the agent invokes scripts
-		// that aren't registered as pi tools (e.g. the messaging skill's script).
-		applyEnv(env);
+		// including Pi's built-in `bash` tool when the agent invokes shell tools
+		// (which are just scripts in $AGENT_HOME/<tools_dir>, not registered
+		// as pi tools). applyEnv also prepends the tools dir to PATH so the
+		// agent can call them by bare name.
+		applyEnv(env, config.tools_dir);
 
 		state = {
 			agentHome,
@@ -78,15 +96,6 @@ export default function (pi: ExtensionAPI): void {
 		// Preload static injection content.
 		preloadStaticInjection(state, warn);
 
-		// Write the session ID file for cross-process address lookup.
-		try {
-			const idDir = join(agentHome, config.sessions_dir);
-			mkdirSync(idDir, { recursive: true });
-			writeFileSync(join(idDir, `${sessionUuid}.id`), agentId, "utf8");
-		} catch (err) {
-			warn(`kiln-lite: failed to write session id file: ${(err as Error).message}`);
-		}
-
 		// Ensure inbox dir exists.
 		try {
 			mkdirSync(join(agentHome, config.inbox_dir, agentId), { recursive: true });
@@ -94,13 +103,28 @@ export default function (pi: ExtensionAPI): void {
 			warn(`kiln-lite: failed to create inbox dir: ${(err as Error).message}`);
 		}
 
-		// Discover + register shell tools. We scan the user's $AGENT_HOME/<tools_dir>
-		// first (so user tools can override bundled ones by shared name) and then
-		// the kiln-lite package's own tools/ directory (shipped with the package).
+		// Register with the kiln-lite daemon. Best-effort — a missing daemon
+		// should not block session startup. The daemon autostarts on first
+		// client call if it isn't already running. Channel + DM routing
+		// remains broken until registration succeeds, but everything else
+		// (prompt assembly, tools, inbox file watching) still works.
+		daemon = new DaemonClient({
+			requester: {
+				agent: config.name,
+				session: agentId,
+				inbox_path: join(agentHome, config.inbox_dir),
+			},
+		});
+		void daemon
+			.register()
+			.catch((err) => warn(`kiln-lite: daemon register failed: ${(err as Error).message}`));
+
+		// Discover shell tools in $AGENT_HOME/<tools_dir> and render the tool
+		// index for the system prompt. Scripts are NOT registered as pi tools —
+		// they are plain executables invoked by the agent through the built-in
+		// `bash` tool. env.ts prepends the tools dir to PATH so bare names work.
 		const userToolsDir = join(agentHome, config.tools_dir);
-		const bundledToolsDir = resolveBundledToolsDir();
-		const headers = discoverTools([userToolsDir, bundledToolsDir], warn);
-		registerShellTools(pi, headers, env);
+		const headers = discoverTools([userToolsDir], warn);
 		toolIndexBlock = renderToolIndex(headers);
 
 		// Cleanup dispatcher + slash commands.
@@ -126,10 +150,11 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	// --- before_agent_start: assemble the system prompt ---
-	pi.on("before_agent_start", async (event, _ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (!state) return;
 		const warn = (msg: string) => console.warn(msg);
-		const composed = composeSystemPrompt(state, event.systemPrompt, toolIndexBlock, warn);
+		const modelId = ctx.model?.id;
+		const composed = composeSystemPrompt(state, event.systemPromptOptions, modelId, toolIndexBlock, warn);
 		return { systemPrompt: composed };
 	});
 
@@ -169,28 +194,23 @@ export default function (pi: ExtensionAPI): void {
 			watcher.stop();
 			watcher = null;
 		}
-		if (state) {
+		if (daemon) {
+			// Best-effort deregister with a short budget so we don't block exit
+			// if the daemon is unhealthy. Success here lets the daemon drop this
+			// session's presence record immediately; on failure the reconcile
+			// loop will prune us within ~60s anyway.
 			try {
-				unlinkSync(join(state.agentHome, state.config.sessions_dir, `${state.sessionUuid}.id`));
+				await Promise.race([
+					daemon.deregister(),
+					new Promise((resolve) => setTimeout(resolve, 500)),
+				]);
 			} catch {
-				// already gone — fine
+				// swallow — reconcile will clean up
 			}
+			daemon = null;
 		}
+		state = null;
 	});
-}
-
-/**
- * Resolve the path to the kiln-lite package's bundled `tools/` directory.
- * We locate it relative to this file: extensions/kiln-lite/index.ts -> ../../tools.
- * Falls back to "" (skipped by scanner) if URL parsing fails.
- */
-function resolveBundledToolsDir(): string {
-	try {
-		const here = dirname(fileURLToPath(import.meta.url));
-		return resolve(here, "..", "..", "tools");
-	} catch {
-		return "";
-	}
 }
 
 /**

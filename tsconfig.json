@@ -18,6 +18,7 @@
     "isolatedModules": true
   },
   "include": [
-    "extensions/**/*.ts"
+    "extensions/**/*.ts",
+    "src/**/*.ts"
   ]
 }

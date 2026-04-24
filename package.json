@@ -7,13 +7,18 @@
   "keywords": [
     "pi-package"
   ],
+  "bin": {
+    "kl": "./bin/kl",
+    "kl-msg": "./src/client/cli.ts"
+  },
   "pi": {
     "extensions": [
       "./extensions"
     ]
   },
   "dependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

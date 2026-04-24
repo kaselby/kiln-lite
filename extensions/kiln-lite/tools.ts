@@ -1,25 +1,24 @@
 /**
- * Shell tool discovery + registration.
+ * Shell tool discovery.
  *
  * Scans $AGENT_HOME/<tools_dir>/ at session_start, parses the YAML header
- * (fenced between `# ---` lines), and registers each as a Pi tool with a
- * single `args: string` parameter (spec §Shell Tools, v1 model).
+ * (fenced between `# ---` lines), and renders a compact tool-index block
+ * that gets injected into the system prompt. The scripts themselves are
+ * just executables — the agent invokes them through Pi's built-in `bash`
+ * tool, which inherits $PATH (env.ts prepends the tools dir).
  *
  * Tool header format:
  *   #!/usr/bin/env bash
  *   # ---
  *   # name: mytool
  *   # description: One-line description
- *   # usage: mytool <args>
+ *   # usage: mytool <args>        # or `arguments:` (legacy alias)
  *   # ---
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
-import { Type } from "@sinclair/typebox";
 import yaml from "js-yaml";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 export interface ToolHeader {
 	/** Tool name — registered as pi tool with this name. Falls back to filename. */
@@ -39,8 +38,8 @@ export interface ToolHeader {
  * Malformed headers are surfaced via `warn`.
  *
  * Dirs are scanned in order — if two tools have the same `name`, the earlier
- * one wins. Callers should put user-customizable dirs first (e.g. $AGENT_HOME
- * before the bundled package tools), so users can override bundled tools.
+ * one wins. In practice kiln-lite's extension only passes a single dir
+ * ($AGENT_HOME/<tools_dir>); bundled tools are copied there by bootstrap.sh.
  */
 export function discoverTools(toolsDirs: string[], warn: (msg: string) => void): ToolHeader[] {
 	const seen = new Set<string>();
@@ -133,7 +132,9 @@ function parseHeader(path: string, filename: string, warn: (msg: string) => void
 		warn(`kiln-lite: tool ${filename} missing 'description' — skipping`);
 		return null;
 	}
-	const usage = typeof obj.usage === "string" ? obj.usage.trim() : undefined;
+	// Accept either `usage` or `arguments` (legacy/common alternative) as the usage hint.
+	const usageRaw = typeof obj.usage === "string" ? obj.usage : typeof obj.arguments === "string" ? obj.arguments : undefined;
+	const usage = usageRaw ? usageRaw.trim() : undefined;
 
 	return { name, description, usage, path };
 }
@@ -141,6 +142,9 @@ function parseHeader(path: string, filename: string, warn: (msg: string) => void
 /**
  * Render the tool index block for injection into the system prompt.
  * Format: `- **name** — description` per line. `usage` appended inline if present.
+ *
+ * The agent invokes these via Pi's built-in `bash` tool (e.g. `bash -c "seek foo"`).
+ * env.ts prepends $AGENT_HOME/<tools_dir> to PATH so bare names resolve.
  */
 export function renderToolIndex(headers: ToolHeader[]): string {
 	if (!headers.length) return "";
@@ -149,77 +153,4 @@ export function renderToolIndex(headers: ToolHeader[]): string {
 		return `- **${h.name}**${usageSuffix} — ${h.description}`;
 	});
 	return lines.join("\n");
-}
-
-/**
- * Register each discovered tool with Pi.
- * Every tool takes a single `args: string` parameter (v1 uniform model).
- */
-export function registerShellTools(
-	pi: ExtensionAPI,
-	headers: ToolHeader[],
-	env: Record<string, string>,
-): void {
-	for (const h of headers) {
-		pi.registerTool({
-			name: h.name,
-			label: h.name,
-			description: h.description,
-			parameters: Type.Object({
-				args: Type.String({ description: "Raw argument string passed to the script" }),
-			}),
-			async execute(_toolCallId, params, signal) {
-				const text = await runScript(h.path, params.args, env, signal);
-				return {
-					content: [{ type: "text", text }],
-					details: {},
-				};
-			},
-		});
-	}
-}
-
-/**
- * Spawn the script with `args` as a single argv string, passing through env.
- * Collects stdout+stderr and returns them concatenated. Rejects on non-zero exit.
- */
-function runScript(
-	scriptPath: string,
-	args: string,
-	env: Record<string, string>,
-	signal?: AbortSignal,
-): Promise<string> {
-	return new Promise((resolve, reject) => {
-		// Use shell mode: the script is invoked like `<path> <args>` via /bin/sh -c,
-		// so the user's `args` string gets normal shell word-splitting and quoting.
-		// The script itself is responsible for handling its argv.
-		const cmd = `${shellQuote(scriptPath)} ${args}`;
-		const child = spawn(cmd, {
-			shell: true,
-			env: { ...process.env, ...env },
-			signal,
-		});
-
-		const out: Buffer[] = [];
-		const err: Buffer[] = [];
-		child.stdout?.on("data", (d: Buffer) => out.push(d));
-		child.stderr?.on("data", (d: Buffer) => err.push(d));
-
-		child.on("error", (e) => reject(e));
-		child.on("close", (code) => {
-			const stdout = Buffer.concat(out).toString("utf8");
-			const stderr = Buffer.concat(err).toString("utf8");
-			if (code === 0) {
-				resolve(stderr.trim() ? `${stdout}\n[stderr]\n${stderr}` : stdout);
-			} else {
-				reject(new Error(`${scriptPath} exited ${code}\n${stderr || stdout}`));
-			}
-		});
-	});
-}
-
-/** Minimal shell-quoting for the script path (spaces, etc). */
-function shellQuote(s: string): string {
-	if (/^[\w@%+=:,.\/-]+$/.test(s)) return s;
-	return `'${s.replace(/'/g, `'\\''`)}'`;
 }

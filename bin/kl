@@ -1,0 +1,410 @@
+#!/usr/bin/env bash
+# kl — kiln-lite session launcher.
+#
+# Wraps pi in a tmux session. Each invocation:
+#   1. Generates a new agent-id (<name>-<adj>-<noun>).
+#   2. Spawns a tmux session named after the agent-id.
+#   3. Runs pi with the kiln-lite extension inside that session.
+#   4. Attaches (or switch-client, if already in tmux).
+#
+# Subcommands:
+#   kl [run] [--detach] [--prompt-file FILE] [pi-args...]
+#                           Spawn a new session (default).
+#                           --detach (-d): don't attach; print agent-id to stdout.
+#                           --prompt-file FILE: read initial prompt from FILE and
+#                             pass it to pi as --prompt. Use this instead of
+#                             `kl --prompt "..."` for any prompt that contains
+#                             backticks, $vars, or heredocs — the file path is
+#                             inlined into the command but the file CONTENTS
+#                             never go through a shell. Useful for spawning
+#                             workers with long structured briefs.
+#   kl attach <agent-id>    Attach an existing kl session.
+#   kl list                 List active kl tmux sessions.
+#   kl doctor               Run a diagnostic — checks pi, extension registration,
+#                           kl-msg, daemon socket, agent home, and env.
+#   kl -h | --help          Show this help.
+#
+# Env:
+#   AGENT_HOME              Override the agent home dir (default: ~/.kl/agent).
+#
+# Notes:
+#   - tmux window name == agent-id. Collision is extremely unlikely but if it
+#     happens kl appends a 2-byte hex suffix.
+#   - AGENT_ID is exported into the tmux session env. The kiln-lite extension
+#     prefers $AGENT_ID over UUID-derivation when set.
+#   - Attach uses switch-client when already inside tmux.
+
+set -euo pipefail
+
+# --- resolve real script dir (follow symlinks — npm bin is symlinked) ---
+# `npm link` creates two layers of symlinks: a direct symlink on the bin
+# (`bin/kl` -> `node_modules/kiln-lite/bin/kl`) AND a symlinked DIRECTORY
+# (`node_modules/kiln-lite` -> `~/Git/kiln-lite`). The readlink loop walks
+# the first kind, but we need `cd -P` to resolve symlinked parent
+# directories so REPO_ROOT ends up at the real on-disk path. Skipping -P
+# leaves REPO_ROOT pointing at the npm-linked copy — any tooling that
+# re-resolves paths relative to cwd or realpath can diverge from there,
+# producing "kiln-lite not registered" style confusion.
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+    _dir="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd -P)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$_dir/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd -P)"
+REPO_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd -P)"
+EXT_PATH="$REPO_ROOT/extensions/kiln-lite/index.ts"
+
+# --- name pools (kept in sync with extensions/kiln-lite/identity.ts) ---
+#
+# If you edit either list, edit both. Short on purpose so dupe maintenance
+# is trivial. Any divergence means a kl-launched session and an extension-
+# generated id can't share vocabulary but no other breakage.
+ADJECTIVES=(
+    bright still deep coral ember iron jade thorn swift wild
+    storm blue red shadow stone silver first dawn dusk quiet
+    bold hollow gentle amber copper frost gold grey green lone
+    loud misty moon north sharp sleek slow small snow soft
+    south tall tame warm wise young ancient calm clear clever
+    crisp fair fine glad keen lush mild neat proud rare
+)
+NOUNS=(
+    raven hare falcon wren keep brook isle peak moth crane
+    forge ridge jay pine haven pond marsh bear wolf fox
+    stag otter owl lark finch hawk dove heron eagle thrush
+    glade grove vale fen mesa cliff shore bay reef cove
+    fjord loch dune moor heath cairn tower gate hall hearth
+    barn mill forest wood copse trail path lane road bridge
+)
+
+die() { echo "kl: $*" >&2; exit 1; }
+
+usage() {
+    # Print the top-of-file comment block (up to the first blank or non-comment line).
+    awk '
+        NR == 1 { next }                 # skip shebang
+        /^[^#]/ { exit }                 # stop at first non-comment line
+        /^#$/ { print ""; next }         # blank-comment -> blank line
+        /^# ?/ { sub(/^# ?/, ""); print }
+    ' "$SCRIPT_PATH"
+    exit 1
+}
+
+# --- agent-id generation ---
+
+# Deterministically derive an agent-id from a random seed.
+# Mirrors extensions/kiln-lite/identity.ts shape: <name>-<adj>-<noun> via
+# SHA-256 of a random seed, two 4-byte spans as indices.
+generate_agent_id() {
+    local name="${1:-agent}"
+    # 16 bytes of entropy -> sha256 -> 64 hex chars
+    local hex
+    hex="$(head -c 16 /dev/urandom | shasum -a 256 | cut -d' ' -f1)"
+    # First 4 bytes (8 hex) and next 4 bytes (8 hex) as unsigned ints.
+    # Prefix with 0 and leading-zero-strip to avoid octal interpretation.
+    local adj_raw noun_raw
+    adj_raw="${hex:0:8}"
+    noun_raw="${hex:8:8}"
+    local adj_idx noun_idx
+    adj_idx=$(( (16#${adj_raw}) % ${#ADJECTIVES[@]} ))
+    noun_idx=$(( (16#${noun_raw}) % ${#NOUNS[@]} ))
+    printf '%s-%s-%s' "$name" "${ADJECTIVES[$adj_idx]}" "${NOUNS[$noun_idx]}"
+}
+
+# Parse `name:` from agent.yml without bringing in a yaml dep. Trivial
+# for the shape our scaffold uses; fine for more complex yaml too since we
+# only match a top-level `name:` line.
+resolve_agent_name() {
+    local agent_home="${1:-$HOME/.kl/agent}"
+    if [ -f "$agent_home/agent.yml" ]; then
+        local n
+        n="$(awk '/^name:[[:space:]]*/{sub(/^name:[[:space:]]*/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
+        if [ -n "$n" ]; then
+            printf '%s' "$n"
+            return
+        fi
+    fi
+    printf 'agent'
+}
+
+# --- tmux helpers ---
+
+require_tool() {
+    local tool="$1" hint="${2:-}"
+    command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH${hint:+ — $hint}"
+}
+
+# Enter a tmux session by switch-client if already inside tmux, else attach.
+enter_session() {
+    local session="$1"
+    if [ -n "${TMUX:-}" ]; then
+        exec tmux switch-client -t "$session"
+    else
+        exec tmux attach-session -t "$session"
+    fi
+}
+
+# --- subcommands ---
+
+cmd_run() {
+    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
+    [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist — run $REPO_ROOT/install.sh first"
+    [ -f "$EXT_PATH" ] || die "extension entry not found at $EXT_PATH (is the kiln-lite repo intact?)"
+
+    # Consume --detach / -d and --prompt-file out of args; everything else
+    # is passed to pi. Accept leading or interspersed: `kl --detach foo` and
+    # `kl -- foo` both work. --prompt-file FILE reads the file and appends
+    # its contents to pi_args as the FINAL positional argument — pi's shape
+    # is `pi [options] [@files...] [messages...]`, so the prompt goes at
+    # the end. The contents live as a shell variable and reach pi via tmux's
+    # execvp path, so they never get re-interpreted by a shell. That's the
+    # whole point: write weird chars, backticks, heredoc-ish content into a
+    # file and feed it in safely.
+    local detach=0
+    local pi_args=()
+    local prompt_file=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --detach|-d) detach=1 ;;
+            --prompt-file)
+                shift
+                [ $# -ge 1 ] || die "--prompt-file requires a path argument"
+                prompt_file="$1"
+                ;;
+            --prompt-file=*)
+                prompt_file="${1#--prompt-file=}"
+                ;;
+            --) shift; pi_args+=("$@"); break ;;
+            *) pi_args+=("$1") ;;
+        esac
+        shift
+    done
+
+    if [ -n "$prompt_file" ]; then
+        [ -f "$prompt_file" ] || die "--prompt-file: no such file: $prompt_file"
+        local prompt_content
+        prompt_content="$(cat "$prompt_file")" || die "--prompt-file: could not read $prompt_file"
+        # Append as final positional — pi treats trailing args as the prompt.
+        pi_args+=("$prompt_content")
+    fi
+
+    require_tool tmux "install with: brew install tmux"
+    require_tool pi "install @mariozechner/pi-coding-agent"
+
+    local pi_bin name agent_id
+    pi_bin="$(command -v pi)"
+    name="$(resolve_agent_name "$agent_home")"
+    agent_id="$(generate_agent_id "$name")"
+
+    # If a tmux session already exists with this name, suffix until free.
+    # Collisions are rare (one in ~3600 per name prefix) but possible with
+    # long-running sessions that outlive their spawns.
+    while tmux has-session -t "$agent_id" 2>/dev/null; do
+        agent_id="${agent_id}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
+    done
+
+    # Build the tmux command. -e passes env vars into the new session; we
+    # export AGENT_ID (so the extension picks it up directly) and AGENT_HOME
+    # (in case the caller's AGENT_HOME was inherited from shell, not set
+    # explicitly). _KL=1 is a marker for the extension + future `kl` recursion.
+    # Use ${arr[@]+"${arr[@]}"} idiom to safely expand an empty array under
+    # `set -u` (bash treats a bare "${arr[@]}" on an empty array as unbound).
+    tmux new-session -d -s "$agent_id" \
+        -e "AGENT_ID=$agent_id" \
+        -e "AGENT_HOME=$agent_home" \
+        -e "_KL=1" \
+        "$pi_bin" -e "$EXT_PATH" ${pi_args[@]+"${pi_args[@]}"}
+
+    if [ "$detach" = 1 ]; then
+        # Peer-spawn mode: agent-id on stdout (for capture), log on stderr.
+        # Canonical idiom: id=$(kl --detach --prompt "...")
+        echo "kl: spawned $agent_id (detached)" >&2
+        echo "$agent_id"
+        return 0
+    fi
+
+    echo "kl: spawned $agent_id" >&2
+    enter_session "$agent_id"
+}
+
+cmd_attach() {
+    [ $# -ge 1 ] || die "attach requires an agent-id (use 'kl list' to see active sessions)"
+    local id="$1"
+    require_tool tmux
+    tmux has-session -t "$id" 2>/dev/null || die "no tmux session: $id"
+    enter_session "$id"
+}
+
+cmd_list() {
+    require_tool tmux
+    # Use @kl marker if we decide to tag kl-owned sessions; for now just list
+    # tmux sessions matching our name shape (word-word-word). A stricter filter
+    # would require setting a tmux user option on spawn — deferred.
+    local sessions
+    if ! sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null)"; then
+        echo "(no tmux server running)"
+        return 0
+    fi
+    local any=0
+    while IFS= read -r s; do
+        # Heuristic filter: <word>-<word>-<word>[-suffix]
+        [[ "$s" =~ ^[a-z]+-[a-z]+-[a-z]+ ]] || continue
+        echo "$s"
+        any=1
+    done <<< "$sessions"
+    [ "$any" = 1 ] || echo "(no kl sessions — use 'tmux list-sessions' for all tmux sessions)"
+}
+
+# --- doctor: diagnostic ---
+# Prints a checklist of the things kl depends on + whether each is healthy.
+# Meant for "something's wrong and I don't know what" — dump this output
+# verbatim when reporting an issue.
+cmd_doctor() {
+    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
+    local ok=0 fail=0 warn=0
+    local pass_pfx="  ok   " fail_pfx="  FAIL " warn_pfx="  warn "
+
+    say_ok()   { echo "${pass_pfx}$*"; ok=$((ok + 1)); }
+    say_fail() { echo "${fail_pfx}$*"; fail=$((fail + 1)); }
+    say_warn() { echo "${warn_pfx}$*"; warn=$((warn + 1)); }
+
+    echo "kl doctor — kiln-lite diagnostic"
+    echo
+
+    # 1. Script + repo root resolution
+    echo "[paths]"
+    echo "  script     $SCRIPT_PATH"
+    echo "  repo root  $REPO_ROOT"
+    echo "  extension  $EXT_PATH"
+    if [ -f "$EXT_PATH" ]; then
+        say_ok "extension entry found"
+    else
+        say_fail "extension entry missing at $EXT_PATH"
+    fi
+    echo
+
+    # 2. Prereqs
+    echo "[prerequisites]"
+    if command -v node >/dev/null 2>&1; then
+        say_ok "node: $(node --version 2>/dev/null)"
+    else
+        say_fail "node not on PATH"
+    fi
+    if command -v pi >/dev/null 2>&1; then
+        say_ok "pi: $(command -v pi)"
+    else
+        say_fail "pi not on PATH"
+    fi
+    if command -v tmux >/dev/null 2>&1; then
+        say_ok "tmux: $(tmux -V 2>/dev/null)"
+    else
+        say_fail "tmux not on PATH"
+    fi
+    if command -v kl-msg >/dev/null 2>&1; then
+        say_ok "kl-msg: $(command -v kl-msg)"
+    else
+        say_fail "kl-msg not on PATH (run $REPO_ROOT/install.sh)"
+    fi
+    echo
+
+    # 3. pi extension registration
+    # Expected: NOT registered globally. kl loads the extension via -e <path>;
+    # bare `pi` is intentionally extension-free (so e.g. quick one-off pi
+    # runs don't spin up daemon/tmux plumbing). If kiln-lite shows up in
+    # `pi list`, it's a leftover from an older install.sh that did
+    # `pi install .` — the current install.sh removes it.
+    echo "[pi registration]"
+    if command -v pi >/dev/null 2>&1; then
+        local pi_out
+        if pi_out="$(pi list 2>&1)"; then
+            if echo "$pi_out" | grep -q "kiln-lite"; then
+                say_warn "kiln-lite is registered globally with pi — this is legacy state."
+                say_warn "bare 'pi' will now auto-load kiln-lite (probably not what you want)."
+                say_warn "run: pi remove kiln-lite   (or rerun install.sh to clean up)"
+            else
+                say_ok "kiln-lite not in 'pi list' — kl loads the extension directly via -e"
+            fi
+        else
+            say_warn "pi list failed: $pi_out"
+        fi
+    fi
+    echo
+
+    # 4. Agent home
+    echo "[agent home]"
+    echo "  AGENT_HOME=$agent_home"
+    if [ -d "$agent_home" ]; then
+        say_ok "directory exists"
+        if [ -f "$agent_home/agent.yml" ]; then
+            say_ok "agent.yml present"
+        else
+            say_warn "agent.yml missing — run $REPO_ROOT/install.sh to scaffold"
+        fi
+        if [ -d "$agent_home/tools" ]; then
+            say_ok "tools/ present ($(ls "$agent_home/tools" 2>/dev/null | wc -l | tr -d ' ') entries)"
+        else
+            say_warn "tools/ missing"
+        fi
+        if [ -d "$agent_home/skills" ]; then
+            say_ok "skills/ present"
+        else
+            say_warn "skills/ missing"
+        fi
+    else
+        say_fail "AGENT_HOME does not exist — run $REPO_ROOT/install.sh"
+    fi
+    echo
+
+    # 5. Daemon
+    echo "[daemon]"
+    local sock="${XDG_RUNTIME_DIR:-/tmp}/kiln-lite.sock"
+    [ -n "${XDG_RUNTIME_DIR:-}" ] || sock="/tmp/kiln-lite-$(id -u).sock"
+    echo "  socket     $sock"
+    if [ -S "$sock" ]; then
+        say_ok "socket file exists"
+        if command -v kl-msg >/dev/null 2>&1; then
+            # Minimal ping — status call returns quickly if the daemon is up.
+            # kl-msg needs AGENT_ID/AGENT_HOME even for status; fake if unset.
+            local probe_id="kl-doctor-$$"
+            if AGENT_ID="${AGENT_ID:-$probe_id}" \
+               AGENT_HOME="${AGENT_HOME:-$agent_home}" \
+               kl-msg status >/dev/null 2>&1; then
+                say_ok "daemon responds to status"
+            else
+                say_warn "daemon socket present but 'kl-msg status' failed — stale socket?"
+            fi
+        fi
+    else
+        say_warn "no daemon socket (will autostart on first kl-msg call)"
+    fi
+    echo
+
+    # 6. Current env
+    echo "[current env]"
+    echo "  AGENT_ID       ${AGENT_ID:-(unset)}"
+    echo "  AGENT_HOME     ${AGENT_HOME:-(unset)}"
+    echo "  _KL            ${_KL:-(unset)}"
+    echo "  TMUX           ${TMUX:-(unset)}"
+    echo
+
+    # 7. Summary
+    echo "summary: ok=$ok warn=$warn fail=$fail"
+    [ "$fail" = 0 ]
+}
+
+# --- main ---
+
+main() {
+    case "${1:-}" in
+        run) shift; cmd_run "$@" ;;
+        attach) shift; cmd_attach "$@" ;;
+        list|ls) shift; cmd_list "$@" ;;
+        doctor) shift; cmd_doctor "$@" ;;
+        -h|--help|help) usage ;;
+        "") cmd_run ;;
+        # Anything else — treat as passthrough pi args via `run`.
+        *) cmd_run "$@" ;;
+    esac
+}
+
+main "$@"
