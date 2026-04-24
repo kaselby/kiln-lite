@@ -6,21 +6,29 @@
  *   Idle delivery — agent has no turn in flight:
  *     pi.sendUserMessage(body) fires immediately — the message IS the
  *     user turn. No notification wrapper; the frontmatter + body go in
- *     as-is. The delivered file is moved to $INBOX/.read/.
+ *     as-is. A sibling `.read` marker is written to dedup.
  *
  *   Mid-turn ping — a turn is in flight:
  *     We append a per-message [Notification | …] block to the next
  *     tool_result (matching kiln's format — sender, source, timestamp,
  *     and the message file path). The agent Reads the file to get the
- *     body. Injection dedup is session-lifetime so the same message
- *     isn't re-pinged across subsequent tool_results in the same turn.
+ *     body. The `.read` marker is written at ping time so the watcher
+ *     doesn't re-deliver as a user turn between turns.
  *
- * Dedup: session-resident via pi.appendEntry("inbox-cursor", {ids}),
- * with .read/ move as belt-and-suspenders for cross-session dedup.
+ * Read tracking:
+ *   When the agent Reads an inbox .md via Pi's Read tool, the tool_result
+ *   hook calls `handleReadOfPath(path)` on the watcher, which touches the
+ *   `.read` marker. Idempotent — messages already pinged/delivered already
+ *   have a marker; this is belt-and-suspenders for the case where the
+ *   agent reads the file before any notification fires (e.g. via `ls`).
+ *
+ * Marker convention matches kiln's hooks.py: `<name>.md` is the message,
+ * `<name>.read` (empty sibling) signals "handled". Directory-move to a
+ * `.read/` subdirectory (the pre-2026-04-24 scheme) is obsolete.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, watch, type FSWatcher } from "node:fs";
-import { join, basename } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, watch, type FSWatcher } from "node:fs";
+import { join, resolve } from "node:path";
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
@@ -31,10 +39,16 @@ export interface InboxWatcher {
 	unreadCount(): number;
 	/**
 	 * Called from a tool_result handler to enrich mid-turn results with an
-	 * unread indicator. Returns the suffix string (may be empty).
+	 * unread indicator. Returns the suffix string (may be empty). Touches
+	 * the `.read` marker for any messages surfaced in this pass.
 	 */
 	midTurnSuffix(): string;
-	/** Mark all currently-known messages as seen (e.g. after agent reads them). */
+	/**
+	 * Invoked from the tool_result hook when the agent runs Pi's Read tool
+	 * on a file. No-op unless the path is an inbox .md file we own.
+	 */
+	handleReadOfPath(filePath: string): void;
+	/** Mark all currently-pending messages as seen — called at agent_end. */
 	markAllSeen(): void;
 }
 
@@ -51,51 +65,43 @@ export interface InboxWatcherOptions {
 
 export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	const { inboxDir, pi, isIdle, warn } = opts;
-	const readDir = join(inboxDir, ".read");
+	const resolvedInboxDir = resolve(inboxDir);
 
-	// Ensure dirs exist.
 	try {
 		mkdirSync(inboxDir, { recursive: true });
-		mkdirSync(readDir, { recursive: true });
 	} catch (err) {
-		warn(`kiln-lite: failed to create inbox dirs: ${(err as Error).message}`);
+		warn(`kiln-lite: failed to create inbox dir: ${(err as Error).message}`);
 	}
 
-	// Track seen IDs in-memory. Initial scan populates with existing .read/ contents
-	// so resumed sessions don't redeliver.
+	// seen = "this .md has been handled". Source of truth is the sibling
+	// `.read` marker on disk; `seen` is just an in-memory cache populated at
+	// startup + kept in sync as we process messages.
 	const seen = new Set<string>();
 	try {
-		for (const name of readdirSync(readDir)) {
-			seen.add(name);
+		for (const name of readdirSync(inboxDir)) {
+			if (!name.endsWith(".md")) continue;
+			if (hasMarker(inboxDir, name)) seen.add(name);
 		}
 	} catch {
-		// readDir missing — ok.
+		// Inbox missing — ok, we just created it above.
 	}
 
-	// On startup, also drain anything sitting in $INBOX. If agent is idle, deliver
-	// each one; if not (shouldn't happen at session_start, but guard anyway), just
-	// flag them as pending.
+	// pendingIds: .md files the watcher saw arrive mid-turn but hasn't yet
+	// surfaced as a [Notification | …] ping. Drains on every midTurnSuffix()
+	// call. In the pathological case where agent_end fires without a single
+	// tool_result in between, markAllSeen() sweeps it.
 	let pendingIds: string[] = [];
-
-	// Session-lifetime set of filenames we've already surfaced as a mid-turn
-	// [Notification | …] block. Matches kiln's behaviour (hooks.py `_injected`):
-	// once the agent's been told about a message, we don't re-notify on every
-	// subsequent tool_result in the same turn. Cleared alongside pendingIds on
-	// agent_end via markAllSeen().
-	const injected = new Set<string>();
 
 	const deliverOrQueue = (filename: string): void => {
 		if (seen.has(filename)) return;
-		const full = join(inboxDir, filename);
-		if (!existsSync(full)) return;
-
-		let body: string;
-		try {
-			body = readFileSync(full, "utf8");
-		} catch (err) {
-			warn(`kiln-lite: failed to read inbox message ${filename}: ${(err as Error).message}`);
+		// Marker may exist from a prior session that was killed mid-deliver —
+		// respect it.
+		if (hasMarker(inboxDir, filename)) {
+			seen.add(filename);
 			return;
 		}
+		const full = join(inboxDir, filename);
+		if (!existsSync(full)) return;
 
 		if (isIdle()) {
 			// Deliver immediately as a real user turn. No notification wrapper
@@ -104,17 +110,24 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			// misrepresent it as a system ping. The message body goes in as-is
 			// (frontmatter + body); the agent reads sender/summary/channel
 			// from the frontmatter naturally.
+			let body: string;
+			try {
+				body = readFileSync(full, "utf8");
+			} catch (err) {
+				warn(`kiln-lite: failed to read inbox message ${filename}: ${(err as Error).message}`);
+				return;
+			}
 			try {
 				pi.sendUserMessage(body);
 			} catch (err) {
 				warn(`kiln-lite: sendUserMessage failed for ${filename}: ${(err as Error).message}`);
 				return;
 			}
-			// Move to .read/ and remember.
-			moveToRead(full, join(readDir, filename), warn);
+			touchMarker(inboxDir, filename, warn);
 			seen.add(filename);
 		} else {
-			// Queue for mid-turn surface — body stays in $INBOX until agent reads it.
+			// Queue for mid-turn surface — body stays in $INBOX until the agent
+			// reads it; marker is written when the ping is built.
 			if (!pendingIds.includes(filename)) pendingIds.push(filename);
 		}
 	};
@@ -122,30 +135,25 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	// Initial drain of existing files.
 	try {
 		for (const name of readdirSync(inboxDir)) {
-			if (name === ".read" || !name.endsWith(".md")) continue;
+			if (!name.endsWith(".md")) continue;
 			deliverOrQueue(name);
 		}
 	} catch {
-		// Inbox missing — ok, we just created it above.
+		// Inbox missing — ok.
 	}
 
 	let watcher: FSWatcher | null = null;
 	try {
 		watcher = watch(inboxDir, { persistent: false }, (_evt, filename) => {
 			if (!filename) return;
-			if (filename === ".read" || filename.startsWith(".")) return;
 			if (!filename.endsWith(".md")) return;
-			// fs.watch fires on rename *and* delete; re-check existence.
+			// fs.watch fires on rename + delete; re-check existence.
 			if (!existsSync(join(inboxDir, filename))) {
-				// File left the inbox (typically moved to .read/ by the `message
-				// read` shell tool, which bypasses the extension). Prune from
-				// pendingIds so the mid-turn [INBOX: N] counter reflects reality
-				// within a turn — otherwise it's monotonic-increasing until
-				// agent_end calls markAllSeen().
+				// File left the inbox — unusual under marker-based tracking
+				// (messages don't move anymore) but keep the safety net:
+				// prune pending + remember we've handled it.
 				const idx = pendingIds.indexOf(filename);
 				if (idx !== -1) pendingIds.splice(idx, 1);
-				// Also remember we've handled it, so a (pathological) re-appearance
-				// of the same filename doesn't trigger redelivery.
 				seen.add(filename);
 				return;
 			}
@@ -158,8 +166,6 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 		warn(`kiln-lite: failed to start inbox watcher: ${(err as Error).message}`);
 	}
 
-	// Persist cursor — session-resident dedup (see design spec §7).
-	// The .read/ move handles cross-session dedup as belt-and-suspenders.
 	const persistCursor = (): void => {
 		try {
 			pi.appendEntry("inbox-cursor", { ids: Array.from(seen) });
@@ -184,30 +190,46 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			return pendingIds.length;
 		},
 		midTurnSuffix(): string {
-			// Build per-message [Notification | …] blocks for any pending file
-			// we haven't already surfaced this turn. Matches kiln's hooks.py
-			// output — structured header + full message path on the next line,
-			// so the agent can Read directly.
+			// Build per-message [Notification | …] blocks for every pending
+			// file. Touch markers as we go — kiln's pattern, prevents the
+			// watcher from re-delivering the same message as an idle user
+			// turn in a later window. Also prevents redundant re-pings on
+			// subsequent tool_results this turn (pendingIds is cleared).
+			if (pendingIds.length === 0) return "";
 			const blocks: string[] = [];
 			for (const name of pendingIds) {
-				if (injected.has(name)) continue;
 				const full = join(inboxDir, name);
 				const parsed = parseMessage(full);
 				const header = parsed ? formatMessageSource(parsed) : `AGENT MESSAGE | source: kiln-lite`;
 				blocks.push(`[Notification | ${header}]\n${full}`);
-				injected.add(name);
+				touchMarker(inboxDir, name, warn);
+				seen.add(name);
 			}
-			if (blocks.length === 0) return "";
+			pendingIds = [];
 			return `\n\n${blocks.join("\n\n")}`;
 		},
+		handleReadOfPath(filePath: string): void {
+			// Only react if the path lives inside our inbox dir and points
+			// at a .md message file. Everything else (tools dir, code, etc.)
+			// passes through untouched.
+			if (!filePath) return;
+			const abs = resolve(filePath);
+			const rel = relativeUnder(resolvedInboxDir, abs);
+			if (rel === null) return;
+			if (!rel.endsWith(".md")) return;
+			// Files nested under a subdir are not our messages (we don't use
+			// subdirs; legacy `.read/` leftovers are explicitly not ours).
+			if (rel.includes("/")) return;
+			if (!existsSync(abs)) return;
+			touchMarker(inboxDir, rel, warn);
+			seen.add(rel);
+			const idx = pendingIds.indexOf(rel);
+			if (idx !== -1) pendingIds.splice(idx, 1);
+		},
 		markAllSeen(): void {
-			// Move all pending to .read/ and mark seen.
 			for (const name of pendingIds) {
-				const src = join(inboxDir, name);
-				const dst = join(readDir, name);
-				if (existsSync(src)) moveToRead(src, dst, warn);
+				touchMarker(inboxDir, name, warn);
 				seen.add(name);
-				injected.delete(name);
 			}
 			pendingIds = [];
 			persistCursor();
@@ -215,6 +237,39 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	};
 }
 
+
+/** Sibling `.read` marker path for a .md message filename. */
+function markerPathFor(inboxDir: string, mdFilename: string): string {
+	const base = mdFilename.replace(/\.md$/, "");
+	return join(inboxDir, `${base}.read`);
+}
+
+function hasMarker(inboxDir: string, mdFilename: string): boolean {
+	return existsSync(markerPathFor(inboxDir, mdFilename));
+}
+
+/** Write an empty `.read` sibling marker for a .md message. Idempotent. */
+function touchMarker(inboxDir: string, mdFilename: string, warn: (msg: string) => void): void {
+	const path = markerPathFor(inboxDir, mdFilename);
+	try {
+		// Writing empty is idempotent + preserves mtime semantics without
+		// needing utimesSync. Overwriting an existing marker is harmless.
+		writeFileSync(path, "");
+	} catch (err) {
+		warn(`kiln-lite: failed to touch marker ${path}: ${(err as Error).message}`);
+	}
+}
+
+/**
+ * Return `abs`'s path relative to `base` if `abs` lives inside `base`,
+ * else `null`. Does NOT require `abs` to exist.
+ */
+function relativeUnder(base: string, abs: string): string | null {
+	const b = base.endsWith("/") ? base : `${base}/`;
+	if (abs === base) return "";
+	if (!abs.startsWith(b)) return null;
+	return abs.slice(b.length);
+}
 
 
 /** Parsed message metadata mirroring kiln's parse_message() shape. */
@@ -340,13 +395,4 @@ function formatMessageSource(msg: ParsedMessage): string {
 	}
 
 	return parts.join(" | ");
-}
-
-function moveToRead(src: string, dst: string, warn: (msg: string) => void): void {
-	try {
-		renameSync(src, dst);
-	} catch (err) {
-		// rename across devices can fail; try copy+unlink as fallback
-		warn(`kiln-lite: could not move ${basename(src)} to .read/: ${(err as Error).message}`);
-	}
 }
