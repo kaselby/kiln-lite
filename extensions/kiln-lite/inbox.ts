@@ -1,19 +1,32 @@
 /**
  * Inbox watcher + delivery.
  *
- * Watches $INBOX for new .md files. Two delivery modes:
+ * Model: queue + dispatch. Arrivals always enqueue; dispatch is a separate
+ * step invoked at each trigger point, consulting `isIdle()` at dispatch time
+ * rather than baking an arrival-time decision into the queue entry.
  *
- *   Idle delivery — agent has no turn in flight:
- *     pi.sendUserMessage(body) fires immediately — the message IS the
- *     user turn. No notification wrapper; the frontmatter + body go in
- *     as-is. A sibling `.read` marker is written to dedup.
+ *   Queue:
+ *     `pendingIds` — .md filenames observed by the fs.watch callback (or the
+ *     initial drain) that haven't been surfaced yet. Deduped on insert.
  *
- *   Mid-turn ping — a turn is in flight:
- *     We append a per-message [Notification | …] block to the next
- *     tool_result (matching kiln's format — sender, source, timestamp,
- *     and the message file path). The agent Reads the file to get the
- *     body. The `.read` marker is written at ping time so the watcher
- *     doesn't re-deliver as a user turn between turns.
+ *   Two dispatch modes, mapped to two output sinks:
+ *
+ *     dispatchIdle()   — drains the queue via pi.sendUserMessage(body). Each
+ *                        message becomes a real user turn; frontmatter + body
+ *                        go in as-is. Marker written on success. Triggered
+ *                        at startup (initial drain) and at agent_end.
+ *
+ *     midTurnSuffix()  — builds [Notification | …] blocks for pending
+ *                        messages (matching kiln's format) and returns the
+ *                        joined suffix string. Markers are touched inline.
+ *                        Triggered from the tool_result handler, which
+ *                        appends the suffix to the LLM-visible tool result.
+ *
+ *   Idle vs mid-turn choice lives at the trigger points, not inside the
+ *   queue. fs.watch calls enqueue then — if `isIdle()` — dispatchIdle.
+ *   tool_result calls midTurnSuffix (by definition we're mid-turn when a
+ *   tool_result fires). agent_end calls dispatchIdle (agent transitioning
+ *   to idle; the cleanup-sentinel agent_end is skipped — see index.ts).
  *
  * Read tracking:
  *   When the agent Reads an inbox .md via Pi's Read tool, the tool_result
@@ -48,8 +61,18 @@ export interface InboxWatcher {
 	 * on a file. No-op unless the path is an inbox .md file we own.
 	 */
 	handleReadOfPath(filePath: string): void;
-	/** Mark all currently-pending messages as seen — called at agent_end. */
-	markAllSeen(): void;
+	/**
+	 * Drain the queue as user-message turns. For each pending .md, read the
+	 * body and call `pi.sendUserMessage(body)`; on success touch the marker
+	 * and mark seen. On read/send failure, leave the name in the queue so a
+	 * later trigger (next tool_result → midTurnSuffix, or a later
+	 * dispatchIdle) can re-surface it.
+	 *
+	 * Called at startup (initial drain — session_start is idle) and at
+	 * agent_end (agent is transitioning to idle). Safe to call when the
+	 * queue is empty — no-op.
+	 */
+	dispatchIdle(): void;
 }
 
 export interface InboxWatcherOptions {
@@ -86,68 +109,82 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 		// Inbox missing — ok, we just created it above.
 	}
 
-	// pendingIds: .md files the watcher saw arrive mid-turn but hasn't yet
-	// surfaced as a [Notification | …] ping. Drains on every midTurnSuffix()
-	// call. In the pathological case where agent_end fires without a single
-	// tool_result in between, markAllSeen() sweeps it.
+	// pendingIds: the queue. .md filenames observed by fs.watch (or the
+	// initial drain) that haven't been surfaced yet. Deduped on insert.
+	// Drained by dispatchIdle (as user turns) or midTurnSuffix (as pings).
 	let pendingIds: string[] = [];
 
-	const deliverOrQueue = (filename: string): void => {
+	/**
+	 * Queue a filename — no dispatch decision. Skips if already seen, already
+	 * marked on disk (prior-session marker), or missing. Marker-present means
+	 * we've processed it before; record in `seen` and drop.
+	 */
+	const enqueue = (filename: string): void => {
 		if (seen.has(filename)) return;
-		// Marker may exist from a prior session that was killed mid-deliver —
-		// respect it.
 		if (hasMarker(inboxDir, filename)) {
 			seen.add(filename);
 			return;
 		}
-		const full = join(inboxDir, filename);
-		if (!existsSync(full)) return;
+		if (!existsSync(join(inboxDir, filename))) return;
+		if (!pendingIds.includes(filename)) pendingIds.push(filename);
+	};
 
-		if (isIdle()) {
-			// Deliver immediately as a real user turn. No notification wrapper
-			// — this is semantically different from the mid-turn path. Idle
-			// delivery IS the user turn; a [Notification | …] frame would
-			// misrepresent it as a system ping. The message body goes in as-is
-			// (frontmatter + body); the agent reads sender/summary/channel
-			// from the frontmatter naturally.
+	/**
+	 * Drain `pendingIds` as user-message turns. For each, read the body and
+	 * call pi.sendUserMessage; on success touch marker + mark seen. On
+	 * read/send failure, the name stays in the queue — a later dispatch
+	 * (tool_result → midTurnSuffix, or a later dispatchIdle) re-surfaces it.
+	 *
+	 * Does not consult `isIdle()` — callers are responsible for choosing the
+	 * right dispatch mode. (See fs.watch callback + agent_end handler.)
+	 */
+	const dispatchIdle = (): void => {
+		if (pendingIds.length === 0) return;
+		const remaining: string[] = [];
+		for (const filename of pendingIds) {
+			const full = join(inboxDir, filename);
 			let body: string;
 			try {
 				body = readFileSync(full, "utf8");
 			} catch (err) {
 				warn(`kiln-lite: failed to read inbox message ${filename}: ${(err as Error).message}`);
-				return;
+				remaining.push(filename);
+				continue;
 			}
 			try {
 				pi.sendUserMessage(body);
 			} catch (err) {
 				warn(`kiln-lite: sendUserMessage failed for ${filename}: ${(err as Error).message}`);
-				return;
+				remaining.push(filename);
+				continue;
 			}
 			touchMarker(inboxDir, filename, warn);
 			seen.add(filename);
-		} else {
-			// Queue for mid-turn surface — body stays in $INBOX until the agent
-			// reads it; marker is written when the ping is built.
-			if (!pendingIds.includes(filename)) pendingIds.push(filename);
 		}
+		pendingIds = remaining;
 	};
 
-	// Initial drain of existing files.
+	// Initial drain of existing files. session_start is idle by definition
+	// (no turn in flight yet), so queue everything then dispatch as user
+	// turns — each becomes a real user message the agent sees at startup.
 	try {
 		for (const name of readdirSync(inboxDir)) {
 			if (!name.endsWith(".md")) continue;
-			deliverOrQueue(name);
+			enqueue(name);
 		}
 	} catch {
 		// Inbox missing — ok.
 	}
+	dispatchIdle();
 
 	let watcher: FSWatcher | null = null;
 	try {
 		watcher = watch(inboxDir, { persistent: false }, (_evt, filename) => {
 			if (!filename) return;
+			// fs.watch fires on any file creation/rename/delete in the dir,
+			// including `.read` marker writes. Filter to our message files.
 			if (!filename.endsWith(".md")) return;
-			// fs.watch fires on rename + delete; re-check existence.
+			// Re-check existence — rename + delete events hit the same branch.
 			if (!existsSync(join(inboxDir, filename))) {
 				// File left the inbox — unusual under marker-based tracking
 				// (messages don't move anymore) but keep the safety net:
@@ -157,7 +194,12 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 				seen.add(filename);
 				return;
 			}
-			deliverOrQueue(filename);
+			enqueue(filename);
+			// Re-evaluate dispatch at arrival time. If the agent is idle,
+			// drain straight to user turns; if mid-turn, leave in queue for
+			// the next tool_result (midTurnSuffix) or agent_end
+			// (dispatchIdle) to surface.
+			if (isIdle()) dispatchIdle();
 		});
 		watcher.on("error", (err) => {
 			warn(`kiln-lite: inbox watcher error: ${err.message}`);
@@ -226,12 +268,8 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			const idx = pendingIds.indexOf(rel);
 			if (idx !== -1) pendingIds.splice(idx, 1);
 		},
-		markAllSeen(): void {
-			for (const name of pendingIds) {
-				touchMarker(inboxDir, name, warn);
-				seen.add(name);
-			}
-			pendingIds = [];
+		dispatchIdle(): void {
+			dispatchIdle();
 			persistCursor();
 		},
 	};
