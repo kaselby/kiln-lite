@@ -31,6 +31,11 @@ export interface AgentConfig {
 	inbox_dir: string;
 	/** Directory for session summaries (relative to $AGENT_HOME). */
 	sessions_dir: string;
+	/**
+	 * Tool calls between `[Session state] ...` suffixes appended to tool
+	 * results. 0 disables the periodic status line. Default 15.
+	 */
+	session_state_interval: number;
 }
 
 /**

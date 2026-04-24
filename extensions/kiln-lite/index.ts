@@ -23,6 +23,7 @@ import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
 import { ensureScaffold } from "./bootstrap.ts";
 import { buildMessageTool } from "./message-tool.ts";
+import { createSessionStateHook, type SessionStateHook } from "./session-state.ts";
 import type { SessionState } from "./types.ts";
 import { DaemonClient } from "../../src/client/index.ts";
 
@@ -31,6 +32,7 @@ export default function (pi: ExtensionAPI): void {
 	let watcher: InboxWatcher | null = null;
 	let toolIndexBlock = "";
 	let daemon: DaemonClient | null = null;
+	let sessionState: SessionStateHook | null = null;
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
 
@@ -146,6 +148,16 @@ export default function (pi: ExtensionAPI): void {
 			warn,
 		});
 
+		// Session state hook — periodic `[Session state] ...` line on tool
+		// results. Closes over mutable locals (daemon, agentId, watcher) via
+		// getters so it sees the live values, not the session_start snapshot.
+		sessionState = createSessionStateHook({
+			getDaemon: () => daemon,
+			getAgentId: () => state?.agentId ?? null,
+			getWatcher: () => watcher,
+			interval: config.session_state_interval,
+		});
+
 		// Run startup commands sequentially.
 		for (const cmd of config.startup) {
 			await runStartupCommand(cmd, env, ctx.cwd, warn);
@@ -165,16 +177,24 @@ export default function (pi: ExtensionAPI): void {
 		return { systemPrompt: composed };
 	});
 
-	// --- tool_result: mid-turn inbox pings + Read-as-read tracking ---
+	// --- tool_result: mid-turn inbox pings + Read-as-read tracking + periodic state ---
 	//
-	// Two responsibilities in one handler:
+	// Three responsibilities in one handler:
 	//   1. When the agent Reads an inbox .md via Pi's Read tool, touch the
 	//      `.read` marker so the watcher doesn't re-deliver that message
 	//      between turns. Idempotent with markers from mid-turn pings.
 	//   2. Append a per-pending [Notification | …] suffix (and touch markers
 	//      as we go, matching kiln's hook pattern). Applies to EVERY tool
 	//      result, including Read — which is fine, the flush is cheap.
-	pi.on("tool_result", async (event, _ctx) => {
+	//   3. Every Nth call (configurable via session_state_interval), append a
+	//      `[Session state] ...` status line mirroring kiln's hook. Skipped
+	//      entirely when the hook reports empty content (disabled, or not an
+	//      emission boundary, or all ambient fields are empty).
+	//
+	// Order: state block first, then notification blocks. State is ambient
+	// framing; notifications are event-triggered content. Reading state
+	// before event makes the LLM's mental model cleaner.
+	pi.on("tool_result", async (event, ctx) => {
 		if (!watcher) return;
 
 		if (event.toolName === "read" && !event.isError) {
@@ -182,8 +202,17 @@ export default function (pi: ExtensionAPI): void {
 			if (filePath) watcher.handleReadOfPath(filePath);
 		}
 
-		const suffix = watcher.midTurnSuffix();
-		if (!suffix) return;
+		const stateBlock = sessionState ? await sessionState.maybeBuildSuffix(ctx) : "";
+		const inboxSuffix = watcher.midTurnSuffix();
+
+		const parts = [stateBlock, inboxSuffix].filter((s) => s.length > 0);
+		if (parts.length === 0) return;
+
+		// inboxSuffix already starts with "\n\n"; stateBlock is bare text.
+		// Normalize so the final suffix is exactly one blank-line separator
+		// between the last existing text and the first block, and one between
+		// blocks.
+		const suffix = `\n\n${parts.map((s) => s.replace(/^\n+/, "")).join("\n\n")}`;
 		const patched = appendTextToContent(event.content, suffix);
 		return { content: patched, details: event.details, isError: event.isError };
 	});
