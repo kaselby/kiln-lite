@@ -188,14 +188,26 @@ export default function (pi: ExtensionAPI): void {
 		return { content: patched, details: event.details, isError: event.isError };
 	});
 
-	// --- agent_end: check for cleanup sentinel + mark inbox as seen ---
+	// --- agent_end: check for cleanup sentinel + drain un-notified inbox ---
+	//
+	// Ordering matters. `handleAgentEnd` returns true iff this agent_end is
+	// the cleanup-sentinel turn — i.e. shutdown is imminent. In that case
+	// we skip the inbox drain: sendUserMessage-ing pending messages here
+	// would queue turns that never run, and we'd have already touched their
+	// markers → silent swallow. Leaving them unmarked means the NEXT session's
+	// initial drain (dispatchIdle at session_start, which is idle) picks
+	// them up as real user turns.
+	//
+	// On a normal (non-cleanup) agent_end, the queue at this point contains
+	// messages that arrived mid-turn but produced no tool_result (text-only
+	// turn) — exactly the set midTurnSuffix never surfaced. The agent is
+	// transitioning to idle, so dispatchIdle is the correct consumer.
 	pi.on("agent_end", async (event, ctx) => {
+		let wasCleanup = false;
 		if (dispatcherRef.current && state) {
-			dispatcherRef.current.handleAgentEnd(ctx, event.messages);
+			wasCleanup = dispatcherRef.current.handleAgentEnd(ctx, event.messages);
 		}
-		// After each turn the agent has seen whatever mid-turn pings we added —
-		// clear the unread queue so we don't re-ping next turn.
-		if (watcher) watcher.markAllSeen();
+		if (!wasCleanup && watcher) watcher.dispatchIdle();
 	});
 
 	// --- resources_discover: register $AGENT_HOME/skills as a skill path ---
