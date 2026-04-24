@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# ---
+# name: sessions
+# description: List active agent sessions. Queries the daemon for live presence; falls back to tmux.
+# arguments: "[list|show <agent-id>] [--others]"
+# ---
+#
+# Subcommands:
+#   list [--others]        List active sessions (default). Self is included
+#                          with a `[self]` marker; pass --others to exclude.
+#   show <agent-id>        Detail view for one session.
+#
+# Primary source of truth is the kiln-lite daemon's presence registry
+# (via kl-msg list-sessions). If the daemon is unreachable, falls back
+# to tmux session listing with the <word>-<word>-<word> heuristic filter.
+#
+# Requires env: $AGENT_HOME, $AGENT_ID.
+
+set -euo pipefail
+
+: "${AGENT_HOME:?AGENT_HOME not set — is kiln-lite loaded?}"
+: "${AGENT_ID:?AGENT_ID not set — is kiln-lite loaded?}"
+
+INBOX_ROOT="${AGENT_HOME}/inbox"
+
+die() { echo "sessions: $*" >&2; exit 1; }
+
+usage() {
+	cat <<'EOF' >&2
+Usage:
+  sessions                      list active sessions (self marked [self])
+  sessions list [--others]      same; --others hides self
+  sessions show <agent-id>      detail view for one session
+EOF
+	exit 1
+}
+
+# --- helpers ---
+
+count_unread() {
+	local agent="$1"
+	local dir="${INBOX_ROOT}/${agent}"
+	[ -d "$dir" ] || { echo 0; return; }
+	local n=0
+	for f in "$dir"/*.md; do
+		[ -f "$f" ] && n=$((n + 1))
+	done
+	echo "$n"
+}
+
+# Human-readable duration from ISO timestamp to now.
+# The daemon writes ISO 8601 UTC (trailing `Z`). Both BSD `date -j -f ...`
+# and GNU `date -d ...` interpret the input in the LOCAL tz by default —
+# so we explicitly pass `-u` and strip the `Z` so the format matches.
+human_uptime() {
+	local ts="$1"
+	# Drop fractional seconds + trailing 'Z' so the parse format matches.
+	local clean="${ts%%.*}"        # trim fractional seconds (e.g. .407Z)
+	clean="${clean%Z}"             # trim trailing Z if no fractional seconds
+	local then_epoch now_epoch
+	if then_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$clean" "+%s" 2>/dev/null); then
+		: # BSD date (macOS) — -u parses as UTC
+	elif then_epoch=$(date -u -d "$ts" "+%s" 2>/dev/null); then
+		: # GNU date — -u parses as UTC
+	else
+		echo "?"
+		return
+	fi
+	now_epoch=$(date -u "+%s")
+	local diff=$(( now_epoch - then_epoch ))
+	# Clock skew / future timestamps -> clamp to 0 rather than print "-5s".
+	[ "$diff" -lt 0 ] && diff=0
+	if [ "$diff" -lt 60 ]; then
+		echo "${diff}s"
+	elif [ "$diff" -lt 3600 ]; then
+		echo "$(( diff / 60 ))m"
+	elif [ "$diff" -lt 86400 ]; then
+		local h=$(( diff / 3600 ))
+		local m=$(( (diff % 3600) / 60 ))
+		echo "${h}h ${m}m"
+	else
+		local d=$(( diff / 86400 ))
+		local h=$(( (diff % 86400) / 3600 ))
+		echo "${d}d ${h}h"
+	fi
+}
+
+# --- daemon-backed listing ---
+
+daemon_list() {
+	local include_self="$1"
+	local raw
+	if ! raw=$(kl-msg list-sessions 2>/dev/null); then
+		return 1
+	fi
+	if [ "$raw" = "(no sessions)" ] || [ -z "$raw" ]; then
+		echo "(no active sessions)"
+		return 0
+	fi
+
+	# kl-msg outputs: session_id\tagent_name\tpid=N\tstatus\tlast_seen_at
+	local found=0
+	printf '%-28s  %-8s  %-10s  %s\n' "SESSION" "STATUS" "UPTIME" "UNREAD"
+	while IFS=$'\t' read -r sid aname pid status last_seen; do
+		[ -n "$sid" ] || continue
+		if [ "$include_self" = "0" ] && [ "$sid" = "$AGENT_ID" ]; then
+			continue
+		fi
+		local uptime unread marker
+		uptime=$(human_uptime "$last_seen")
+		unread=$(count_unread "$sid")
+		marker=""
+		[ "$sid" = "$AGENT_ID" ] && marker=" [self]"
+		printf '%-28s  %-8s  %-10s  %s%s\n' "$sid" "$status" "$uptime" "$unread" "$marker"
+		found=1
+	done <<< "$raw"
+	[ "$found" = 1 ] || echo "(no active sessions matched)"
+}
+
+# --- tmux fallback ---
+
+tmux_list() {
+	local include_self="$1"
+	local sessions
+	if ! sessions="$(tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null)"; then
+		echo "(no tmux server running)"
+		return 0
+	fi
+
+	local found=0
+	printf '%-28s  %-8s  %-10s  %s\n' "SESSION" "STATUS" "UPTIME" "UNREAD"
+	while IFS= read -r line; do
+		local sid created
+		sid="${line%% *}"
+		created="${line#* }"
+		# Heuristic: kl sessions match <word>-<word>-<word>[-suffix]
+		[[ "$sid" =~ ^[a-z]+-[a-z]+-[a-z]+(-[a-z0-9]+)?$ ]] || continue
+		if [ "$include_self" = "0" ] && [ "$sid" = "$AGENT_ID" ]; then
+			continue
+		fi
+		local uptime unread marker
+		# tmux gives epoch for session_created
+		local now_epoch diff
+		now_epoch=$(date "+%s")
+		diff=$(( now_epoch - created ))
+		if [ "$diff" -lt 60 ]; then
+			uptime="${diff}s"
+		elif [ "$diff" -lt 3600 ]; then
+			uptime="$(( diff / 60 ))m"
+		elif [ "$diff" -lt 86400 ]; then
+			uptime="$(( diff / 3600 ))h $(( (diff % 3600) / 60 ))m"
+		else
+			uptime="$(( diff / 86400 ))d $(( (diff % 86400) / 3600 ))h"
+		fi
+		unread=$(count_unread "$sid")
+		marker=""
+		[ "$sid" = "$AGENT_ID" ] && marker=" [self]"
+		printf '%-28s  %-8s  %-10s  %s%s\n' "$sid" "tmux" "$uptime" "$unread" "$marker"
+		found=1
+	done <<< "$sessions"
+	[ "$found" = 1 ] || echo "(no kl sessions found)"
+}
+
+# --- show detail ---
+
+daemon_show() {
+	local target="$1"
+	local raw
+	if ! raw=$(kl-msg list-sessions 2>/dev/null); then
+		return 1
+	fi
+
+	local found=0
+	while IFS=$'\t' read -r sid aname pid status last_seen; do
+		[ "$sid" = "$target" ] || continue
+		local uptime unread
+		uptime=$(human_uptime "$last_seen")
+		unread=$(count_unread "$sid")
+		# Strip "pid=" prefix
+		pid="${pid#pid=}"
+		cat <<EOF
+agent_id:     $sid
+agent_name:   $aname
+status:       $status
+pid:          $pid
+last_seen:    $last_seen
+uptime:       $uptime
+inbox:        ${INBOX_ROOT}/${sid}
+unread:       $unread
+EOF
+		found=1
+		break
+	done <<< "$raw"
+
+	[ "$found" = 1 ] || die "no active session: $target"
+}
+
+tmux_show() {
+	local target="$1"
+	local sessions
+	if ! sessions="$(tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null)"; then
+		die "no tmux server running"
+	fi
+
+	while IFS= read -r line; do
+		local sid created
+		sid="${line%% *}"
+		created="${line#* }"
+		[ "$sid" = "$target" ] || continue
+		local unread
+		unread=$(count_unread "$sid")
+		cat <<EOF
+agent_id:     $sid
+source:       tmux (daemon unavailable)
+created:      $(date -r "$created" "+%Y-%m-%dT%H:%M:%S" 2>/dev/null || echo "$created")
+inbox:        ${INBOX_ROOT}/${sid}
+unread:       $unread
+EOF
+		return 0
+	done <<< "$sessions"
+	die "no tmux session: $target"
+}
+
+# --- commands ---
+
+cmd_list() {
+	local include_self=1
+	case "${1:-}" in
+		--others) include_self=0 ;;
+		--all)    include_self=1 ;;  # back-compat no-op
+		"")       ;;
+		*) die "unknown flag: $1 (try --others)" ;;
+	esac
+	# Try daemon first, fall back to tmux.
+	if command -v kl-msg >/dev/null 2>&1; then
+		daemon_list "$include_self" && return 0
+	fi
+	tmux_list "$include_self"
+}
+
+cmd_show() {
+	[ $# -ge 1 ] || die "show requires <agent-id>"
+	local target="$1"
+	if command -v kl-msg >/dev/null 2>&1; then
+		daemon_show "$target" && return 0
+	fi
+	tmux_show "$target"
+}
+
+# --- main ---
+
+main() {
+	local sub="${1:-list}"
+	case "$sub" in
+		list) shift 2>/dev/null || true; cmd_list "$@" ;;
+		show) shift; cmd_show "$@" ;;
+		--all) cmd_list "--all" ;;       # back-compat no-op
+		--others) cmd_list "--others" ;;
+		-h|--help|help) usage ;;
+		*) die "unknown subcommand: $sub (try -h)" ;;
+	esac
+}
+
+main "$@"

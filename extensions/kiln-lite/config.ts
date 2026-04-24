@@ -157,6 +157,5 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 	if (typeof obj.sessions_dir === "string" && obj.sessions_dir.trim()) {
 		config.sessions_dir = obj.sessions_dir.trim();
 	}
-
 	return config;
 }
