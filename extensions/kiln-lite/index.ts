@@ -22,6 +22,7 @@ import { discoverTools, renderToolIndex } from "./tools.ts";
 import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
 import { ensureScaffold } from "./bootstrap.ts";
+import { buildMessageTool } from "./message-tool.ts";
 import type { SessionState } from "./types.ts";
 import { DaemonClient } from "../../src/client/index.ts";
 
@@ -32,6 +33,12 @@ export default function (pi: ExtensionAPI): void {
 	let daemon: DaemonClient | null = null;
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
+
+	// Register the builtin `message` tool once, at extension load. Its execute
+	// closure reads the live DaemonClient lazily via getDaemon() — the client
+	// isn't built until session_start, but registration must happen here for
+	// Pi's loader to pick it up.
+	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
 
 	// --- session_start ---
 	pi.on("session_start", async (_event, ctx) => {
@@ -158,9 +165,23 @@ export default function (pi: ExtensionAPI): void {
 		return { systemPrompt: composed };
 	});
 
-	// --- tool_result: mid-turn inbox pings ---
+	// --- tool_result: mid-turn inbox pings + Read-as-read tracking ---
+	//
+	// Two responsibilities in one handler:
+	//   1. When the agent Reads an inbox .md via Pi's Read tool, touch the
+	//      `.read` marker so the watcher doesn't re-deliver that message
+	//      between turns. Idempotent with markers from mid-turn pings.
+	//   2. Append a per-pending [Notification | …] suffix (and touch markers
+	//      as we go, matching kiln's hook pattern). Applies to EVERY tool
+	//      result, including Read — which is fine, the flush is cheap.
 	pi.on("tool_result", async (event, _ctx) => {
 		if (!watcher) return;
+
+		if (event.toolName === "read" && !event.isError) {
+			const filePath = typeof event.input.path === "string" ? event.input.path : "";
+			if (filePath) watcher.handleReadOfPath(filePath);
+		}
+
 		const suffix = watcher.midTurnSuffix();
 		if (!suffix) return;
 		const patched = appendTextToContent(event.content, suffix);
