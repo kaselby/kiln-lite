@@ -41,9 +41,12 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { handlers } from "./handlers.ts";
+import { cleanInboxes } from "./inbox-cleanup.ts";
 import * as proto from "./protocol.ts";
 import { reconcile } from "./reconcile.ts";
 import { DaemonState } from "./state.ts";
+
+const INBOX_CLEANUP_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1 day
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -159,6 +162,29 @@ export class Daemon {
 
         // Load persisted state
         this.state.loadFromFiles();
+
+        // Inbox retention sweep — delete read messages older than the TTL.
+        // Runs once at startup; the daemon is the shared owner of this across
+        // sessions. Non-fatal — a failure here shouldn't block the daemon.
+        try {
+            const inboxRoots: string[] = [];
+            for (const [, entry] of Object.entries(this.state.knownSessions.load())) {
+                if (entry.inbox_path) inboxRoots.push(entry.inbox_path);
+            }
+            const swept = cleanInboxes({
+                inboxRoots,
+                maxAgeMs: INBOX_CLEANUP_MAX_AGE_MS,
+                log: (m) => this.log.log(m),
+            });
+            if (swept.deleted > 0 || swept.rootsScanned > 0) {
+                this.log.log(
+                    `inbox-cleanup: scanned ${swept.sessionsScanned} session inbox(es) ` +
+                        `across ${swept.rootsScanned} root(s), deleted ${swept.deleted} stale message(s)`,
+                );
+            }
+        } catch (err) {
+            this.log.log(`inbox-cleanup failed: ${(err as Error).message}`);
+        }
 
         // Set up signal handlers
         process.on("SIGINT", () => void this.shutdown("SIGINT"));
