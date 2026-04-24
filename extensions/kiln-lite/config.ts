@@ -23,6 +23,7 @@ const DEFAULT_CONFIG: AgentConfig = {
 	tools_dir: "tools",
 	inbox_dir: "inbox",
 	sessions_dir: "sessions",
+	session_state_interval: 15,
 };
 
 /**
@@ -87,6 +88,7 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 		"tools_dir",
 		"inbox_dir",
 		"sessions_dir",
+		"session_state_interval",
 	]);
 	for (const key of Object.keys(obj)) {
 		if (!known.has(key)) {
@@ -156,6 +158,16 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 	}
 	if (typeof obj.sessions_dir === "string" && obj.sessions_dir.trim()) {
 		config.sessions_dir = obj.sessions_dir.trim();
+	}
+	if (typeof obj.session_state_interval === "number" && Number.isFinite(obj.session_state_interval)) {
+		const n = Math.floor(obj.session_state_interval);
+		if (n >= 0) {
+			config.session_state_interval = n;
+		} else {
+			warn(`kiln-lite: agent.yml session_state_interval must be >= 0 — using default ${DEFAULT_CONFIG.session_state_interval}`);
+		}
+	} else if (obj.session_state_interval !== undefined) {
+		warn(`kiln-lite: agent.yml session_state_interval must be a number — using default ${DEFAULT_CONFIG.session_state_interval}`);
 	}
 	return config;
 }
