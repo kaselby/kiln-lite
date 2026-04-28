@@ -23,6 +23,7 @@ import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
 import { ensureScaffold } from "./bootstrap.ts";
 import { buildMessageTool } from "./message-tool.ts";
+import { registerSpawnCommand } from "./spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "./session-state.ts";
 import type { SessionState } from "./types.ts";
 import { DaemonClient } from "../../src/client/index.ts";
@@ -41,6 +42,10 @@ export default function (pi: ExtensionAPI): void {
 	// isn't built until session_start, but registration must happen here for
 	// Pi's loader to pick it up.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
+
+	// /spawn — fork session into a new tmux window. Registered at load time;
+	// the handler reads session state from ctx at invocation time.
+	registerSpawnCommand(pi);
 
 	// --- session_start ---
 	pi.on("session_start", async (_event, ctx) => {
