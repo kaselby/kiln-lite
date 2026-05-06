@@ -27,6 +27,7 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { isAbsolute, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,6 +35,13 @@ import { formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
 import type { BuildSystemPromptOptions } from "@mariozechner/pi-coding-agent";
 
 import type { ContextInjectionEntry, SessionState } from "./types.ts";
+
+// Command-based context_injection hard cap — runs every turn when dynamic,
+// so a slow command tanks interactive latency. 1s is generous for anything
+// that should sanely live in a prompt block; exceeding it means the entry
+// is silently dropped for that turn (warn logged).
+const COMMAND_TIMEOUT_MS = 1000;
+const COMMAND_MAX_BYTES = 64 * 1024;
 
 // ---------------------------------------------------------------------------
 // Bundled default identity (used when agent.yml system_prompt is unset or
@@ -71,11 +79,11 @@ function getBundledDefault(warn: (msg: string) => void): string {
  * Called once at session_start, after config is loaded.
  */
 export function preloadStaticInjection(state: SessionState, warn: (msg: string) => void): void {
-	for (const entry of state.config.context_injection) {
+	for (const [i, entry] of state.config.context_injection.entries()) {
 		if (entry.dynamic) continue;
-		const content = readInjectionFile(state.agentHome, entry, warn);
+		const content = readInjectionContent(state, entry, warn);
 		if (content !== null) {
-			state.staticInjection.set(entry.path, content);
+			state.staticInjection.set(cacheKey(entry, i), content);
 		}
 	}
 }
@@ -199,10 +207,10 @@ function renderContext(
 ): string | null {
 	const entries: Array<{ label: string; body: string }> = [];
 
-	for (const entry of state.config.context_injection) {
+	for (const [i, entry] of state.config.context_injection.entries()) {
 		const body = entry.dynamic
-			? readInjectionFile(state.agentHome, entry, warn)
-			: state.staticInjection.get(entry.path) ?? null;
+			? readInjectionContent(state, entry, warn)
+			: state.staticInjection.get(cacheKey(entry, i)) ?? null;
 		if (body !== null) entries.push({ label: entry.label, body });
 	}
 
@@ -222,12 +230,43 @@ function renderContext(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function readInjectionFile(
-	agentHome: string,
+/**
+ * Dispatch to path- or command-based loading. Returns null on any failure
+ * (the entry is skipped for that turn; warn is logged).
+ */
+function readInjectionContent(
+	state: SessionState,
 	entry: ContextInjectionEntry,
 	warn: (msg: string) => void,
 ): string | null {
-	const path = resolvePath(agentHome, entry.path);
+	if (entry.command) {
+		return runInjectionCommand(state, entry.command, warn);
+	}
+	if (entry.path) {
+		return readInjectionFile(state.agentHome, entry.path, warn);
+	}
+	// Config-layer validation should prevent this, but be explicit.
+	warn(`kiln-lite: context_injection entry '${entry.label}' has neither path nor command — skipping`);
+	return null;
+}
+
+/**
+ * Unique cache key per entry, used for the staticInjection map. Falls back to
+ * the entry index when neither path nor command is set (shouldn't happen after
+ * config validation, but the key must be defined).
+ */
+function cacheKey(entry: ContextInjectionEntry, index: number): string {
+	if (entry.path) return `path:${entry.path}`;
+	if (entry.command) return `cmd:${entry.command}`;
+	return `__${index}__`;
+}
+
+function readInjectionFile(
+	agentHome: string,
+	rawPath: string,
+	warn: (msg: string) => void,
+): string | null {
+	const path = resolvePath(agentHome, rawPath);
 	if (!existsSync(path)) {
 		warn(`kiln-lite: context_injection file not found: ${path} — skipping`);
 		return null;
@@ -236,6 +275,41 @@ function readInjectionFile(
 		return readFileSync(path, "utf8");
 	} catch (err) {
 		warn(`kiln-lite: failed to read context_injection file ${path}: ${(err as Error).message}`);
+		return null;
+	}
+}
+
+/**
+ * Run a shell command, capture stdout, return as content. On timeout,
+ * non-zero exit, or spawn error: warn and return null (caller treats as
+ * "no content this turn"). Stderr is forwarded to the warn channel so
+ * misconfigured commands are discoverable.
+ */
+function runInjectionCommand(
+	state: SessionState,
+	command: string,
+	warn: (msg: string) => void,
+): string | null {
+	try {
+		const out = execSync(command, {
+			encoding: "utf8",
+			timeout: COMMAND_TIMEOUT_MS,
+			maxBuffer: COMMAND_MAX_BYTES,
+			cwd: state.agentHome,
+			env: { ...process.env, ...state.env },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		return out;
+	} catch (err) {
+		const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; signal?: string };
+		const label = command.length > 60 ? `${command.slice(0, 57)}…` : command;
+		if (e.signal === "SIGTERM") {
+			warn(`kiln-lite: context_injection command timed out (>${COMMAND_TIMEOUT_MS}ms): ${label}`);
+		} else {
+			const stderr = e.stderr ? String(e.stderr).trim() : "";
+			const tail = stderr ? ` — stderr: ${stderr.slice(0, 200)}` : "";
+			warn(`kiln-lite: context_injection command failed (${label}): ${e.message}${tail}`);
+		}
 		return null;
 	}
 }

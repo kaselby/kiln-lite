@@ -103,12 +103,17 @@ name: agent
 system_prompt: prompts/base.md
 
 # Files prepended to the system prompt on every session.
-# `dynamic: true` re-reads the file on every turn; default is load-once.
+# Each entry takes either `path:` (file contents) or `command:` (stdout
+# of a shell command) — mutually exclusive. `dynamic: true` re-reads
+# (or re-runs) on every turn; default is load-once at session_start.
 context_injection:
   - path: memory/core.md
     label: Core Memory
   - path: memory/volatile.md
     label: Volatile — Working State
+    dynamic: true
+  - command: project list
+    label: Active Projects
     dynamic: true
 
 # Shell commands run sequentially at session_start (stdout inherited).
@@ -149,8 +154,10 @@ On `before_agent_start`, `composeSystemPrompt` builds the prompt in this order:
 1. **Base** — `agent.yml:system_prompt` file contents, or Pi's default system prompt if unset.
 2. **Identity doc** — if `<home>/<AGENT_NAME>.md` exists, injected as its own block.
 3. **Context injection** — one block per `context_injection` entry, labelled.
+   - Each entry carries either `path:` (file contents, resolved relative to `$AGENT_HOME`) or `command:` (stdout of a shell command, executed with the agent env + cwd = `$AGENT_HOME`). The two are mutually exclusive; entries with both or neither are skipped with a warning.
    - Static entries (`dynamic: false`) are preloaded once at `session_start` into `state.staticInjection`.
-   - Dynamic entries are re-read every turn.
+   - Dynamic entries are re-read (path) or re-run (command) every turn. Dynamic commands cost per-turn latency — keep them fast.
+   - Commands have a 1s wall-clock timeout and 64 KB stdout cap. Timeouts, non-zero exit, or spawn errors cause the entry to be skipped for that turn with a warn-log; the session continues.
 4. **Tool index** — the rendered listing from `tools.ts:renderToolIndex`.
 5. **Skill listing** — Pi adds this itself via `resources_discover`.
 
@@ -213,6 +220,9 @@ context_injection:
   - path: memory/volatile.md
     label: Volatile — Working State
     dynamic: true
+  - command: project list
+    label: Active Projects
+    dynamic: true
 startup:
   - "date > scratch/session-start.log"
 cleanup: |
@@ -220,7 +230,7 @@ cleanup: |
   threads worked on, decisions made, anything the next session needs.
 ```
 
-Now the prompt has `IDENTITY.md` as its base (replacing Pi's default), a static `core.md` block, a live-reloading `volatile.md` block, and the standard tool index.
+Now the prompt has `IDENTITY.md` as its base (replacing Pi's default), a static `core.md` block, a live-reloading `volatile.md` block, a live-refreshing Active Projects block sourced from the `project` tool, and the standard tool index.
 
 ### Iterating on the extension without `pi install`
 

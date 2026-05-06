@@ -3,11 +3,22 @@
  */
 
 export interface ContextInjectionEntry {
-	/** Path relative to $AGENT_HOME. */
-	path: string;
+	/** Path relative to $AGENT_HOME. Mutually exclusive with `command`. */
+	path?: string;
+	/**
+	 * Shell command whose stdout becomes the injected content. Executed with
+	 * `sh -c` under the agent's env + cwd. Stderr is surfaced via the extension's
+	 * warn channel; non-zero exit or timeout causes the entry to be skipped for
+	 * that turn. Mutually exclusive with `path`.
+	 */
+	command?: string;
 	/** Human-readable label for the injected section. */
 	label: string;
-	/** If true, re-read file contents on every turn. Defaults to false. */
+	/**
+	 * If true, re-read (path) or re-run (command) on every turn. Defaults to
+	 * false. Dynamic entries cost prompt-cache reuse and, for commands, add
+	 * per-turn latency — keep the command fast (<100ms).
+	 */
 	dynamic?: boolean;
 }
 

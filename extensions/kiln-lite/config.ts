@@ -114,8 +114,14 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 				continue;
 			}
 			const entry = e as Record<string, unknown>;
-			if (typeof entry.path !== "string" || !entry.path.trim()) {
-				warn(`kiln-lite: agent.yml context_injection[${i}] missing 'path' — skipping`);
+			const hasPath = typeof entry.path === "string" && (entry.path as string).trim() !== "";
+			const hasCommand = typeof entry.command === "string" && (entry.command as string).trim() !== "";
+			if (!hasPath && !hasCommand) {
+				warn(`kiln-lite: agent.yml context_injection[${i}] needs either 'path' or 'command' — skipping`);
+				continue;
+			}
+			if (hasPath && hasCommand) {
+				warn(`kiln-lite: agent.yml context_injection[${i}] has both 'path' and 'command' — skipping (they're mutually exclusive)`);
 				continue;
 			}
 			if (typeof entry.label !== "string" || !entry.label.trim()) {
@@ -123,9 +129,10 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 				continue;
 			}
 			const parsed: ContextInjectionEntry = {
-				path: entry.path.trim(),
 				label: entry.label.trim(),
 			};
+			if (hasPath) parsed.path = (entry.path as string).trim();
+			if (hasCommand) parsed.command = (entry.command as string).trim();
 			if (typeof entry.dynamic === "boolean") {
 				parsed.dynamic = entry.dynamic;
 			}
