@@ -23,8 +23,19 @@ import { startInboxWatcher, type InboxWatcher } from "./inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "./cleanup.ts";
 import { ensureScaffold } from "./bootstrap.ts";
 import { buildMessageTool } from "./message-tool.ts";
+import { buildWrapupTool } from "./wrapup-tool.ts";
 import { registerSpawnCommand } from "./spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "./session-state.ts";
+import { loadCommandGates, applyCommandGates, type CompiledGate } from "./gates.ts";
+import {
+	findAgentIdForUuid,
+	readMeta,
+	readPromptSnapshot,
+	uniquifyAgentId,
+	writeMeta,
+	writePromptSnapshot,
+	type SnapshotMeta,
+} from "./snapshot.ts";
 import type { SessionState } from "./types.ts";
 import { DaemonClient } from "../../src/client/index.ts";
 
@@ -34,6 +45,7 @@ export default function (pi: ExtensionAPI): void {
 	let toolIndexBlock = "";
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
+	let gates: CompiledGate[] = [];
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
 
@@ -42,6 +54,7 @@ export default function (pi: ExtensionAPI): void {
 	// isn't built until session_start, but registration must happen here for
 	// Pi's loader to pick it up.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
+	pi.registerTool(buildWrapupTool({ getDispatcher: () => dispatcherRef.current }));
 
 	// /spawn — fork session into a new tmux window. Registered at load time;
 	// the handler reads session state from ctx at invocation time.
@@ -79,16 +92,28 @@ export default function (pi: ExtensionAPI): void {
 
 		const config = loadAgentConfig(agentHome, warn);
 		const sessionUuid = inferSessionUuid(ctx);
-		// Prefer an explicit AGENT_ID from env (set by `kl` when launching) over
-		// deterministic UUID-derivation. This keeps the tmux session name, the
-		// extension's agent-id, and the agent-home inbox directory all in sync
-		// from spawn time. Raw `pi` launches (no kl) still derive from the Pi
-		// session UUID — /resume then recovers the same id.
+		// Agent-id resolution order:
+		//   1. Explicit AGENT_ID env (set by `kl run` / `kl resume`).
+		//      Uniquified against the snapshot store if a prior session with
+		//      the same name already bound a different pi-session-uuid.
+		//   2. Reverse-lookup of pi-session-uuid in the snapshot store. This
+		//      is the resume path for plain `pi --continue` / `pi --resume`
+		//      / pi's /resume slash command, where AGENT_ID isn't set but the
+		//      session UUID matches a prior recorded session.
+		//   3. Deterministic UUID-derivation (legacy default).
 		const envAgentId = process.env.AGENT_ID;
-		const agentId =
-			envAgentId && /^[a-z0-9_-]+$/i.test(envAgentId)
-				? envAgentId
-				: generateAgentId(config.name, sessionUuid);
+		let agentId: string;
+		if (envAgentId && /^[a-z0-9_-]+$/i.test(envAgentId)) {
+			agentId = uniquifyAgentId(agentHome, envAgentId, sessionUuid);
+			if (agentId !== envAgentId) {
+				warn(
+					`kiln-lite: AGENT_ID '${envAgentId}' is already bound to a different pi session — using '${agentId}' instead`,
+				);
+			}
+		} else {
+			const recovered = findAgentIdForUuid(agentHome, sessionUuid, warn);
+			agentId = recovered ?? generateAgentId(config.name, sessionUuid);
+		}
 		const env = buildEnv({ agentHome, agentId, sessionUuid, config });
 		// Hoist env vars onto process.env so ALL child processes inherit them —
 		// including Pi's built-in `bash` tool when the agent invokes shell tools
@@ -105,7 +130,24 @@ export default function (pi: ExtensionAPI): void {
 			env,
 			staticInjection: new Map(),
 			systemPromptBase: null,
+			cachedSystemPrompt: null,
+			snapshotWritten: false,
 		};
+
+		// Load any existing system-prompt snapshot for this agent-id. If one
+		// exists, this is a resumed session — replay it verbatim on every
+		// before_agent_start. If not, we'll render normally and write the
+		// snapshot at first compose (see before_agent_start handler).
+		const existingSnapshot = readPromptSnapshot(agentHome, agentId, warn);
+		if (existingSnapshot !== null) {
+			state.cachedSystemPrompt = existingSnapshot;
+			state.snapshotWritten = true;
+		}
+
+		// Persist / refresh the snapshot meta record. Created on first launch,
+		// last_seen bumped on every subsequent session_start. Best-effort —
+		// any write failure is logged and does not block startup.
+		updateSnapshotMeta(state, ctx, warn);
 
 		// Preload static injection content.
 		preloadStaticInjection(state, warn);
@@ -163,6 +205,9 @@ export default function (pi: ExtensionAPI): void {
 			interval: config.session_state_interval,
 		});
 
+		// Command gates from ~/.kl/guardrails.yml.
+		gates = loadCommandGates(join(agentHome, ".."), warn);
+
 		// Run startup commands sequentially.
 		for (const cmd of config.startup) {
 			await runStartupCommand(cmd, env, ctx.cwd, warn);
@@ -173,12 +218,43 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
+	// --- tool_call: command gates from guardrails.yml ---
+	pi.on("tool_call", async (event, ctx) => {
+		if (gates.length === 0) return;
+		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx);
+	});
+
 	// --- before_agent_start: assemble the system prompt ---
+	//
+	// Two modes:
+	//   1. Resumed session (state.cachedSystemPrompt set from snapshot at
+	//      session_start) — return the snapshot verbatim. The original
+	//      session's prompt is what the model already saw in the JSONL we're
+	//      replaying, so anything else would be inconsistent.
+	//   2. Fresh session — compose normally. The first time through, also
+	//      write the rendered prompt to disk so a future resume can replay it.
+	//      Subsequent turns of the same live process keep re-rendering (so
+	//      e.g. the date in the Session block tracks real time).
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (!state) return;
 		const warn = (msg: string) => console.warn(msg);
+		if (state.cachedSystemPrompt !== null) {
+			return { systemPrompt: state.cachedSystemPrompt };
+		}
 		const modelId = ctx.model?.id;
 		const composed = composeSystemPrompt(state, event.systemPromptOptions, modelId, toolIndexBlock, warn);
+		if (!state.snapshotWritten) {
+			writePromptSnapshot(state.agentHome, state.agentId, composed, warn);
+			state.snapshotWritten = true;
+			// Re-stamp meta with the model id now that we know it (it isn't
+			// always available at session_start).
+			if (modelId) {
+				const existing = readMeta(state.agentHome, state.agentId, warn);
+				if (existing && existing.model !== modelId) {
+					writeMeta(state.agentHome, { ...existing, model: modelId }, warn);
+				}
+			}
+		}
 		return { systemPrompt: composed };
 	});
 
@@ -276,6 +352,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			daemon = null;
 		}
+		gates = [];
 		state = null;
 	});
 }
@@ -293,6 +370,38 @@ function inferSessionUuid(ctx: { sessionManager: { getSessionFile(): string | un
 	}
 	// Ephemeral — synth a stable-within-process UUID.
 	return `ephemeral-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+/**
+ * Persist or refresh the snapshot meta.json for this session. Best-effort:
+ * any failure is warned but does not block startup. Called once per
+ * session_start. The system-prompt.txt is written separately at first
+ * compose (see before_agent_start) so we capture the actual rendered
+ * prompt rather than guessing it ahead of time.
+ */
+function updateSnapshotMeta(
+	state: SessionState,
+	ctx: { sessionManager: { getSessionFile(): string | undefined }; cwd: string; model?: { id?: string } },
+	warn: (msg: string) => void,
+): void {
+	const nowIso = new Date().toISOString();
+	const existing = readMeta(state.agentHome, state.agentId, warn);
+	const meta: SnapshotMeta = {
+		agent_id: state.agentId,
+		pi_session_uuid: state.sessionUuid,
+		pi_session_jsonl: ctx.sessionManager.getSessionFile() ?? existing?.pi_session_jsonl,
+		cwd: ctx.cwd ?? existing?.cwd,
+		model: ctx.model?.id ?? existing?.model,
+		created_at: existing?.created_at ?? nowIso,
+		last_seen: nowIso,
+	};
+	// Preserve any unknown fields a future schema may add.
+	if (existing) {
+		for (const [k, v] of Object.entries(existing)) {
+			if (!(k in meta)) meta[k] = v;
+		}
+	}
+	writeMeta(state.agentHome, meta, warn);
 }
 
 async function runStartupCommand(

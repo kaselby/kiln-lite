@@ -18,6 +18,14 @@
 #                             inlined into the command but the file CONTENTS
 #                             never go through a shell. Useful for spawning
 #                             workers with long structured briefs.
+#   kl resume <agent-id> [pi-args...]
+#                           Resume a prior session BY NAME.
+#                           Looks up the original pi session JSONL + cwd from
+#                           ~/.kl/agent/state/sessions/<agent-id>/meta.json,
+#                           then spawns a new tmux session named <agent-id>
+#                           running `pi --session <jsonl>` with the original
+#                           cwd and AGENT_ID restored. If a tmux session with
+#                           that name is already alive, just attaches.
 #   kl attach <agent-id>    Attach an existing kl session.
 #   kl list                 List active kl tmux sessions.
 #   kl doctor               Run a diagnostic — checks pi, extension registration,
@@ -197,9 +205,13 @@ cmd_run() {
     agent_id="$(generate_agent_id "$name")"
 
     # If a tmux session already exists with this name, suffix until free.
-    # Collisions are rare (one in ~3600 per name prefix) but possible with
-    # long-running sessions that outlive their spawns.
-    while tmux has-session -t "$agent_id" 2>/dev/null; do
+    # Also avoid stomping a historical name that already has a snapshot meta
+    # under state/sessions/ — collisions there break `kl resume <name>`
+    # because reverse-lookup becomes ambiguous. Both checks happen at every
+    # iteration of the suffixing loop.
+    local snapshot_root="$agent_home/state/sessions"
+    while tmux has-session -t "$agent_id" 2>/dev/null \
+          || [ -e "$snapshot_root/$agent_id" ]; do
         agent_id="${agent_id}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
     done
 
@@ -232,6 +244,62 @@ cmd_attach() {
     local id="$1"
     require_tool tmux
     tmux has-session -t "$id" 2>/dev/null || die "no tmux session: $id"
+    enter_session "$id"
+}
+
+# Resume a prior session by name. Reads $AGENT_HOME/state/sessions/<id>/meta.json
+# to recover the pi session JSONL path + original cwd, then spawns a tmux
+# session named <id> running pi --session <jsonl>. If a tmux session with
+# that name is already alive, attach instead. Extra args after <agent-id>
+# are passed through to pi (model overrides, etc.).
+cmd_resume() {
+    [ $# -ge 1 ] || die "resume requires an agent-id (use 'kl list' to see active sessions)"
+    local id="$1"; shift
+    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
+    [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist"
+    [ -f "$EXT_PATH" ] || die "extension entry not found at $EXT_PATH"
+
+    require_tool tmux
+    require_tool pi "install @mariozechner/pi-coding-agent"
+
+    # If the tmux session is already alive, just attach — same shape as
+    # `kl attach <id>`. kl run + a detach leaves the tmux session running;
+    # resume should rejoin it instead of spawning a duplicate pi process.
+    if tmux has-session -t "$id" 2>/dev/null; then
+        echo "kl: attaching existing tmux session $id" >&2
+        enter_session "$id"
+        return 0
+    fi
+
+    local meta="$agent_home/state/sessions/$id/meta.json"
+    if [ ! -f "$meta" ]; then
+        die "no snapshot for '$id' at $meta
+  (sessions started before snapshot tracking won't have one;
+   use 'pi --resume' to pick from pi's session list directly)"
+    fi
+
+    # Cheap JSON extraction — grep-then-trim. Avoids a jq dep. The fields
+    # we need are simple string scalars; if either is missing we bail.
+    local jsonl cwd
+    jsonl="$(awk -F'"' '/"pi_session_jsonl"[[:space:]]*:/ {print $4; exit}' "$meta")"
+    cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
+    [ -n "$jsonl" ] || die "snapshot meta for '$id' has no pi_session_jsonl field"
+    [ -f "$jsonl" ] || die "pi session file recorded for '$id' is gone: $jsonl"
+    [ -n "$cwd" ] || cwd="$(pwd)"
+
+    local pi_bin
+    pi_bin="$(command -v pi)"
+
+    # Spawn pi with --session pointing at the original JSONL. AGENT_ID
+    # restoration is what makes the extension reuse the same identity
+    # (and find the snapshot system-prompt.txt to replay).
+    tmux new-session -d -s "$id" -c "$cwd" \
+        -e "AGENT_ID=$id" \
+        -e "AGENT_HOME=$agent_home" \
+        -e "_KL=1" \
+        "$pi_bin" -e "$EXT_PATH" --session "$jsonl" "$@"
+
+    echo "kl: resumed $id (pi session $(basename "$jsonl"))" >&2
     enter_session "$id"
 }
 
@@ -397,6 +465,7 @@ cmd_doctor() {
 main() {
     case "${1:-}" in
         run) shift; cmd_run "$@" ;;
+        resume) shift; cmd_resume "$@" ;;
         attach) shift; cmd_attach "$@" ;;
         list|ls) shift; cmd_list "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
