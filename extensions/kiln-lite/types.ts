@@ -71,4 +71,17 @@ export interface SessionState {
 	 * Set on first before_agent_start call.
 	 */
 	systemPromptBase: string | null;
+	/**
+	 * If non-null, the resumed system prompt to replay verbatim on every
+	 * before_agent_start. Loaded at session_start when a snapshot exists
+	 * for the resolved agent-id (i.e. we are resuming a prior session).
+	 * Live (fresh) sessions leave this null and re-render each turn.
+	 */
+	cachedSystemPrompt: string | null;
+	/**
+	 * Whether the system-prompt.txt snapshot for this agent-id has been
+	 * written to disk yet. Set true when we load an existing snapshot or
+	 * when we write one at first compose. Prevents repeated writes.
+	 */
+	snapshotWritten: boolean;
 }

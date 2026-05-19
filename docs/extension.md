@@ -136,16 +136,27 @@ All fields are optional except `name`. Unknown top-level fields produce a warnin
 
 ### Identity generation
 
-`identity.ts:generateAgentId(name, sessionUuid)`:
+Resolution order at session_start (`index.ts`):
 
-1. Take the session UUID (Pi assigns this per-session; `/resume` gives back the same one).
-2. sha256 → 32 bytes.
-3. First 4 bytes → index into adjectives pool; next 4 bytes → nouns pool.
-4. `<name>-<adj>-<noun>`.
-
-Deterministic: the same UUID always resolves to the same agent-id. `/resume` on a Pi session recovers the same id without any extra state. If `$AGENT_ID` is set in the env (e.g. by `kl`), the extension uses it directly and skips derivation.
+1. **Explicit `$AGENT_ID` env** (set by `kl run` / `kl resume`). Uniquified against the snapshot store — if a prior session with the same name already bound a *different* pi-session-uuid, suffix `-2`, `-3`, … until free.
+2. **Reverse-lookup of pi-session-uuid in the snapshot store**. This is the resume path for plain `pi --continue` / `pi --resume` / pi's `/resume` slash command — `$AGENT_ID` isn't set but the session UUID matches a record under `state/sessions/`. Recovers the original agent-id without needing kl.
+3. **Deterministic UUID-derivation** (`identity.ts:generateAgentId`):
+   1. sha256 of the session UUID → 32 bytes.
+   2. First 4 bytes → index into adjectives pool; next 4 bytes → nouns pool.
+   3. `<name>-<adj>-<noun>`.
 
 Adjective and noun pools are defined in both `identity.ts` and `bin/kl`. Keep them in sync when you edit either.
+
+### Snapshot store
+
+For every session, `index.ts` persists a small record under `$AGENT_HOME/state/sessions/<agent-id>/`:
+
+- **`meta.json`** — written at every session_start. Carries the agent-id ↔ pi-session-uuid binding plus the JSONL path, cwd, model, `created_at`, and `last_seen`. This is what powers `kl resume <agent-id>` and the reverse-lookup above.
+- **`system-prompt.txt`** — the verbatim rendered system prompt from the *first* compose of the session. Replayed verbatim on every `before_agent_start` of any future resume of the same agent-id, so the model sees byte-identical context across resumes regardless of whether the underlying memory / skills / tools / identity files have drifted.
+
+The snapshot is written exactly once per agent-id. Within the same live process, subsequent turns continue to re-render from current state — staleness is only a concern across resume boundaries, and the snapshot is precisely what makes that re-render unnecessary.
+
+Failures writing to the snapshot store are warned but never block startup.
 
 ### Context injection
 
@@ -244,7 +255,7 @@ Skips the global registration — useful when editing the extension source and w
 
 - **Fire-and-forget daemon integration.** The session must keep working when the daemon is unavailable. Every daemon call from the extension is either fire-and-forget (register) or time-budgeted (deregister). Same principle for inbox delivery: file-based `read`/`list` commands work without the daemon.
 - **Static injection is preloaded.** Memory files are only read once per session unless `dynamic: true`. For files you're actively editing mid-session, opt in to dynamic.
-- **`$AGENT_ID` from env wins.** When `kl` launches a session, it exports `AGENT_ID` up-front so the tmux session name, the extension's id, and the inbox dir all agree from spawn. Raw `pi` launches derive from the session UUID.
+- **`$AGENT_ID` from env wins.** When `kl` launches a session, it exports `AGENT_ID` up-front so the tmux session name, the extension's id, and the inbox dir all agree from spawn. Plain `pi` launches recover the original agent-id via reverse-lookup of the pi-session-uuid in `state/sessions/`; failing that, fall back to UUID-derivation.
 - **Startup commands inherit `process.env`.** They see the full exported env (including `AGENT_HOME`, `AGENT_ID`, etc) and run with `cwd = ctx.cwd`. Exit non-zero just warns — doesn't abort session start.
 
 ## Gotchas
@@ -254,4 +265,4 @@ Skips the global registration — useful when editing the extension source and w
 - **Mid-turn inbox pings only fire after `tool_result`.** An agent that never calls a tool between inbox arrivals won't see the suffix. Idle delivery catches it eventually — but if you're expecting live fanout on a tool-less turn, it won't happen.
 - **`resources_discover` fires at session_start AND on `/reload`.** If you add a new skill mid-session, `/reload` picks it up; shell tools don't have an equivalent re-scan, and new tools in `<home>/tools/` won't appear in the listing until next session (though they're still callable via bash).
 - **Cleanup prompt template vars are a flat substitution.** `{today}` / `{agent_id}` / `{session_uuid}` / `{summary_path}`. Anything else is passed through unchanged. No escaping — if a literal `{` appears in the cleanup prompt that shouldn't be substituted, write `{{` … except that isn't supported either. Keep the prompt simple.
-- **Raw `pi` launches don't set `AGENT_ID`.** The extension falls back to UUID-derivation, which works but won't match a tmux session name (because there isn't one). Use `kl` for anything you want to `kl attach` to later.
+- **Raw `pi` launches don't set `AGENT_ID`.** The extension first tries to recover it via reverse-lookup of the pi-session-uuid against `state/sessions/`, then falls back to UUID-derivation. The recovered name still won't match a tmux session (because there isn't one). Use `kl` for anything you want to `kl attach` / `kl resume` to later.
