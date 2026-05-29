@@ -61,7 +61,29 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd -P)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd -P)"
-EXT_PATH="$REPO_ROOT/extensions/kiln-lite/index.ts"
+DEFAULT_EXT_PATH="$REPO_ROOT/extensions/kiln-lite/index.ts"
+
+# Resolve the extension entry to load with `pi -e`.
+#
+# Priority:
+#   1. $AGENT_HOME/harness/index.ts  (per-agent custom harness)
+#   2. $REPO_ROOT/extensions/kiln-lite/index.ts  (bundled default)
+#
+# A custom harness lets an agent override kiln-lite's behavior wholesale
+# without forking the repo. It typically imports building blocks from
+# kiln-lite/extensions/kiln-lite/lib/ — either calling installDefaultHarness
+# then layering its own hooks, or composing primitives from scratch.
+#
+# See docs/extension.md for the harness contract.
+resolve_ext_path() {
+    local agent_home="$1"
+    local user_harness="$agent_home/harness/index.ts"
+    if [ -f "$user_harness" ]; then
+        printf '%s' "$user_harness"
+    else
+        printf '%s' "$DEFAULT_EXT_PATH"
+    fi
+}
 
 # --- name pools (kept in sync with extensions/kiln-lite/identity.ts) ---
 #
@@ -157,7 +179,9 @@ enter_session() {
 cmd_run() {
     local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
     [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist — run $REPO_ROOT/install.sh first"
-    [ -f "$EXT_PATH" ] || die "extension entry not found at $EXT_PATH (is the kiln-lite repo intact?)"
+    local ext_path
+    ext_path="$(resolve_ext_path "$agent_home")"
+    [ -f "$ext_path" ] || die "extension entry not found at $ext_path (is the kiln-lite repo intact?)"
 
     # Consume --detach / -d and --prompt-file out of args; everything else
     # is passed to pi. Accept leading or interspersed: `kl --detach foo` and
@@ -225,7 +249,7 @@ cmd_run() {
         -e "AGENT_ID=$agent_id" \
         -e "AGENT_HOME=$agent_home" \
         -e "_KL=1" \
-        "$pi_bin" -e "$EXT_PATH" ${pi_args[@]+"${pi_args[@]}"}
+        "$pi_bin" -e "$ext_path" ${pi_args[@]+"${pi_args[@]}"}
 
     if [ "$detach" = 1 ]; then
         # Peer-spawn mode: agent-id on stdout (for capture), log on stderr.
@@ -257,7 +281,9 @@ cmd_resume() {
     local id="$1"; shift
     local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
     [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist"
-    [ -f "$EXT_PATH" ] || die "extension entry not found at $EXT_PATH"
+    local ext_path
+    ext_path="$(resolve_ext_path "$agent_home")"
+    [ -f "$ext_path" ] || die "extension entry not found at $ext_path"
 
     require_tool tmux
     require_tool pi "install @mariozechner/pi-coding-agent"
@@ -297,7 +323,7 @@ cmd_resume() {
         -e "AGENT_ID=$id" \
         -e "AGENT_HOME=$agent_home" \
         -e "_KL=1" \
-        "$pi_bin" -e "$EXT_PATH" --session "$jsonl" "$@"
+        "$pi_bin" -e "$ext_path" --session "$jsonl" "$@"
 
     echo "kl: resumed $id (pi session $(basename "$jsonl"))" >&2
     enter_session "$id"
@@ -340,14 +366,20 @@ cmd_doctor() {
     echo
 
     # 1. Script + repo root resolution
+    local doctor_ext_path
+    doctor_ext_path="$(resolve_ext_path "$agent_home")"
     echo "[paths]"
     echo "  script     $SCRIPT_PATH"
     echo "  repo root  $REPO_ROOT"
-    echo "  extension  $EXT_PATH"
-    if [ -f "$EXT_PATH" ]; then
-        say_ok "extension entry found"
+    echo "  extension  $doctor_ext_path"
+    if [ -f "$doctor_ext_path" ]; then
+        if [ "$doctor_ext_path" != "$DEFAULT_EXT_PATH" ]; then
+            say_ok "custom harness at $agent_home/harness/index.ts (overriding default)"
+        else
+            say_ok "extension entry found (default)"
+        fi
     else
-        say_fail "extension entry missing at $EXT_PATH"
+        say_fail "extension entry missing at $doctor_ext_path"
     fi
     echo
 

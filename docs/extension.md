@@ -266,3 +266,95 @@ Skips the global registration — useful when editing the extension source and w
 - **`resources_discover` fires at session_start AND on `/reload`.** If you add a new skill mid-session, `/reload` picks it up; shell tools don't have an equivalent re-scan, and new tools in `<home>/tools/` won't appear in the listing until next session (though they're still callable via bash).
 - **Cleanup prompt template vars are a flat substitution.** `{today}` / `{agent_id}` / `{session_uuid}` / `{summary_path}`. Anything else is passed through unchanged. No escaping — if a literal `{` appears in the cleanup prompt that shouldn't be substituted, write `{{` … except that isn't supported either. Keep the prompt simple.
 - **Raw `pi` launches don't set `AGENT_ID`.** The extension first tries to recover it via reverse-lookup of the pi-session-uuid against `state/sessions/`, then falls back to UUID-derivation. The recovered name still won't match a tmux session (because there isn't one). Use `kl` for anything you want to `kl attach` / `kl resume` to later.
+
+## Customizing via a personal harness
+
+For agent-specific behavior that goes beyond `agent.yml` configuration —
+custom event handlers, replaced prompt assembly, new tools wired into
+session state, role-specific cleanup flows — write a **harness** at
+`$AGENT_HOME/harness/index.ts`. `kl` loads it in preference to the bundled
+default extension when present (`kl doctor` will show which one is active).
+
+A harness is a normal Pi extension factory:
+
+```ts
+// $AGENT_HOME/harness/index.ts
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { installDefaultHarness } from "kiln-lite/extensions/kiln-lite/lib/index.ts";
+
+export default function (pi: ExtensionAPI): void {
+  installDefaultHarness(pi);
+
+  // Add anything you want on top — Pi composes handlers across registrations.
+  pi.on("tool_result", async (event) => {
+    // ... your additional hook
+  });
+  pi.registerCommand("/canonical", { /* ... */ });
+}
+```
+
+Two override patterns:
+
+1. **Additive** — call `installDefaultHarness(pi)` to get every kiln-lite
+   default, then register your own handlers / tools / commands on top.
+   Pi runs all handlers; `tool_result` mutations chain (your handler sees
+   the kiln-lite-mutated event), `before_agent_start` system-prompt
+   transformations stack, `session_start` side-effects run independently.
+
+2. **Replacement** — skip `installDefaultHarness` and compose building
+   blocks from `kiln-lite/extensions/kiln-lite/lib/index.ts` to your
+   own taste. Use this when you need to REPLACE behavior (custom prompt
+   assembly, different agent-id policy, alternate cleanup template) rather
+   than just extend. Copy the body of `installDefaultHarness` (in
+   `lib/install.ts`) as a starting template.
+
+### Stable lib surface
+
+`kiln-lite/extensions/kiln-lite/lib/index.ts` re-exports the stable public
+API:
+
+- `installDefaultHarness(pi)` — the wire-everything-up composition.
+- Pure helpers: `composeToolResultSuffix`, `appendTextToContent`,
+  `resolveAgentId`, `createSnapshotWriter`, `loadOrCreateSnapshotWriter`,
+  `runAgentEndOrdered`.
+- Factories: `startInboxWatcher`, `createCleanupDispatcher`,
+  `createSessionStateHook`, `buildMessageTool`, `buildWrapupTool`,
+  `registerSpawnCommand`, `registerExitCommands`.
+- Stateless utilities: `loadAgentConfig`, `resolveAgentHomeDetailed`,
+  `buildEnv`, `applyEnv`, `composeSystemPrompt`, `preloadStaticInjection`,
+  `discoverTools`, `renderToolIndex`, `generateAgentId`,
+  `loadCommandGates`, `applyCommandGates`, `ensureScaffold`.
+- Snapshot API: `readMeta`, `writeMeta`, `readPromptSnapshot`,
+  `writePromptSnapshot`, `findAgentIdForUuid`, `uniquifyAgentId`,
+  `metaPath`, `promptPath`.
+- Types: `AgentConfig`, `SessionState`, `InboxWatcher`,
+  `CleanupDispatcher`, `SessionStateHook`, `SnapshotWriter`,
+  `SnapshotMeta`, `ResolvedAgentId`, `CompiledGate`.
+- `DaemonClient` re-export.
+
+Additions to this surface are non-breaking; renames are considered
+breaking.
+
+### Load-bearing invariants (don't accidentally regress)
+
+If your harness composes its own handler bodies rather than calling
+`installDefaultHarness`, preserve these:
+
+- **agent_end ordering:** cleanup-sentinel check FIRST, then inbox drain.
+  Use `runAgentEndOrdered({ dispatcher, watcher, ctx, messages })`.
+  Reversing this reintroduces the markAllSeen silent-sweep bug (fixed
+  in commit `ca82822`).
+- **snapshot write-once:** the system-prompt snapshot must be written
+  exactly once per agent-id (at first compose). Use `SnapshotWriter` from
+  `lib/snapshot-writer.ts` rather than tracking the bit yourself.
+- **inbox watcher starts LAST in session_start.** Earlier startup steps
+  (mkdir agent home, register daemon, discover tools, run startup
+  commands) can take time; messages that land during that window must be
+  visible to the watcher's initial scan, not dropped between watcher init
+  and first dispatch.
+- **applyEnv() before discoverTools().** Shell tools resolve via PATH;
+  the env step prepends the tools dir so bare names work.
+- **DaemonClient register / deregister are best-effort.** `register()` is
+  fire-and-forget at session_start. `deregister()` runs at session_shutdown
+  with a 500ms timeout race — don't `await` it bare or you'll block exit
+  on an unhealthy daemon.
