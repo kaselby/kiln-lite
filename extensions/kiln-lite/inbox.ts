@@ -152,7 +152,15 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 				continue;
 			}
 			try {
-				pi.sendUserMessage(body);
+				// deliverAs: "followUp" handles the case where the runtime
+				// still considers itself "processing" at our dispatch point —
+				// notably at agent_end, which fires as the turn transitions
+				// out but before the streaming-done state is settled. In that
+				// window a bare sendUserMessage throws "Agent is already
+				// processing." followUp makes the call succeed regardless:
+				// idle → immediate delivery, streaming → queued after the
+				// current turn. Same pattern cleanup.ts uses.
+				pi.sendUserMessage(body, { deliverAs: "followUp" });
 			} catch (err) {
 				warn(`kiln-lite: sendUserMessage failed for ${filename}: ${(err as Error).message}`);
 				remaining.push(filename);
