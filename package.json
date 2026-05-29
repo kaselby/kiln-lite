@@ -16,6 +16,10 @@
       "./extensions"
     ]
   },
+  "scripts": {
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "js-yaml": "^4.1.0",
     "tsx": "^4.19.0"
