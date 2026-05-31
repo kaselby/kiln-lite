@@ -492,6 +492,64 @@ cmd_doctor() {
     [ "$fail" = 0 ]
 }
 
+# --- history: show recent sessions from snapshot meta ---
+# Scans state/sessions/*/meta.json, sorts by last_seen descending.
+# Useful for finding sessions that crashed without clean exit.
+cmd_history() {
+    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
+    local sessions_dir="$agent_home/state/sessions"
+    if [ ! -d "$sessions_dir" ]; then
+        echo "(no session history — $sessions_dir does not exist)"
+        return 0
+    fi
+
+    local limit=20
+    if [ "${1:-}" = "-n" ] && [ -n "${2:-}" ]; then
+        limit="$2"
+    elif [ "${1:-}" = "--all" ]; then
+        limit=99999
+    fi
+
+    # Collect meta records, sort by last_seen, print table.
+    # Uses awk for cheap JSON field extraction (same pattern as cmd_resume).
+    local entries=""
+    for meta in "$sessions_dir"/*/meta.json; do
+        [ -f "$meta" ] || continue
+        local id last model cwd
+        id="$(awk -F'"' '/"agent_id"[[:space:]]*:/ {print $4; exit}' "$meta")"
+        last="$(awk -F'"' '/"last_seen"[[:space:]]*:/ {print $4; exit}' "$meta")"
+        model="$(awk -F'"' '/"model"[[:space:]]*:/ {print $4; exit}' "$meta")"
+        cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
+        [ -n "$id" ] || continue
+        [ -n "$last" ] || last="(unknown)"
+        # Shorten model and cwd for display
+        model="${model##*/}"  # strip provider prefix
+        cwd="${cwd/#$HOME/~}"
+        # Check if tmux session is alive
+        local status="-"
+        if tmux has-session -t "$id" 2>/dev/null; then
+            status="live"
+        fi
+        entries="${entries}${last}|${id}|${status}|${model}|${cwd}
+"
+    done
+
+    if [ -z "$entries" ]; then
+        echo "(no session history found)"
+        return 0
+    fi
+
+    # Sort descending by timestamp, limit, format as table
+    printf "%-24s  %-22s  %-5s  %-30s  %s\n" "LAST SEEN" "SESSION" "STATE" "MODEL" "CWD"
+    echo "$entries" | sort -t'|' -k1 -r | head -n "$limit" | while IFS='|' read -r ts sid st mdl wd; do
+        [ -n "$ts" ] || continue
+        # Trim ISO timestamp to human-readable
+        local display_ts="${ts%%.*}"  # drop fractional seconds
+        display_ts="${display_ts/T/ }"  # T -> space
+        printf "%-24s  %-22s  %-5s  %-30s  %s\n" "$display_ts" "$sid" "$st" "$mdl" "$wd"
+    done
+}
+
 # --- main ---
 
 main() {
@@ -500,6 +558,7 @@ main() {
         resume) shift; cmd_resume "$@" ;;
         attach) shift; cmd_attach "$@" ;;
         list|ls) shift; cmd_list "$@" ;;
+        history) shift; cmd_history "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
         -h|--help|help) usage ;;
         "") cmd_run ;;
