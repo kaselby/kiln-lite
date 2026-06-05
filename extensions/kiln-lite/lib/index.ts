@@ -56,6 +56,11 @@ export {
 	type CompiledGate,
 } from "../gates.ts";
 export {
+	applyTemplate,
+	expandTemplateVars,
+	buildTemplateVars,
+} from "../template.ts";
+export {
 	readMeta,
 	writeMeta,
 	readPromptSnapshot,
