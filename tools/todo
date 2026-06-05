@@ -11,7 +11,7 @@
 #
 # Usage:
 #   todo                                    Show actionable dashboard
-#   todo add "text" [--project P] [--priority high] [--owner kira] [--due DATE] [--source kira] [--tags t1,t2]
+#   todo add "text" [--project P] [--priority high] [--owner NAME] [--due DATE] [--source NAME] [--tags t1,t2]
 #   todo list [--project P] [--status S] [--owner O] [--priority P] [--stale N] [--due-soon N] [--tags t1,t2]
 #   todo show <id> [--project P]
 #   todo drop <id> [--project P] [--reason "..."]
@@ -39,7 +39,6 @@ AGENT_ID = os.environ.get("AGENT_SESSION_ID", os.environ.get("AGENT_ID", ""))
 
 VALID_STATUSES = {"open", "ready", "claimed", "in-progress", "done", "dropped", "blocked", "backlog"}
 VALID_PRIORITIES = {"high", "normal", "low"}
-VALID_OWNERS = {"beth", "kira", "any"}
 
 TODAY = date.today()
 

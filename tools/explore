@@ -11,7 +11,7 @@
 #
 # Usage:
 #   explore "Find where context compaction is handled in the harness"
-#   explore "Summarize the architecture of src/aleph/hooks.py"
+#   explore "Summarize the architecture of src/server/middleware.py"
 #   explore "What functions in this project deal with session lifecycle?" --dir ~/Git/kiln
 #   explore "List all TODO comments in the codebase" --dir ./src
 #   explore "Read config.py and explain the AgentConfig dataclass"

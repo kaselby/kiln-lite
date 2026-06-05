@@ -88,7 +88,7 @@ tool is the normal agent-facing surface.
 
 ## Addressing
 
-Agent IDs are shaped `<name>-<adjective>-<noun>` — e.g. `beth-bright-raven`.
+Agent IDs are shaped `<name>-<adjective>-<noun>` — e.g. `agent-bright-raven`.
 Deterministic from the Pi session UUID, so `/resume` recovers the same ID.
 You can also address any session you've been messaged by (the `from:` line
 in their message frontmatter is the literal address).
@@ -97,8 +97,8 @@ in their message frontmatter is the literal address).
 
 ```markdown
 ---
-from: beth-bright-raven
-to: beth-still-wren
+from: agent-bright-raven
+to: agent-still-wren
 summary: Ready for your review
 timestamp: 2026-04-22T10:15:00Z
 priority: normal

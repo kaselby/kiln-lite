@@ -18,16 +18,6 @@ Progressive-disclosure reference for kiln-lite. Start with `overview.md` for the
 - [`install.md`](./install.md) — **Install.** `install.sh` and `bootstrap.sh` — prerequisites, ordering, idempotency, the `~/.agent → ~/.kl/agent` migration, bundled content, uninstall.
 - [`tmux.md`](./tmux.md) — **tmux settings.** Recommended `~/.tmux.conf` tweaks for `kl` sessions — CSI-u extended keys (required for pi modifier-Enter), mouse scrollback, buffer size.
 
-## Archive
-
-Historical design docs from the v0.1 → v0.3 arc live under [`archive/`](./archive/). These are stale but retained for provenance:
-
-- `archive/design-spec-v1.md` — original pre-implementation spec ( + ).
-- `archive/design-notes.md` — v1 implementation deltas from the spec.
-- `archive/HANDOFF.md` — post-v0.1 implementation-phase handoff.
-- `archive/beth-memory-reference.md` — historical reference on a sibling agent's memory shape, used during initial kiln-lite setup.
-- `archive/daemon-and-layout.md` — the v0.3 architectural write-up; most of its content is now in `daemon.md` + `home.md` + `install.md`.
-
 ## Conventions used in these docs
 
 Each topic doc follows the same shape:
