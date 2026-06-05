@@ -156,38 +156,3 @@ export function applyTemplate(
 	return templateName;
 }
 
-/**
- * Expand template variables in a string.
- * Replaces {var_name} with the corresponding value from the vars map.
- * Unknown variables are left as-is (no error).
- */
-export function expandTemplateVars(text: string, vars: Record<string, string>): string {
-	return text.replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (match, key) => {
-		return key in vars ? vars[key] : match;
-	});
-}
-
-/**
- * Build the standard template variables from session state.
- * Additional vars from KL_VAR_* env vars are merged on top.
- */
-export function buildTemplateVars(
-	agentId: string,
-	sessionUuid: string,
-): Record<string, string> {
-	const now = new Date();
-	const vars: Record<string, string> = {
-		agent_id: agentId,
-		today: now.toISOString().slice(0, 10),
-		now: now.toISOString().slice(0, 19),
-	};
-
-	// Merge KL_VAR_* env vars (set by `kl --var KEY=VALUE`).
-	for (const [key, value] of Object.entries(process.env)) {
-		if (key.startsWith("KL_VAR_") && value !== undefined) {
-			vars[key.slice(7).toLowerCase()] = value;
-		}
-	}
-
-	return vars;
-}

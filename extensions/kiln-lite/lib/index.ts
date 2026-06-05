@@ -57,9 +57,11 @@ export {
 } from "../gates.ts";
 export {
 	applyTemplate,
-	expandTemplateVars,
-	buildTemplateVars,
 } from "../template.ts";
+export {
+	expandPlaceholders,
+	buildBasePlaceholders,
+} from "../placeholders.ts";
 export {
 	readMeta,
 	writeMeta,

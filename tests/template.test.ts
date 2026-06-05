@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { applyTemplate, expandTemplateVars, buildTemplateVars } from "../extensions/kiln-lite/template.ts";
+import { applyTemplate } from "../extensions/kiln-lite/template.ts";
 import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
 
 function makeHome(): string {
@@ -158,35 +158,4 @@ startup:
 	}
 });
 
-test("expandTemplateVars substitutes known vars", () => {
-	const result = expandTemplateVars("Hello {agent_id}, today is {today}.", {
-		agent_id: "scout-bright-bear",
-		today: "2026-05-31",
-	});
-	assert.equal(result, "Hello scout-bright-bear, today is 2026-05-31.");
-});
 
-test("expandTemplateVars leaves unknown vars untouched", () => {
-	const result = expandTemplateVars("{known} and {unknown}", { known: "yes" });
-	assert.equal(result, "yes and {unknown}");
-});
-
-test("buildTemplateVars includes agent_id, today, now", () => {
-	const vars = buildTemplateVars("scout-test-id", "uuid-123");
-	assert.equal(vars.agent_id, "scout-test-id");
-	assert.match(vars.today, /^\d{4}-\d{2}-\d{2}$/);
-	assert.match(vars.now, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
-});
-
-test("buildTemplateVars picks up KL_VAR_* from env", () => {
-	process.env.KL_VAR_ROLE = "coordinator";
-	process.env.KL_VAR_TEAM = "webapp";
-	try {
-		const vars = buildTemplateVars("scout-test", "uuid");
-		assert.equal(vars.role, "coordinator");
-		assert.equal(vars.team, "webapp");
-	} finally {
-		delete process.env.KL_VAR_ROLE;
-		delete process.env.KL_VAR_TEAM;
-	}
-});

@@ -42,6 +42,7 @@ import {
 	type SnapshotMeta,
 } from "../snapshot.ts";
 import type { SessionState } from "../types.ts";
+import { expandPlaceholders, buildBasePlaceholders } from "../placeholders.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
 import { resolveAgentId } from "./resolve-agent-id.ts";
@@ -166,6 +167,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			cachedSystemPrompt: existing,
 			snapshotWritten: writer.isWritten(),
 			template: appliedTemplate ?? undefined,
+			vars: buildBasePlaceholders({ agentId, agentHome, sessionUuid }),
 		};
 
 		// Persist / refresh the snapshot meta. Best-effort; never blocks startup.
@@ -244,7 +246,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			return { systemPrompt: state.cachedSystemPrompt };
 		}
 		const modelId = ctx.model?.id;
-		const composed = composeSystemPrompt(state, event.systemPromptOptions, modelId, toolIndexBlock, warn);
+		let composed = composeSystemPrompt(state, event.systemPromptOptions, modelId, toolIndexBlock, warn);
+		// Expand {key} placeholders before snapshotting — bakes resolved values.
+		composed = expandPlaceholders(composed, state.vars);
 		// The writer enforces write-once internally; safe to call every turn.
 		const wasUnwritten = !snapshotWriter.isWritten();
 		snapshotWriter.writeOnce(composed);
