@@ -1,0 +1,79 @@
+# kiln-lite agent configuration.
+# All fields are optional; listed defaults apply when unset.
+
+# Agent name — first component of <name>-<adj>-<noun> session IDs.
+name: cal
+
+# Optional: path (relative to $AGENT_HOME) of a file that replaces Pi's
+# built-in system prompt. Omit to use Pi's default.
+system_prompt: CAL.md
+
+# Files (or commands) prepended to the system prompt on every session.
+# Static entries are read/run once at session_start and cached — edits to
+# path entries require a restart to pick up. Use `dynamic: true` to re-read
+# (or re-run, for commands) on every turn; costs prompt-cache reuse.
+context_injection:
+  - command: project list
+    label: Active Projects
+    dynamic: true
+  - path: memory/core.md
+    label: Core Memory
+  - path: memory/volatile.md
+    label: Volatile — Working State
+  - path: memory/active.md
+    label: Active
+
+# Shell commands run sequentially at session_start.
+# Useful for pulling git updates, warming caches, etc.
+startup: []
+  # - "git -C $AGENT_HOME pull --ff-only"
+
+# Cleanup turn dispatched when the session wraps via /wrapup.
+# Supports template vars: {today} {agent_id} {session_uuid} {summary_path}
+# Leave empty to skip the cleanup turn.
+cleanup: |
+  You're wrapping up. Six steps, in order:
+
+    1. Write a session summary to {summary_path}.
+    2. Project memory — for each project you touched this session:
+       a. Append a log entry: `ystore add <project>/log.yml --summary "..." [--commits ...] [--tasks ...]`
+       b. Mark any tasks you completed: `task done <id> --dir <project>`
+       c. Update `<project>/status.md` if the project's state changed.
+       d. Capture any gotchas or facts worth remembering to `<project>/notes.yml`.
+       Skip this step if you didn't work on any project.
+    3. Update memory/volatile.md — move shipped work from "Open threads"
+       to "Recently shipped", add any new open threads, prune stale ones.
+    4. Review memory/active.md:
+       a. Mark any Tracking items addressed this session (default:
+          remove them).
+       b. Prune stale content — clear Today if it's from a previous
+          day; age out Tracking items that have sat untouched.
+       c. If Kira explicitly flagged something this session to track
+          ("remind me about", "come back to", etc.), add it to
+          Tracking.
+       d. Current Work: Update existing entries if progress has been made
+          and add new entries if new active work has begun. Not everything 
+          goes here - this is just for work that is a) **active** and **ongoing**
+          and b) spans multiple sessions. Anything left untouched for more than
+          a day gets pruned.
+    5. If (and only if) something durable and identity-level surfaced
+       this session, edit memory/core.md in place.
+    6. Commit. From $AGENT_HOME, run `git add -A && git status --short`
+       to see what changed, then `git commit -m "<short summary>"` with
+       a message referencing the session (e.g. shipped threads, skills
+       touched, major scratch adds). If `git status --short` is empty,
+       skip the commit.
+
+  Format specs for memory files live at $AGENT_HOME/docs/memory.md —
+  read it before writing. Match length to session weight; don't pad.
+  Skip any step where nothing's changed.
+
+# Directory (relative to $AGENT_HOME) for shell tool discovery.
+tools_dir: tools
+
+# Directory (relative to $AGENT_HOME) for per-agent inboxes.
+# Extension writes to $AGENT_HOME/<inbox_dir>/<agent-id>/.
+inbox_dir: inbox
+
+# Directory (relative to $AGENT_HOME) for session id files + summaries.
+sessions_dir: sessions
