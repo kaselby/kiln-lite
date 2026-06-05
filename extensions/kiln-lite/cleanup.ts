@@ -14,7 +14,7 @@
  * bypass extension commands. Users who want cleanup must use /wrapup or /exit.
  *
  * Flow (when config.cleanup is non-empty):
- *   1. Render cleanup template with {today}, {agent_id}, {session_uuid}, {summary_path}
+ *   1. Expand {key} placeholders (state.vars + cleanup-specific vars)
  *   2. Embed a unique sentinel in the prompt (so we can identify completion)
  *   3. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
  *   4. A persistent agent_end listener (registered once from index.ts) watches for
@@ -33,6 +33,7 @@ import { join, dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 
 import type { SessionState } from "./types.ts";
+import { expandPlaceholders } from "./placeholders.ts";
 
 export interface CleanupDispatcher {
 	/** True if a cleanup turn is currently in flight. */
@@ -56,9 +57,7 @@ function fmtDate(d: Date): string {
 	return `${y}-${m}-${day}`;
 }
 
-function renderTemplate(tpl: string, vars: Record<string, string>): string {
-	return tpl.replace(/\{(\w+)\}/g, (match, key) => (key in vars ? vars[key] : match));
-}
+
 
 function summaryPath(state: SessionState): string {
 	const today = fmtDate(new Date());
@@ -75,13 +74,13 @@ function ensureSummaryDir(state: SessionState, warn: (msg: string) => void): voi
 }
 
 function buildCleanupPrompt(state: SessionState, sentinel: string): string {
+	// Merge state.vars (base + harness-provided) with cleanup-specific vars.
 	const vars: Record<string, string> = {
+		...state.vars,
 		today: fmtDate(new Date()),
-		agent_id: state.agentId,
-		session_uuid: state.sessionUuid,
 		summary_path: summaryPath(state),
 	};
-	const body = renderTemplate(state.config.cleanup, vars);
+	const body = expandPlaceholders(state.config.cleanup, vars);
 	// HTML comment keeps the sentinel visible in message content (for our scan) but
 	// unobtrusive for the agent reading the prompt.
 	return `${body}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;

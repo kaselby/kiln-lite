@@ -32,8 +32,9 @@ export interface AgentConfig {
 	/** Shell commands run sequentially at session_start. */
 	startup: string[];
 	/**
-	 * Cleanup prompt template. Supports {today}, {agent_id}, {session_uuid}, {summary_path}.
-	 * If empty/unset, no cleanup turn is dispatched — session exits normally.
+	 * Cleanup prompt template. Supports {key} placeholder expansion from
+	 * state.vars (base + harness-provided). If empty/unset, no cleanup turn
+	 * is dispatched — session exits normally.
 	 */
 	cleanup: string;
 	/** Directory for shell tool discovery (relative to $AGENT_HOME). */
@@ -86,4 +87,10 @@ export interface SessionState {
 	snapshotWritten: boolean;
 	/** Template name applied to this session (from KL_TEMPLATE), if any. */
 	template?: string;
+	/**
+	 * Placeholder variables for {key} expansion across prompts and config
+	 * fields. Populated with base set at session_start; custom harnesses
+	 * extend by adding entries in their own session_start handler.
+	 */
+	vars: Record<string, string>;
 }
