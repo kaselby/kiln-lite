@@ -50,7 +50,7 @@ files, you decide what's in them.
 
 ```bash
 cd /path/to/kiln-lite
-./install.sh                 # uses ~/.agent as the home
+./install.sh                 # uses ~/.kl/agent as the home
 ./install.sh ~/.my-agent     # custom home
 ```
 
@@ -78,8 +78,8 @@ or refresh parts of an existing home, call `bootstrap.sh` directly:
 ### Quick start after install
 
 ```bash
-# Edit $HOME/.agent/agent.yml — set 'name' and any context_injection files
-kl                       # spawn a new session (default: $HOME/.agent)
+# Edit ~/.kl/agent/agent.yml — set 'name' and any context_injection files
+kl                       # spawn a new session (default: ~/.kl/agent)
 kl list                  # list live sessions
 kl attach agent-foo-bar  # reattach by agent-id
 ```
@@ -111,7 +111,7 @@ kl list                     # list kl-shaped tmux sessions
 
 What `kl` does at launch:
 
-1. Resolves `AGENT_HOME` (falls back to `~/.agent`) and reads `name:` from
+1. Resolves `AGENT_HOME` (falls back to `~/.kl/agent`) and reads `name:` from
    `agent.yml`.
 2. Generates an agent-id via the same `<name>-<adj>-<noun>` scheme the
    extension uses.
@@ -150,6 +150,11 @@ The resulting home looks like:
 ├── skills/           # active skills — bundled ones copied here by bootstrap
 └── venv/             # python venv with bundled-tool deps
 ```
+
+For a more opinionated reference — a fully populated agent home with
+custom identity, layered context injection, a real cleanup turn, and
+project-memory scaffolding — see [`example/`](./example/). Drop the
+whole thing into `$AGENT_HOME` or pick the pieces you want.
 
 Re-running bootstrap flags (for explicit re-scaffolds):
 
