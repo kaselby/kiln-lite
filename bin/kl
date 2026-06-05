@@ -195,9 +195,27 @@ cmd_run() {
     local detach=0
     local pi_args=()
     local prompt_file=""
+    local template=""
+    local -a template_vars=()
     while [ $# -gt 0 ]; do
         case "$1" in
             --detach|-d) detach=1 ;;
+            --template)
+                shift
+                [ $# -ge 1 ] || die "--template requires a name argument"
+                template="$1"
+                ;;
+            --template=*)
+                template="${1#--template=}"
+                ;;
+            --var)
+                shift
+                [ $# -ge 1 ] || die "--var requires a KEY=VALUE argument"
+                template_vars+=("$1")
+                ;;
+            --var=*)
+                template_vars+=("${1#--var=}")
+                ;;
             --prompt-file)
                 shift
                 [ $# -ge 1 ] || die "--prompt-file requires a path argument"
@@ -243,12 +261,27 @@ cmd_run() {
     # export AGENT_ID (so the extension picks it up directly) and AGENT_HOME
     # (in case the caller's AGENT_HOME was inherited from shell, not set
     # explicitly). _KL=1 is a marker for the extension + future `kl` recursion.
+    # KL_TEMPLATE and KL_VAR_* carry template selection + vars.
     # Use ${arr[@]+"${arr[@]}"} idiom to safely expand an empty array under
     # `set -u` (bash treats a bare "${arr[@]}" on an empty array as unbound).
+    local tmux_env_args=(
+        -e "AGENT_ID=$agent_id"
+        -e "AGENT_HOME=$agent_home"
+        -e "_KL=1"
+    )
+    if [ -n "$template" ]; then
+        tmux_env_args+=(-e "KL_TEMPLATE=$template")
+    fi
+    for var in ${template_vars[@]+"${template_vars[@]}"}; do
+        local key="${var%%=*}"
+        local val="${var#*=}"
+        # Normalize key to uppercase for env var convention.
+        key="$(echo "$key" | tr '[:lower:]' '[:upper:]')"
+        tmux_env_args+=(-e "KL_VAR_${key}=${val}")
+    done
+
     tmux new-session -d -s "$agent_id" \
-        -e "AGENT_ID=$agent_id" \
-        -e "AGENT_HOME=$agent_home" \
-        -e "_KL=1" \
+        ${tmux_env_args[@]+"${tmux_env_args[@]}"} \
         "$pi_bin" -e "$ext_path" ${pi_args[@]+"${pi_args[@]}"}
 
     if [ "$detach" = 1 ]; then

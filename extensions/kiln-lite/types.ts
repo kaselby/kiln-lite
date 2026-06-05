@@ -84,4 +84,6 @@ export interface SessionState {
 	 * when we write one at first compose. Prevents repeated writes.
 	 */
 	snapshotWritten: boolean;
+	/** Template name applied to this session (from KL_TEMPLATE), if any. */
+	template?: string;
 }

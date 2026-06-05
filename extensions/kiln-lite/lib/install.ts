@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadAgentConfig } from "../config.ts";
+import { applyTemplate } from "../template.ts";
 import { buildEnv, applyEnv } from "../env.ts";
 import { composeSystemPrompt, preloadStaticInjection } from "../prompt.ts";
 import { discoverTools, renderToolIndex } from "../tools.ts";
@@ -119,6 +120,14 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 
 		const config = loadAgentConfig(agentHome, warn);
+
+		// Apply template if KL_TEMPLATE is set (from `kl --template <name>`).
+		const templateName = process.env.KL_TEMPLATE;
+		let appliedTemplate: string | null = null;
+		if (templateName && templateName.trim()) {
+			appliedTemplate = applyTemplate(config, agentHome, templateName.trim(), warn);
+		}
+
 		const sessionUuid = inferSessionUuid(ctx);
 
 		const { agentId } = resolveAgentId({
@@ -156,6 +165,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			systemPromptBase: null,
 			cachedSystemPrompt: existing,
 			snapshotWritten: writer.isWritten(),
+			template: appliedTemplate ?? undefined,
 		};
 
 		// Persist / refresh the snapshot meta. Best-effort; never blocks startup.
@@ -360,6 +370,7 @@ function updateSnapshotMeta(
 		pi_session_jsonl: ctx.sessionManager.getSessionFile() ?? existing?.pi_session_jsonl,
 		cwd: ctx.cwd ?? existing?.cwd,
 		model: ctx.model?.id ?? existing?.model,
+		template: state.template ?? existing?.template,
 		created_at: existing?.created_at ?? nowIso,
 		last_seen: nowIso,
 	};
