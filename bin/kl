@@ -257,6 +257,21 @@ cmd_run() {
         agent_id="${agent_id}-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' ')"
     done
 
+    # --- pre-launch hook ---
+    # If $AGENT_HOME/harness/pre-launch exists and is executable, run it
+    # before spawning the tmux session. The hook can reject the launch by
+    # exiting non-zero — its stderr is shown to the user in the calling
+    # terminal. Useful for exclusive-role enforcement (e.g. coordinator
+    # lock checks) without hardcoding policy into kl itself.
+    local pre_launch="$agent_home/harness/pre-launch"
+    if [ -x "$pre_launch" ]; then
+        if ! AGENT_ID="$agent_id" AGENT_HOME="$agent_home" \
+             KL_TEMPLATE="${template:-}" \
+             "$pre_launch"; then
+            exit 1
+        fi
+    fi
+
     # Build the tmux command. -e passes env vars into the new session; we
     # export AGENT_ID (so the extension picks it up directly) and AGENT_HOME
     # (in case the caller's AGENT_HOME was inherited from shell, not set
