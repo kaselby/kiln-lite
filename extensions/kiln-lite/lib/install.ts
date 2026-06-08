@@ -228,7 +228,12 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 
 		if (ctx.hasUI) {
-			ctx.ui.notify(`kiln-lite: online as ${agentId}`, "info");
+			// Keyed footer status, not notify(): notify() routes to pi's
+			// coalescing status line, so another extension firing an info
+			// notify at session_start (e.g. a health banner) overwrites this
+			// one in place. A keyed setStatus owns its own footer slot and
+			// can't be clobbered, and keeps the agent-id pinned for the session.
+			ctx.ui.setStatus("kiln-lite", `online as ${agentId}`);
 		}
 	});
 
