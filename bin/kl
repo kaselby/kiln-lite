@@ -295,9 +295,11 @@ cmd_run() {
         tmux_env_args+=(-e "KL_VAR_${key}=${val}")
     done
 
+    # -a/--approve: pre-trust the launch dir so detached agents never block
+    # on pi's project-trust prompt (pi 0.79.0). Scoped to this run's cwd only.
     tmux new-session -d -s "$agent_id" \
         ${tmux_env_args[@]+"${tmux_env_args[@]}"} \
-        "$pi_bin" -e "$ext_path" ${pi_args[@]+"${pi_args[@]}"}
+        "$pi_bin" -e "$ext_path" -a ${pi_args[@]+"${pi_args[@]}"}
 
     if [ "$detach" = 1 ]; then
         # Peer-spawn mode: agent-id on stdout (for capture), log on stderr.
@@ -371,7 +373,7 @@ cmd_resume() {
         -e "AGENT_ID=$id" \
         -e "AGENT_HOME=$agent_home" \
         -e "_KL=1" \
-        "$pi_bin" -e "$ext_path" --session "$jsonl" "$@"
+        "$pi_bin" -e "$ext_path" -a --session "$jsonl" "$@"
 
     echo "kl: resumed $id (pi session $(basename "$jsonl"))" >&2
     enter_session "$id"
