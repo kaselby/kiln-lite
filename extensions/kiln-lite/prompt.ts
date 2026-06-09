@@ -31,8 +31,8 @@ import { execSync } from "node:child_process";
 import { isAbsolute, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
-import type { BuildSystemPromptOptions } from "@mariozechner/pi-coding-agent";
+import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 
 import type { ContextInjectionEntry, SessionState } from "./types.ts";
 

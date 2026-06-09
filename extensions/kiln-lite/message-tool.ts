@@ -16,8 +16,8 @@
  */
 
 import { Type, type Static } from "@sinclair/typebox";
-import { defineTool } from "@mariozechner/pi-coding-agent";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import type { DaemonClient } from "../../src/client/index.ts";
 

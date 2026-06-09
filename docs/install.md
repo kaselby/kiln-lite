@@ -19,7 +19,7 @@ kiln-lite ships two install scripts:
 |------|-----|---------|
 | Node ≥ 20 | Pi's runtime, kiln-lite's runtime, npm link | `brew install node` / `apt install nodejs` |
 | npm | Ships with node | — |
-| pi | The underlying agent | `npm install -g @mariozechner/pi-coding-agent` |
+| pi | The underlying agent | `npm install -g @earendil-works/pi-coding-agent` |
 | tmux | `kl`'s session wrap | `brew install tmux` / `apt install tmux` |
 | uv | Python venv for shell tools | Auto-installed by `bootstrap.sh` if missing |
 
@@ -212,7 +212,7 @@ See [`tools.md`](./tools.md) and [`skills.md`](./skills.md) for details.
 
 ```bash
 brew install node tmux
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @earendil-works/pi-coding-agent
 cd ~/Git/kiln-lite
 ./install.sh
 # [install] scaffolding agent home at /Users/you/.kl/agent

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
 import {
 	composeToolResultSuffix,

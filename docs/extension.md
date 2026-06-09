@@ -279,7 +279,7 @@ A harness is a normal Pi extension factory:
 
 ```ts
 // $AGENT_HOME/harness/index.ts
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { installDefaultHarness } from "kiln-lite/extensions/kiln-lite/lib/index.ts";
 
 export default function (pi: ExtensionAPI): void {

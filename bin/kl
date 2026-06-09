@@ -239,7 +239,7 @@ cmd_run() {
     fi
 
     require_tool tmux "install with: brew install tmux"
-    require_tool pi "install @mariozechner/pi-coding-agent"
+    require_tool pi "install @earendil-works/pi-coding-agent"
 
     local pi_bin name agent_id
     pi_bin="$(command -v pi)"
@@ -334,7 +334,7 @@ cmd_resume() {
     [ -f "$ext_path" ] || die "extension entry not found at $ext_path"
 
     require_tool tmux
-    require_tool pi "install @mariozechner/pi-coding-agent"
+    require_tool pi "install @earendil-works/pi-coding-agent"
 
     # If the tmux session is already alive, just attach — same shape as
     # `kl attach <id>`. kl run + a detach leaves the tmux session running;

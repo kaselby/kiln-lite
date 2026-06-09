@@ -27,7 +27,7 @@
 #
 # Prerequisites (checked, not installed — bail if missing):
 #   - node, npm (for kl and the pi package)
-#   - pi (@mariozechner/pi-coding-agent)
+#   - pi (@earendil-works/pi-coding-agent)
 #   - tmux (kl requires it; warned but not fatal)
 
 set -euo pipefail
@@ -56,7 +56,7 @@ fi
 # --- prerequisites ---
 command -v node >/dev/null 2>&1 || die "node not found — install Node.js >= 20"
 command -v npm  >/dev/null 2>&1 || die "npm not found (ships with node)"
-command -v pi   >/dev/null 2>&1 || die "pi not found — install @mariozechner/pi-coding-agent first"
+command -v pi   >/dev/null 2>&1 || die "pi not found — install @earendil-works/pi-coding-agent first"
 if ! command -v tmux >/dev/null 2>&1; then
     warn "tmux not found — kl requires it (brew install tmux / apt install tmux)"
 fi

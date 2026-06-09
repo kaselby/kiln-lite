@@ -6,7 +6,7 @@
  * side-effects (state/inbox queries) and then calls these functions.
  */
 
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
 /**
  * Compose tool_result suffix blocks into a single suffix string.

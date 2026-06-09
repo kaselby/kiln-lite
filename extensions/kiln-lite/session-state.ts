@@ -15,7 +15,7 @@
  * every 15 tool calls.
  */
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { DaemonClient } from "../../src/client/index.ts";
 import type { InboxWatcher } from "./inbox.ts";

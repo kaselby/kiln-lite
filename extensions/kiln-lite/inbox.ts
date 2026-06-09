@@ -43,7 +43,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, watch, type FSWatcher } from "node:fs";
 import { join, resolve } from "node:path";
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export interface InboxWatcher {
 	/** Stop the watcher — called from session_shutdown. */
