@@ -30,7 +30,7 @@
 import { mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import type { SessionState } from "./types.ts";
 import { expandPlaceholders } from "./placeholders.ts";

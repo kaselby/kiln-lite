@@ -4,7 +4,7 @@ What kiln-lite is, what it does, and how it fits around Pi.
 
 ## What it is
 
-**kiln-lite** is a Pi package that adds persistent-agent infrastructure on top of the [Pi coding agent](https://github.com/mariozechner/pi): stable identity across sessions, a composed system prompt driven by config, shell tool conventions, and inter-session messaging through a lightweight Node daemon.
+**kiln-lite** is a Pi package that adds persistent-agent infrastructure on top of the [Pi coding agent](https://github.com/earendil-works/pi): stable identity across sessions, a composed system prompt driven by config, shell tool conventions, and inter-session messaging through a lightweight Node daemon.
 
 Concretely, installing kiln-lite gives you:
 

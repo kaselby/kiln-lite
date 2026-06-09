@@ -16,11 +16,11 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { CURRENT_SESSION_VERSION, type SessionManager } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CURRENT_SESSION_VERSION, type SessionManager } from "@earendil-works/pi-coding-agent";
 
 type ReadonlySessionManager = Pick<SessionManager, "getCwd" | "getSessionDir" | "getSessionId" | "getSessionFile" | "getLeafId" | "getEntry" | "getLabel" | "getBranch" | "getHeader" | "getEntries" | "getSessionName">;
-import { UserMessageSelectorComponent } from "@mariozechner/pi-coding-agent";
+import { UserMessageSelectorComponent } from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
 
