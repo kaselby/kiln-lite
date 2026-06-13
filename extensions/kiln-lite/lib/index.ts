@@ -44,6 +44,7 @@ export {
 	createCleanupDispatcher,
 	registerExitCommands,
 	type CleanupDispatcher,
+	type ExitCommandOptions,
 } from "../cleanup.ts";
 export { ensureScaffold } from "../bootstrap.ts";
 export { buildMessageTool } from "../message-tool.ts";
