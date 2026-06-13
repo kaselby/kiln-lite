@@ -19,18 +19,18 @@ Top-level layout:
 
 ```
 ~/.kl/
-├── agents/                         <- $KL_AGENTS_DIR
-│   └── <name>/                     <- $AGENT_HOME for sessions of this agent
-│   ├── agent.yml                   # config (name, context_injection, cleanup, ...)
-│   ├── memory/                     # agent-written persistent state
-│   │   └── sessions/               # session summaries (convention)
-│   ├── scratch/                    # ephemeral working notes
-│   ├── tools/                      # shell tools — copied here on bootstrap
-│   ├── skills/                     # SKILL.md-based skill packages
-│   ├── inbox/<agent-id>/           # per-session inboxes
-│   ├── sessions/                   # session summaries (cleanup-turn output)
-│   ├── venv/                       # python venv for shell tools (bootstrap-owned)
-│   └── credentials/                # (optional) per-env-var secret files
+├── agents/                             <- $KL_AGENTS_DIR
+│   └── <name>/                         <- $AGENT_HOME for this agent's sessions
+│       ├── agent.yml                   # config (name, context_injection, cleanup, ...)
+│       ├── memory/                     # agent-written persistent state
+│       │   └── sessions/               # session summaries (convention)
+│       ├── scratch/                    # ephemeral working notes
+│       ├── tools/                      # shell tools — copied here on bootstrap
+│       ├── skills/                     # SKILL.md-based skill packages
+│       ├── inbox/<agent-id>/           # per-session inboxes
+│       ├── sessions/                   # session summaries (cleanup-turn output)
+│       ├── venv/                       # python venv for shell tools (bootstrap-owned)
+│       └── credentials/                # (optional) per-env-var secret files
 │
 └── daemon/
     ├── daemon.pid                  # cleaned on clean exit

@@ -29,10 +29,14 @@
 #                             never go through a shell. Useful for spawning
 #                             workers with long structured briefs.
 #   kl resume <agent-id> [pi-args...]
-#                           Resume a prior session BY NAME. Parses the
-#                           <name> prefix from the agent-id to find which agent
-#                           home owns the snapshot. Falls back to AGENT_HOME if
-#                           no agent matches the prefix.
+#                           Resume a prior session BY NAME. Locates the owning
+#                           agent home in order:
+#                             1. Parse <name> prefix from <agent-id>; use that
+#                                agent if the snapshot exists there.
+#                             2. Scan every installed agent for the snapshot.
+#                                Exactly one match wins; multiple -> hard error.
+#                             3. $AGENT_HOME if explicitly set.
+#                             4. Otherwise hard error.
 #   kl attach <agent-id>    Attach an existing kl session.
 #   kl new <name>           Scaffold a new agent at $KL_AGENTS_DIR/<name>.
 #   kl list                 List active kl tmux sessions.
@@ -168,7 +172,7 @@ resolve_agent_home() {
 # without the caller having to set AGENT_HOME.
 agent_name_from_session_id() {
     local id="$1"
-    # Names are lowercase letters/numbers/_-; adj+noun are word words.
+    # Names match [a-z][a-z0-9_]* (hyphens reserved); adj+noun are word words.
     # The first dash separates name from adj.
     printf '%s' "${id%%-*}"
 }
@@ -335,6 +339,15 @@ cmd_run() {
     local pi_bin name agent_id
     pi_bin="$(command -v pi)"
     name="$(resolve_agent_name "$agent_home")"
+    # The session-id grammar is <name>-<adj>-<noun>. If agent.yml.name contains
+    # a hyphen, `kl resume` can't split prefix from suffix — same root issue
+    # that disallowing `-` in `kl new` solves, but `agent.yml` is source of
+    # truth, so we have to enforce it here too. Catches edited configs and
+    # migrated legacy homes that pre-date this rule.
+    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] \
+        || die "invalid agent.yml name '$name' in $agent_home/agent.yml — must match [a-z][a-z0-9_]*.
+  Hyphens are reserved: session-ids are <name>-<adj>-<noun>, so a hyphenated
+  name would make 'kl resume' unable to split prefix from suffix."
     agent_id="$(generate_agent_id "$name")"
 
     # If a tmux session already exists with this name, suffix until free.
