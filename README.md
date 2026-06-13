@@ -212,15 +212,24 @@ kiln-lite/
 ├── bin/
 │   └── kl               # Session launcher — tmux wrap + agent-id + exec pi
 ├── extensions/kiln-lite/
-│   ├── index.ts         # Entry + lifecycle wiring
-│   ├── config.ts        # agent.yml loader + defaults
-│   ├── identity.ts      # Deterministic agent ID from session UUID
-│   ├── env.ts           # Env var export (hoisted to process.env)
-│   ├── prompt.ts        # System prompt composition
-│   ├── tools.ts         # YAML-header tool discovery + tool-index rendering
-│   ├── inbox.ts         # fs.watch, idle delivery, mid-turn pings
-│   ├── cleanup.ts       # /exit /fq + agent_end dispatch
-│   └── types.ts         # Shared interfaces
+│   ├── index.ts             # Entry + lifecycle wiring
+│   ├── config.ts            # agent.yml loader + defaults
+│   ├── identity.ts          # Deterministic agent ID from session UUID
+│   ├── env.ts               # Env var export (hoisted to process.env)
+│   ├── prompt.ts            # System prompt composition
+│   ├── tools.ts             # YAML-header tool discovery + tool-index rendering
+│   ├── inbox.ts             # fs.watch, idle delivery, mid-turn pings
+│   ├── cleanup.ts           # /exit /fq dispatch
+│   ├── exit-session.ts      # Exit logic — cleanup, continuation, shutdown
+│   ├── exit-session-tool.ts # exit_session tool (autonomous exit + self-continuation)
+│   ├── plan.ts              # Plan state persistence + reminder logic
+│   ├── plan-tool.ts         # plan tool registration + periodic reminders
+│   ├── message-tool.ts      # message tool registration
+│   ├── session-state.ts     # SessionState type + shared state
+│   ├── spawn.ts             # Peer/continuation session spawning
+│   ├── template.ts          # Template resolution
+│   ├── types.ts             # Shared interfaces
+│   └── lib/                 # Internal helpers
 ├── skills/messaging/
 │   ├── SKILL.md         # Documents message + sessions scripts
 │   └── scripts/

@@ -106,7 +106,7 @@ Every tool invocation inherits:
 
 | Variable | Value |
 |----------|-------|
-| `AGENT_HOME` | Resolved agent home (default `~/.kl/agent`) |
+| `AGENT_HOME` | Resolved agent home (default `~/.kl/agents/agent`) |
 | `AGENT_ID` | `<name>-<adj>-<noun>` for this session |
 | `AGENT_NAME` | Name prefix from `agent.yml` |
 | `SESSION_UUID` | Pi session UUID |
@@ -163,7 +163,7 @@ curl -sf "$1" >/dev/null && echo ok || echo down
 ```
 
 ```bash
-chmod +x ~/.kl/agent/tools/ping
+chmod +x ~/.kl/agents/agent/tools/ping
 # Next session, the agent sees:
 #   - **ping** `<url>` — Check a service heartbeat
 ```
@@ -192,7 +192,7 @@ Edit `<home>/tools/fetch` directly. Your edits persist until someone runs `boots
 
 ```bash
 # In a running session:
-cat > ~/.kl/agent/tools/mynew <<'EOF'
+cat > ~/.kl/agents/agent/tools/mynew <<'EOF'
 #!/usr/bin/env bash
 # ---
 # name: mynew
@@ -200,7 +200,7 @@ cat > ~/.kl/agent/tools/mynew <<'EOF'
 # ---
 echo "hello"
 EOF
-chmod +x ~/.kl/agent/tools/mynew
+chmod +x ~/.kl/agents/agent/tools/mynew
 ```
 
 The tool is callable immediately (it's on `$PATH` already). It won't appear in the system prompt's tool listing until the next session — Pi's `before_agent_start` runs once, not per turn.

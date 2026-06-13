@@ -16,17 +16,22 @@ Both are exposed via `package.json` `bin` entries. `npm link` (part of install) 
 ### Usage
 
 ```
-kl                          # spawn new session (default), attach
-kl run [--detach] [pi-args] # same as above, with optional detach + pi passthrough
+kl                          # spawn starter agent (~/.kl/agents/agent), attach
+kl <name>                   # spawn a named agent (~/.kl/agents/<name>)
+kl run [name] [--detach] [pi-args]  # with optional detach + pi passthrough
 kl --detach [pi-args]       # spawn detached, print agent-id to stdout
 kl attach <agent-id>        # reattach an existing tmux session
 kl list                     # list active kl-shaped tmux sessions
+kl agents                   # list installed agents on disk
+kl new <name>               # scaffold a new agent
+kl history [name]           # session history (all agents or one)
+kl doctor [name]            # system + per-agent diagnostics
 kl -h | --help              # show usage
 ```
 
-`kl` (no args) is the common case — spawn a new session and attach. Under the hood:
+`kl` (no args) is the common case — spawn the starter agent and attach. `kl <name>` spawns a named agent instead. Under the hood:
 
-1. Resolve `$AGENT_HOME` (falls back to `~/.kl/agent`).
+1. Resolve the agent home: positional name (`kl beth` → `~/.kl/agents/beth`), else `$AGENT_HOME` override, else the default starter at `~/.kl/agents/agent`.
 2. Read `name:` from `agent.yml`.
 3. Generate a fresh `<name>-<adj>-<noun>` agent-id (16 bytes of entropy → sha256 → pool indices).
 4. Check for tmux session collision; suffix with 2 hex bytes if found.
@@ -65,7 +70,8 @@ kl attach agent-quiet-elk
 
 | Variable | Meaning | Default |
 |----------|---------|---------|
-| `AGENT_HOME` | Override the agent home dir | `~/.kl/agent` |
+| `AGENT_HOME` | Override the agent home dir | `~/.kl/agents/agent` |
+| `KL_AGENTS_DIR` | Override the agents root dir | `~/.kl/agents` |
 
 ### Reference: name pools
 
@@ -130,6 +136,10 @@ Full wire protocol in [`daemon.md`](./daemon.md).
 kl
 # [kiln-lite: online as agent-bright-jay]
 # pi session opens, attached
+
+kl beth
+# [kiln-lite: online as beth-silver-gate]
+# spawns the 'beth' agent
 ```
 
 ### Peer-spawn with prompt
@@ -139,6 +149,9 @@ peer=$(kl --detach --prompt "Audit scratch/results.md and flag anything shaky")
 echo "spawned: $peer"
 # Later:
 kl-msg send "$peer" "ping" --body "How's it going?"
+
+# Spawn a specific agent detached:
+peer=$(kl beth --detach --prompt "Review my draft")
 ```
 
 ### Inspect the daemon
@@ -159,7 +172,7 @@ kl-msg list-sessions
 ### Subscribe + publish from the shell
 
 ```bash
-export AGENT_HOME=~/.kl/agent
+export AGENT_HOME=~/.kl/agents/agent
 export AGENT_ID=shell-user-local
 export INBOX=$AGENT_HOME/inbox/$AGENT_ID
 mkdir -p "$INBOX"
@@ -170,10 +183,22 @@ kl-msg publish docs-review "drive-by note" --body "Consider breaking §4 into tw
 
 Useful for one-off shell scripting, CI, or when you want to post from outside a Pi session.
 
+### Create a new agent
+
+```bash
+kl new beth
+# scaffolded: ~/.kl/agents/beth/
+# edit ~/.kl/agents/beth/agent.yml to configure
+
+kl agents
+# agent    ~/.kl/agents/agent/
+# beth     ~/.kl/agents/beth/
+```
+
 ### Raw pi without kl
 
 ```bash
-AGENT_HOME=~/.kl/agent pi -e ~/Git/kiln-lite/extensions/kiln-lite/index.ts
+AGENT_HOME=~/.kl/agents/beth pi -e ~/Git/kiln-lite/extensions/kiln-lite/index.ts
 ```
 
 No tmux, no `kl`, no `$AGENT_ID` pre-export — the extension derives the id from Pi's session UUID. Useful for extension development; less useful day-to-day because without a tmux session name you can't `kl attach` later.
