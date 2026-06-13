@@ -7,7 +7,7 @@ Four memory surfaces live in the agent home:
     memory/active.md                     # injected every session — active tracking
     sessions/<date>-<agent-id>.md        # lookup-only — one per session
 
-At session wrap (`/wrapup`), the cleanup turn runs four steps in order:
+At session exit (`/exit` or `exit_session` tool), the cleanup turn runs four steps in order:
 
 1. **Session summary** — write to `sessions/<date>-<agent-id>.md`
 2. **Volatile update** — refresh `memory/volatile.md`
