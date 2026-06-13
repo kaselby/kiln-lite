@@ -17,9 +17,10 @@
  * the extraction preserves.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
+import { spawn, execFileSync } from "node:child_process";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -32,7 +33,8 @@ import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { createCleanupDispatcher, registerExitCommands } from "../cleanup.ts";
 import { ensureScaffold } from "../bootstrap.ts";
 import { buildMessageTool } from "../message-tool.ts";
-import { buildWrapupTool } from "../wrapup-tool.ts";
+import { buildExitSessionTool } from "../exit-session-tool.ts";
+import type { ContinuationConfig } from "../exit-session.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
@@ -84,13 +86,18 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	let snapshotWriter: SnapshotWriter | null = null;
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
+	const continuationRef: { current: ContinuationConfig | null } = { current: null };
 
 	// Tool registration must happen at extension load time so Pi's loader
 	// picks them up. The execute closures read live mutable state lazily
 	// via getter callbacks, since neither the daemon nor the dispatcher
 	// exist until session_start.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
-	pi.registerTool(buildWrapupTool({ getDispatcher: () => dispatcherRef.current }));
+	pi.registerTool(buildExitSessionTool({
+		getDispatcher: () => dispatcherRef.current,
+		setContinuation: (config) => { continuationRef.current = config; },
+		getTemplate: () => state?.template,
+	}));
 	const planKit = buildPlanToolKit({
 		getAgentHome: () => state?.agentHome ?? null,
 		getAgentId: () => state?.agentId ?? null,
@@ -321,8 +328,14 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		return { skillPaths: [skillsDir] };
 	});
 
-	// --- session_shutdown: tear down watcher + daemon (with timeout race) ---
+	// --- session_shutdown: tear down watcher + daemon, then spawn continuation ---
 	pi.on("session_shutdown", async (_event, _ctx) => {
+		// Capture continuation config before tearing down state — the ref
+		// outlives teardown but state is nulled below.
+		const continuation = continuationRef.current;
+		const agentHome = state?.agentHome;
+		continuationRef.current = null;
+
 		if (watcher) {
 			watcher.stop();
 			watcher = null;
@@ -343,6 +356,11 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		gates = [];
 		state = null;
 		snapshotWriter = null;
+
+		// Spawn continuation after all teardown is complete.
+		if (continuation && agentHome) {
+			await spawnContinuation(continuation, agentHome, (msg) => console.warn(msg));
+		}
 	});
 
 	return {
@@ -422,4 +440,55 @@ function runStartupCommand(
 			resolve();
 		});
 	});
+}
+
+/**
+ * Spawn a continuation session via `kl --detach`. Writes the handoff to a
+ * temp file (safe for arbitrary content — backticks, quotes, newlines) and
+ * passes it via --prompt-file. kl reads the file synchronously before
+ * launching tmux, so cleanup is safe immediately after.
+ */
+async function spawnContinuation(
+	config: ContinuationConfig,
+	agentHome: string,
+	warn: (msg: string) => void,
+): Promise<void> {
+	const args = ["--detach"];
+
+	if (config.template) {
+		args.push("--template", config.template);
+	}
+
+	let tmpFile: string | null = null;
+	if (config.handoff) {
+		tmpFile = join(tmpdir(), `kl-handoff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.md`);
+		try {
+			writeFileSync(tmpFile, config.handoff);
+		} catch (err) {
+			warn(`kiln-lite: failed to write handoff file: ${(err as Error).message}`);
+			tmpFile = null;
+		}
+		if (tmpFile) {
+			args.push("--prompt-file", tmpFile);
+		}
+	}
+
+	try {
+		const stdout = execFileSync("kl", args, {
+			env: { ...process.env, AGENT_HOME: agentHome },
+			timeout: 5000,
+		});
+		const agentId = stdout.toString().trim();
+		console.log(`kiln-lite: continuation spawned → ${agentId}`);
+	} catch (err) {
+		warn(`kiln-lite: failed to spawn continuation: ${(err as Error).message}`);
+	} finally {
+		if (tmpFile) {
+			try {
+				unlinkSync(tmpFile);
+			} catch {
+				// temp file cleanup is best-effort
+			}
+		}
+	}
 }

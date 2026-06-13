@@ -47,7 +47,8 @@ export {
 } from "../cleanup.ts";
 export { ensureScaffold } from "../bootstrap.ts";
 export { buildMessageTool } from "../message-tool.ts";
-export { buildWrapupTool } from "../wrapup-tool.ts";
+export { buildExitSessionTool, type ExitSessionToolDeps } from "../exit-session-tool.ts";
+export { resolveHandoff, type ContinuationConfig } from "../exit-session.ts";
 export { registerSpawnCommand } from "../spawn.ts";
 export { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
 export {
