@@ -1,15 +1,15 @@
 # Agent Home
 
-The layout and ownership model of `~/.kl/` — the single root that holds the agent home and daemon state.
+The layout and ownership model of `~/.kl/` — the root that holds every agent home and the shared daemon state.
 
 ## Overview
 
 kiln-lite's footprint on the host lives under **`~/.kl/`**. Two subtrees share that root:
 
-- **`~/.kl/agent/`** — the **agent home**. Contains identity, config, memory, tools, skills, inboxes — everything a single Pi session reads or writes.
-- **`~/.kl/daemon/`** — the **daemon state**. Contains the daemon's persistent state: subscriptions, known-sessions index, pid, log. Never touched by agent sessions directly; the daemon is the only writer.
+- **`~/.kl/agents/<name>/`** — **agent homes**. Each agent gets its own home dir containing identity, config, memory, tools, skills, inboxes — everything one or more Pi sessions of that agent read or write. The starter agent is at `~/.kl/agents/agent/`. Add more with `kl new <name>`.
+- **`~/.kl/daemon/`** — the **daemon state**. Contains the daemon's persistent state: subscriptions, known-sessions index, pid, log. Shared across all agents. Never touched by agent sessions directly; the daemon is the only writer.
 
-Paths throughout the kiln-lite docs use `<home>` for the absolute path to the agent home. At runtime, `AGENT_HOME` points at it for every shell tool, startup command, and Pi-spawned subprocess.
+Paths throughout the kiln-lite docs use `<home>` for the absolute path to a specific agent home. At runtime, `AGENT_HOME` points at it for every shell tool, startup command, and Pi-spawned subprocess of that agent's session.
 
 Using a single `.kl/` root (rather than scattering across `~/.agent/`, `~/.cache/kiln-lite/`, `~/.config/kiln-lite/`, and so on) means there's exactly one place to look when something is off — logs, subscriptions, inbox, memory all share a prefix. Short name, matches the `kl` binary, obvious dotfile convention.
 
@@ -19,7 +19,8 @@ Top-level layout:
 
 ```
 ~/.kl/
-├── agent/                          <- $AGENT_HOME
+├── agents/                         <- $KL_AGENTS_DIR
+│   └── <name>/                     <- $AGENT_HOME for sessions of this agent
 │   ├── agent.yml                   # config (name, context_injection, cleanup, ...)
 │   ├── memory/                     # agent-written persistent state
 │   │   └── sessions/               # session summaries (convention)
@@ -58,15 +59,15 @@ Within the agent home, the extension treats agent-written files as read-only —
 
 ### Scaffolding
 
-A fresh `./install.sh` creates:
+A fresh `./install.sh` creates the starter agent at `~/.kl/agents/agent/`. Each subsequent `kl new <name>` creates the same shape under `~/.kl/agents/<name>/`:
 
-- `~/.kl/agent/agent.yml` from a template — you'll edit it to set `name:` and wire `context_injection:`
+- `<home>/agent.yml` from a template — `name:` is auto-patched to match the dir name; you wire `context_injection:` and the cleanup turn
 - empty `memory/`, `scratch/`, `inbox/`, `sessions/` directories (with `.gitkeep` if you later init a git repo)
 - `tools/` populated with bundled shell tools (`fetch`, `web-search`, `seek`, `explore`, `todo`)
 - `skills/` populated with bundled skills (`messaging/`)
 - `venv/` created by `uv` at the version in `<repo>/.python-version`, with `requirements.txt` installed
 
-Re-running `install.sh` on an existing home **refreshes bundled skills and tools** but leaves `agent.yml`, `memory/`, `venv/`, and `scratch/` alone. See [`install.md`](./install.md) for the full flow including the `~/.agent → ~/.kl/agent` migration prompt.
+Re-running `install.sh` on an existing **starter** refreshes its bundled skills and tools but leaves `agent.yml`, `memory/`, `venv/`, and `scratch/` alone. To refresh non-starter agents, run `./bootstrap.sh ~/.kl/agents/<name> --refresh-skills` (and/or `--refresh-tools`) directly. See [`install.md`](./install.md) for the full flow including migration from legacy single-agent layouts.
 
 ## Reference
 
@@ -126,4 +127,4 @@ See [`daemon.md`](./daemon.md) for the full schema. In short:
 - **`bootstrap.sh` copies bundled skills/tools — it doesn't symlink.** Once copied, edits to `<home>/tools/foo` are yours; they won't be stomped unless you pass `--refresh-tools` or `--force`. Conversely, fixes to the repo's bundled scripts won't propagate until you re-run `install.sh` (which refreshes skills + tools automatically) or `bootstrap.sh --refresh-tools`.
 - **`venv/` is at the Python version in `<repo>/.python-version`.** Changing the pin requires `bootstrap.sh <home> --rebuild-venv` to apply.
 - **The socket path is home-neutral on purpose.** If you move `~/.kl/` to another path, the socket location doesn't change — but a running daemon under the old path will conflict with a new one. Stop the daemon before moving the root.
-- **Legacy `~/.agent/` still works if you point `AGENT_HOME` at it** — but running `install.sh` with `AGENT_HOME=~/.agent` triggers the migration prompt. See [`install.md`](./install.md).
+- **Legacy `~/.agent/` and `~/.kl/agent/` still work if you point `AGENT_HOME` at one** — but `kl agents` / `kl history` won't see them (they're outside the registry). Run `install.sh` to be prompted to migrate the legacy dir to `~/.kl/agents/agent/`. See [`install.md`](./install.md).
