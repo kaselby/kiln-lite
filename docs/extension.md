@@ -87,8 +87,19 @@ The state lives in a closure inside the extension's default export and is mutate
 | `tools.ts` | `discoverTools` (scan YAML headers) + `renderToolIndex` (pretty-print for prompt). |
 | `inbox.ts` | `startInboxWatcher` — fs.watch over inbox dir; idle delivery, mid-turn suffixes, `.read` markers. |
 | `cleanup.ts` | `createCleanupDispatcher` + `registerExitCommands` (/exit /fq). |
+| `exit-session.ts` | Exit logic — cleanup turn dispatch, continuation spawning, shutdown. |
+| `exit-session-tool.ts` | Registers the `exit_session` tool for autonomous exit + self-continuation. |
+| `plan.ts` | Plan state persistence, formatting, and periodic reminder logic. Pure module — no pi SDK deps. |
+| `plan-tool.ts` | Registers the `plan` tool; wires reminder suffix into `tool_result`. |
+| `message-tool.ts` | Registers the `message` tool for inter-agent messaging. |
+| `session-state.ts` | `SessionState` type definition and shared state. |
+| `spawn.ts` | Peer and continuation session spawning via `kl --detach`. |
+| `template.ts` | Template resolution from agent home. |
+| `gates.ts` | Gate checks for plan/message tools (session initialized?). |
+| `placeholders.ts` | Template variable substitution (`{today}`, `{agent_id}`, etc). |
 | `bootstrap.ts` | First-run auto-scaffold if `$AGENT_HOME` is set explicitly and lacks `agent.yml`. |
 | `types.ts` | Shared interfaces. |
+| `lib/` | Internal helpers: agent-end lifecycle, formatting, install detection, agent-id recovery, snapshot writer. |
 
 ## Reference
 
@@ -195,6 +206,14 @@ The **`exit_session` tool** (`exit-session-tool.ts`) provides the same capabilit
 
 `agent_end` is where the dispatcher decides: did we just finish the cleanup turn? If yes, exit; if no, normal return to user input.
 
+### Plan tool
+
+`plan-tool.ts` registers a `plan` tool that lets agents externalize a task breakdown. Each call replaces the entire plan (goal + ordered task list with `pending`/`in_progress`/`done` status). The plan is written to `<home>/state/sessions/<agent-id>/plan.json`.
+
+The plan tool includes a **periodic reminder**: every 15 tool calls (configurable), if in-progress tasks exist, a summary is appended to the tool result as a suffix — keeping the agent aware of its plan without requiring it to re-read state.
+
+Plan files are per-session and live alongside other session state. They're visible to external tools (e.g. `sessions` can read them to show plan progress in dashboards).
+
 ### Daemon integration
 
 On `session_start`, the extension constructs a `DaemonClient` and calls `register()` as fire-and-forget. The client autostarts the daemon if the socket is missing (see [`daemon.md`](./daemon.md) §Autostart). Daemon failures at this point never block session startup — the session just runs without channel fanout.
@@ -245,13 +264,13 @@ cleanup: |
 
 Now the prompt has `IDENTITY.md` as its base (replacing Pi's default), a static `core.md` block, a live-reloading `volatile.md` block, a live-refreshing Active Projects block sourced from the `project` tool, and the standard tool index.
 
-### Iterating on the extension without `pi install`
+### Iterating on the extension without `kl`
 
 ```bash
-AGENT_HOME=~/.kl/agent pi -e ./extensions/kiln-lite/index.ts
+AGENT_HOME=~/.kl/agents/agent pi -e ./extensions/kiln-lite/index.ts
 ```
 
-Skips the global registration — useful when editing the extension source and wanting changes to take effect immediately on next session.
+Bypasses `kl` and tmux — useful when editing the extension source and wanting changes to take effect immediately. `AGENT_HOME` is the escape-hatch override.
 
 ## Conventions
 
@@ -262,7 +281,7 @@ Skips the global registration — useful when editing the extension source and w
 
 ## Gotchas
 
-- **`ensureScaffold` only fires when `$AGENT_HOME` is set explicitly.** If the default (`~/.kl/agent`) is used and the dir is missing, the extension fails hard on first write. Run `./install.sh` — that's what the default case expects.
+- **`ensureScaffold` only fires when `$AGENT_HOME` is set explicitly.** If the default (`~/.kl/agents/agent`) is used and the dir is missing, the extension fails hard on first write. Run `./install.sh` — that's what the default case expects.
 - **`session_start` failures are mostly soft.** Individual steps (mkdir, daemon register, write id file) are wrapped in try/catch and warn-on-fail. This means a partially-broken session can start. Check the console / `ctx.ui.notify` warnings if things seem off.
 - **Mid-turn inbox pings only fire after `tool_result`.** An agent that never calls a tool between inbox arrivals won't see the suffix. Idle delivery catches it eventually — but if you're expecting live fanout on a tool-less turn, it won't happen.
 - **`resources_discover` fires at session_start AND on `/reload`.** If you add a new skill mid-session, `/reload` picks it up; shell tools don't have an equivalent re-scan, and new tools in `<home>/tools/` won't appear in the listing until next session (though they're still callable via bash).

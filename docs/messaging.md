@@ -253,7 +253,7 @@ sessions show agent-quiet-elk
 # pid:          45821
 # last_seen:    2026-04-22T20:15:30
 # uptime:       25m
-# inbox:        ~/.kl/agent/inbox/agent-quiet-elk
+# inbox:        ~/.kl/agents/agent/inbox/agent-quiet-elk
 # unread:       0
 ```
 
