@@ -74,7 +74,7 @@ Re-running `install.sh` on an existing home **refreshes bundled skills and tools
 
 Throughout this reference, `<home>` stands in for the absolute path of the agent home. At runtime:
 
-- Shell tools and startup commands see `$AGENT_HOME` — pointing at `~/.kl/agent` by default, or whatever `AGENT_HOME=...` was set to at spawn time.
+- Shell tools and startup commands see `$AGENT_HOME` — pointing at `~/.kl/agents/<name>/` for the agent kl launched, or whatever was passed via `AGENT_HOME=...` for the override case.
 - Inside the extension, `state.agentHome` in `SessionState` holds the resolved path.
 - `$AGENT_HOME` is exported by the extension into `process.env`, so every child process (Pi's built-in `bash` tool, shell tools, startup commands) inherits it.
 
@@ -84,7 +84,7 @@ Set by `env.ts` on `session_start`:
 
 | Variable       | Value                                        |
 |----------------|----------------------------------------------|
-| `AGENT_HOME`   | Resolved agent home (default `~/.kl/agent`)  |
+| `AGENT_HOME`   | Resolved agent home (default `~/.kl/agents/agent`) |
 | `AGENT_ID`     | `<name>-<adj>-<noun>` for this session       |
 | `AGENT_NAME`   | Name prefix (from `agent.yml` → `name:`)     |
 | `SESSION_UUID` | Pi session UUID                              |
@@ -109,13 +109,13 @@ See [`daemon.md`](./daemon.md) for the full schema. In short:
 - [`messaging.md`](./messaging.md) — inbox file format, channel fanout, how `<home>/inbox/<agent-id>/` is populated.
 - [`extension.md`](./extension.md) — what the extension reads and writes per lifecycle hook.
 - [`daemon.md`](./daemon.md) — daemon state files in detail.
-- [`install.md`](./install.md) — scaffolding flow and the `~/.agent → ~/.kl/agent` migration.
+- [`install.md`](./install.md) — scaffolding flow and migration from legacy single-agent layouts.
 - [`tools.md`](./tools.md) — how `<home>/tools/` is discovered and rendered.
 - [`skills.md`](./skills.md) — how `<home>/skills/` is discovered and activated.
 
 ## Conventions
 
-- **One agent home per `$AGENT_HOME`.** Want two agents on the same machine? Set `AGENT_HOME=~/.kl/other` and run `./bootstrap.sh ~/.kl/other`. The daemon supports multiple homes in its protocol envelope (each session registers its own `inbox_path`) but the current single-root layout assumes one.
+- **Multi-agent is first-class.** Each agent lives under `$KL_AGENTS_DIR/<name>/` (default `~/.kl/agents/<name>/`). Create with `kl new <name>`, launch with `kl <name>`. The daemon routes by per-session `inbox_path`, so agents coexist cleanly. `AGENT_HOME=/some/path` is the escape-hatch override for one-off homes outside the registry.
 - **Secrets live under `credentials/`.** Each file's name is the env var it populates (e.g. `credentials/TAVILY_API_KEY` → `$TAVILY_API_KEY`). Bundled tools read this path; nothing else should.
 - **Ephemeral work goes in `scratch/`.** It's never injected into context, never indexed, fair game to delete.
 - **Don't edit daemon-owned state by hand.** `~/.kl/daemon/*` files are machine-written JSON — correct by construction when the daemon writes them. If you need to reset, stop the daemon and `rm -rf ~/.kl/daemon/`; the daemon will recreate what it needs on next autostart.

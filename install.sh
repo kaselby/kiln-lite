@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
 # install.sh — one-stop kiln-lite install.
 #
+# Installs the kl CLI globally and scaffolds a starter agent. Agents live
+# under $KL_AGENTS_DIR (default ~/.kl/agents/). The starter is created at
+# ~/.kl/agents/agent — launchable as `kl` (no args).
+#
 # Does, in order:
 #   1. Install node deps (npm install).
 #   2. Link the `kl` command globally (npm link).
 #   3. Remove any legacy global pi registration of kiln-lite (idempotent).
 #      The extension is intentionally NOT registered globally — `kl` loads
 #      it explicitly via `-e <path>`. Bare `pi` runs extension-free.
-#   4. Scaffold or refresh the agent home via bootstrap.sh.
-#      If the home already exists, bundled skills + tools are refreshed
-#      so fixes from this repo propagate without a second command. venv
-#      and agent.yml are left alone (they may carry user state). Use
-#      bootstrap.sh directly with --rebuild-venv / --force for deeper
-#      updates.
+#   4. Scaffold the starter agent at $KL_AGENTS_DIR/agent (if it doesn't
+#      already exist). Use `kl new <name>` to add more later.
 #
 # Usage:
-#   ./install.sh [home-dir]
+#   ./install.sh [--no-starter]
 #
-# Defaults:
-#   home-dir = $AGENT_HOME if set, else ~/.kl/agent
+#   --no-starter    Install kl + daemon only; skip starter-agent scaffold.
+#                   Useful for CI or when you'll create agents explicitly
+#                   with `kl new <name>`.
+#
+# Env:
+#   KL_AGENTS_DIR    Parent dir for agent homes (default: ~/.kl/agents/).
 #
 # Migration:
-#   If ~/.agent exists from a previous install and ~/.kl/agent does not,
-#   you'll be prompted to move it (the default kiln-lite layout is now
-#   ~/.kl/ with agent home + daemon state living side-by-side).
+#   If ~/.agent or ~/.kl/agent exist from previous installs and the new
+#   layout (~/.kl/agents/agent/) doesn't, you'll be prompted to move them.
 #
 # Prerequisites (checked, not installed — bail if missing):
 #   - node, npm (for kl and the pi package)
@@ -34,24 +37,34 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Default home: $AGENT_HOME if set, else ~/.kl/agent. Explicit positional
-# arg wins over both.
-DEFAULT_HOME="$HOME/.kl/agent"
-HOME_DIR="${1:-${AGENT_HOME:-$DEFAULT_HOME}}"
+# --- defaults / args ---
+KL_AGENTS_DIR="${KL_AGENTS_DIR:-$HOME/.kl/agents}"
+STARTER_NAME="agent"
+STARTER_HOME="$KL_AGENTS_DIR/$STARTER_NAME"
+SKIP_STARTER=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-starter) SKIP_STARTER=1 ;;
+        -h|--help)
+            awk '
+                NR == 1 { next }
+                /^[^#]/ { exit }
+                /^#$/ { print ""; next }
+                /^# ?/ { sub(/^# ?/, ""); print }
+            ' "$0"
+            exit 0
+            ;;
+        *)
+            printf '[install] unknown arg: %s (try --help)\n' "$arg" >&2
+            exit 1
+            ;;
+    esac
+done
 
 log()  { printf '[install] %s\n' "$*"; }
 warn() { printf '[install] WARNING: %s\n' "$*" >&2; }
 die()  { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
-
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-    awk '
-        NR == 1 { next }
-        /^[^#]/ { exit }
-        /^#$/ { print ""; next }
-        /^# ?/ { sub(/^# ?/, ""); print }
-    ' "$0"
-    exit 0
-fi
 
 # --- prerequisites ---
 command -v node >/dev/null 2>&1 || die "node not found — install Node.js >= 20"
@@ -102,63 +115,83 @@ else
     log "pi global registration: not present (good — kl loads the extension directly)"
 fi
 
-# --- 4. migrate ~/.agent -> ~/.kl/agent if applicable ---
-# Fires whenever the resolved HOME_DIR is the legacy ~/.agent path (either
-# because $AGENT_HOME still points there or because it was passed
-# explicitly). Moves ~/.agent -> ~/.kl/agent and rewrites HOME_DIR so the
-# rest of this script operates on the new layout.
-LEGACY_HOME="$HOME/.agent"
-if [ "$HOME_DIR" = "$LEGACY_HOME" ] && [ -d "$LEGACY_HOME" ] && [ ! -e "$DEFAULT_HOME" ]; then
-    log "detected legacy agent home at $LEGACY_HOME (pre-v0.3 layout)"
-    log "kiln-lite now lives under ~/.kl/ (agent home + daemon state side-by-side)"
-    if [ -n "${AGENT_HOME:-}" ]; then
-        log "  note: \$AGENT_HOME is set to $AGENT_HOME — update your shell rc to point at"
-        log "        $DEFAULT_HOME after migration (or unset it to use the new default)"
-    fi
-    reply="y"
+# --- 4. legacy-layout migration ---
+# Two old layouts to handle:
+#   ~/.agent/         (pre-v0.3, before ~/.kl/ was introduced)
+#   ~/.kl/agent/      (singular, pre-multi-agent layout)
+# Both migrate to ~/.kl/agents/agent/ — the new starter location.
+maybe_migrate_legacy() {
+    local from="$1"
+    [ -d "$from" ] || return 0
+    [ -e "$STARTER_HOME" ] && return 0  # new layout already present, don't clobber
+
+    log "detected legacy agent home at $from"
+    log "  starter agent now lives at $STARTER_HOME"
+    local reply="y"
     if [ -t 0 ] && [ -t 2 ]; then
-        printf '[install] Move %s to %s? [Y/n] ' "$LEGACY_HOME" "$DEFAULT_HOME" >&2
+        printf '[install] Move %s -> %s? [Y/n] ' "$from" "$STARTER_HOME" >&2
         read -r reply
     fi
     case "${reply:-y}" in
         ""|y|Y|yes|YES|Yes)
-            mkdir -p "$(dirname "$DEFAULT_HOME")"
-            mv "$LEGACY_HOME" "$DEFAULT_HOME"
-            HOME_DIR="$DEFAULT_HOME"
-            log "migrated $LEGACY_HOME -> $DEFAULT_HOME"
+            mkdir -p "$KL_AGENTS_DIR"
+            mv "$from" "$STARTER_HOME"
+            log "migrated $from -> $STARTER_HOME"
+            if [ -n "${AGENT_HOME:-}" ] && [ "$AGENT_HOME" = "$from" ]; then
+                warn "  \$AGENT_HOME is set to $from — unset it or update your shell rc"
+                warn "  (new resolution: kl picks up $STARTER_HOME by default; AGENT_HOME is now an escape hatch)"
+            fi
             ;;
         *)
-            log "migration declined — continuing with legacy path $LEGACY_HOME"
+            log "migration declined — leaving $from in place"
+            log "  kl will not see it; either rerun install.sh, or 'mv $from $STARTER_HOME' manually"
             ;;
     esac
-fi
+}
 
-# --- 5. scaffold OR refresh the home dir ---
-# Fresh install: full bootstrap (venv + skills + tools + agent.yml).
-# Existing home: refresh bundled skills + tools so fixes propagate without
-# requiring the user to know which bootstrap flag to reach for. venv +
-# agent.yml are left untouched — they may carry user customization.
-if [ -e "$HOME_DIR" ]; then
-    log "agent home exists at $HOME_DIR — refreshing bundled skills + tools"
+maybe_migrate_legacy "$HOME/.agent"
+maybe_migrate_legacy "$HOME/.kl/agent"
+
+# --- 5. starter agent ---
+if [ "$SKIP_STARTER" = "1" ]; then
+    log "--no-starter: skipping starter scaffold"
+elif [ -e "$STARTER_HOME" ]; then
+    log "starter agent exists at $STARTER_HOME — refreshing bundled skills + tools"
     log "  (venv + agent.yml left as-is; use bootstrap.sh --rebuild-venv / --force for deeper updates)"
-    "$REPO_ROOT/bootstrap.sh" "$HOME_DIR" --refresh-skills
-    "$REPO_ROOT/bootstrap.sh" "$HOME_DIR" --refresh-tools
+    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME" --refresh-skills
+    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME" --refresh-tools
 else
-    log "scaffolding agent home at $HOME_DIR"
-    "$REPO_ROOT/bootstrap.sh" "$HOME_DIR"
+    log "scaffolding starter agent at $STARTER_HOME"
+    mkdir -p "$KL_AGENTS_DIR"
+    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME"
+    # Match install.sh's behavior to `kl new <name>`: ensure agent.yml's
+    # name field matches the dir name (here: "agent").
+    if [ -f "$STARTER_HOME/agent.yml" ]; then
+        tmp="$STARTER_HOME/agent.yml.tmp"
+        awk -v new_name="$STARTER_NAME" '
+            /^name:[[:space:]]/ && !done {
+                print "name: " new_name
+                done = 1
+                next
+            }
+            { print }
+        ' "$STARTER_HOME/agent.yml" > "$tmp" && mv "$tmp" "$STARTER_HOME/agent.yml"
+    fi
 fi
 
 cat <<DONE
 
 [install] complete.
 
-  Agent home:   $HOME_DIR
+  Agents dir:   $KL_AGENTS_DIR
+  Starter:      $STARTER_HOME
   Pi extension: loaded via \`kl -e\` (not globally registered — bare \`pi\` is pristine)
   kl command:   $(command -v kl 2>/dev/null || echo '(not on PATH — see warning above)')
 
 Next:
-  1. Edit $HOME_DIR/agent.yml — set 'name' and any context_injection files.
-  2. Launch a session:
-       kl
+  Launch the starter:           kl
+  Add another agent:            kl new <name>
+  List agents:                  kl agents
+  Diagnostics:                  kl doctor
 
 DONE

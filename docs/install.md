@@ -1,15 +1,16 @@
 # Install
 
-How `install.sh` and `bootstrap.sh` work — prerequisites, ordering, idempotency, and the `~/.agent → ~/.kl/agent` migration.
+How `install.sh`, `kl new`, and `bootstrap.sh` work — prerequisites, ordering, idempotency, and migration from legacy single-agent layouts.
 
 ## Overview
 
-kiln-lite ships two install scripts:
+kiln-lite is multi-agent: agents live under `$KL_AGENTS_DIR` (default `~/.kl/agents/`). Each agent gets its own home dir under that root with its own config, tools, skills, memory, and venv. The daemon lives separately at `~/.kl/daemon/`.
 
-- **`install.sh`** — one-stop install. Runs `npm install`, `npm link` (puts `kl` + `kl-msg` on `$PATH`), `pi install .` (registers the extension globally), and then `bootstrap.sh` to scaffold or refresh the agent home. Safe to re-run; detects existing state and adapts.
-- **`bootstrap.sh`** — scaffolds an agent home. Creates the directory layout, seeds `agent.yml`, copies bundled skills and tools, creates a Python venv via `uv`, installs `requirements.txt`.
+Three scripts handle setup:
 
-`install.sh` is what you run. `bootstrap.sh` is the scaffolder that `install.sh` calls — you rarely run it directly, except for targeted refreshes (`--rebuild-venv`, `--refresh-skills`, etc).
+- **`install.sh`** — one-stop install. Runs `npm install`, `npm link` (puts `kl` + `kl-msg` on `$PATH`), cleans up any legacy global pi registration, migrates legacy single-agent homes, and scaffolds a starter agent at `~/.kl/agents/agent/`. Safe to re-run; detects existing state and adapts.
+- **`kl new <name>`** — scaffolds an additional agent at `$KL_AGENTS_DIR/<name>/`. Thin wrapper around `bootstrap.sh` that also patches `agent.yml`'s `name:` field to match the directory.
+- **`bootstrap.sh`** — the low-level scaffolder. Creates the directory layout, seeds `agent.yml`, copies bundled skills and tools, creates a Python venv via `uv`, installs `requirements.txt`. Used internally by `install.sh` and `kl new`; reach for it directly only for targeted refreshes (`--rebuild-venv`, `--refresh-skills`, etc).
 
 ## Installation
 
@@ -29,25 +30,27 @@ kiln-lite ships two install scripts:
 
 ```bash
 cd /path/to/kiln-lite
-./install.sh
+./install.sh                  # installs kl + scaffolds starter agent
+./install.sh --no-starter     # installs kl only; scaffold explicitly later
 ```
 
-Defaults to `~/.kl/agent/` as the home. Override:
+The starter agent lives at `~/.kl/agents/agent/`. To add more:
 
 ```bash
-./install.sh ~/.my-agent          # positional arg wins
-AGENT_HOME=~/.my-agent ./install.sh   # or via env
+kl new beth                   # → ~/.kl/agents/beth/
+kl new dalet                  # → ~/.kl/agents/dalet/
+KL_AGENTS_DIR=/opt/agents kl new ci  # custom agents root
 ```
 
-What happens:
+What `install.sh` does:
 
 1. `npm install --silent` — node deps (js-yaml, tsx).
 2. `npm link` — registers `kl` and `kl-msg` globally (on `$PATH`).
-3. `pi install .` — registers the kiln-lite extension with pi so it loads on every Pi session.
-4. **Migration check** — if `$HOME_DIR` resolves to `~/.agent` (legacy) and `~/.kl/agent` doesn't exist, prompts to migrate. See below.
-5. **Scaffold or refresh** — fresh home gets full bootstrap; existing home gets skills + tools refresh only.
+3. Removes any legacy global `pi install` registration of kiln-lite (idempotent — `kl` loads the extension directly via `-e`).
+4. **Migration check** — if `~/.agent/` or `~/.kl/agent/` (legacy single-agent layouts) exist and `~/.kl/agents/agent/` doesn't, prompts to move. See below.
+5. **Scaffold or refresh starter** — fresh: full bootstrap; existing: skills + tools refresh only. `--no-starter` skips this step entirely.
 
-Output tells you where `kl` ended up and whether there are any warnings to attend to.
+Output tells you where `kl` ended up, where the agents dir lives, and any warnings.
 
 ### Idempotent re-runs
 
@@ -55,45 +58,41 @@ Output tells you where `kl` ended up and whether there are any warnings to atten
 
 - `npm install` is idempotent.
 - `npm link` is idempotent (silently overwrites).
-- `pi install .` is idempotent.
-- If the agent home **already exists**, `install.sh` calls `bootstrap.sh --refresh-skills` + `bootstrap.sh --refresh-tools` to propagate bundled fixes. `agent.yml`, `memory/`, `venv/`, and `scratch/` are left alone.
-- If the agent home **doesn't exist**, full scaffold.
+- Legacy pi-extension cleanup is idempotent.
+- If the starter agent **already exists**, `install.sh` calls `bootstrap.sh --refresh-skills` + `bootstrap.sh --refresh-tools` to propagate bundled fixes. `agent.yml`, `memory/`, `venv/`, and `scratch/` are left alone.
+- If the starter agent **doesn't exist**, full scaffold.
 
-This means you can pull a new kiln-lite revision and just `./install.sh` — bundled skill and tool updates land automatically, your config and memory don't get stomped.
+This means you can pull a new kiln-lite revision and just `./install.sh` — bundled skill and tool updates land automatically, your config and memory don't get stomped. Re-runs do **not** touch agents other than the starter; for those, use `bootstrap.sh <home> --refresh-skills` / `--refresh-tools` directly.
 
 ### Uninstall
 
 ```bash
-pi remove .                      # or the original install source string
-rm -rf ~/.kl/                    # agent home + daemon state (destructive)
+npm unlink -g kiln-lite          # remove the kl global link
+rm -rf ~/.kl/                    # agent homes + daemon state (destructive)
 ```
 
-Pi doesn't own the agent home — you have to remove it yourself. `npm unlink` (from inside the repo) removes `kl` and `kl-msg` from global.
+`~/.kl/` is yours to manage — remove individual agent homes (`rm -rf ~/.kl/agents/<name>`), the agents root (`~/.kl/agents/`), or the whole tree as fits. Daemon state at `~/.kl/daemon/` is independent.
 
-## Migration: `~/.agent → ~/.kl/agent`
+## Migration: legacy single-agent layouts
 
-v0.1 and v0.2 of kiln-lite used `~/.agent/` as the agent home. v0.3 moved to `~/.kl/agent/` so the daemon state (`~/.kl/daemon/`) can sit alongside. If you're upgrading from a v0.2 install:
+Pre-multi-agent kiln-lite used a single-agent layout. Two versions existed:
 
-1. You have `~/.agent/` populated with memory, tools, skills, venv.
-2. You may also have `$AGENT_HOME=~/.agent` exported in your shell rc.
-3. `~/.kl/agent/` doesn't exist yet.
+- **v0.1–v0.2** — `~/.agent/`
+- **v0.3** — `~/.kl/agent/` (singular)
 
-Running `./install.sh` detects this case and prompts:
+The current layout (multi-agent) puts every agent under `~/.kl/agents/<name>/` (plural), with the starter at `~/.kl/agents/agent/`.
+
+If `~/.agent/` or `~/.kl/agent/` exists and `~/.kl/agents/agent/` doesn't, `install.sh` prompts:
 
 ```
-[install] detected legacy agent home at /Users/you/.agent (pre-v0.3 layout)
-[install] kiln-lite now lives under ~/.kl/ (agent home + daemon state side-by-side)
-[install]   note: $AGENT_HOME is set to /Users/you/.agent — update your shell rc to point at
-[install]         /Users/you/.kl/agent after migration (or unset it to use the new default)
-[install] Move /Users/you/.agent to /Users/you/.kl/agent? [Y/n]
+[install] detected legacy agent home at /Users/you/.kl/agent
+[install]   starter agent now lives at /Users/you/.kl/agents/agent
+[install] Move /Users/you/.kl/agent -> /Users/you/.kl/agents/agent? [Y/n]
 ```
 
-Decline → nothing moves; the install continues with the legacy path. Accept → `mv ~/.agent ~/.kl/agent`. After migration:
+Decline → nothing moves; you'll need to scaffold the starter manually (or use `kl new`) and `kl` won't see the legacy dir. Accept → `mv` to the new location. If `$AGENT_HOME` was set to the old path, `install.sh` warns to unset it (or accept that the env var now overrides the new default).
 
-- Update your shell rc (`.zshrc`, `.bashrc`, etc) — unset `AGENT_HOME` (to fall back to the new default) or point it at `~/.kl/agent`.
-- The `install.sh` output reminds you.
-
-The migration only fires when `$HOME_DIR` resolves to the literal `~/.agent` path — either because `$AGENT_HOME` is still exported there, or because it was passed explicitly as the positional arg. If you already use a custom home (`AGENT_HOME=~/.myagent`), nothing migrates and nothing prompts.
+Migration runs at most once per layout. Both `~/.agent/` and `~/.kl/agent/` are checked separately; whichever exists gets prompted.
 
 ## `bootstrap.sh`
 
@@ -140,7 +139,7 @@ Pinned via `<repo>/.python-version` (currently `3.12`). To change:
 
 ```bash
 echo "3.13" > .python-version
-./bootstrap.sh ~/.kl/agent --rebuild-venv
+./bootstrap.sh ~/.kl/agents/agent --rebuild-venv
 ```
 
 `uv` auto-downloads the named version if it isn't already installed.
@@ -150,15 +149,15 @@ echo "3.13" > .python-version
 ### `install.sh` ordering rationale
 
 ```
-npm install          → dep install before linking (npm link requires deps)
+npm install            → dep install before linking (npm link requires deps)
   ↓
-npm link             → registers kl + kl-msg before extension registration
+npm link               → registers kl + kl-msg before anything else needs them
   ↓
-pi install .         → extension registered before scaffold
+legacy pi cleanup      → idempotent; removes stale global registration if any
   ↓
-migration prompt     → before scaffold, because scaffold writes to the resolved path
+migration prompt       → before scaffold, because the starter target depends on resolved path
   ↓
-scaffold / refresh   → last, because this is where bundled content lives
+scaffold / refresh     → last, because this is where bundled content lives
 ```
 
 Failing a step bails; earlier steps leave the system in a recoverable state.
@@ -178,7 +177,8 @@ Failing a step bails; earlier steps leave the system in a recoverable state.
 
 | Var | Consumer | Effect |
 |-----|----------|--------|
-| `AGENT_HOME` | `install.sh` | Default target if no positional arg. |
+| `KL_AGENTS_DIR` | `install.sh`, `kl` | Parent dir for all agent homes (default `~/.kl/agents`). |
+| `AGENT_HOME` | `kl` | Escape-hatch override — bypasses the `KL_AGENTS_DIR/<name>` lookup. |
 | `AUTO_INSTALL_UV` | `bootstrap.sh` | `1` → auto-install uv; `0` → bail if missing; unset → prompt. |
 
 ### Bundled content
@@ -215,50 +215,58 @@ brew install node tmux
 npm install -g @earendil-works/pi-coding-agent
 cd ~/Git/kiln-lite
 ./install.sh
-# [install] scaffolding agent home at /Users/you/.kl/agent
+# [install] scaffolding starter agent at /Users/you/.kl/agents/agent
 # ...
 # [install] complete.
 
-kl    # first session
+kl    # launch the starter agent
 ```
 
-### Pull an update, refresh everything
+### Add another agent
+
+```bash
+kl new beth        # → ~/.kl/agents/beth/
+kl beth            # launch it
+kl agents          # list everything
+```
+
+### Pull an update, refresh everything (starter only)
 
 ```bash
 cd ~/Git/kiln-lite
 git pull
-./install.sh    # refreshes bundled skills + tools, leaves config alone
+./install.sh    # refreshes starter's skills + tools, leaves config alone
+# for other agents: ./bootstrap.sh ~/.kl/agents/<name> --refresh-skills
 ```
 
 ### Rebuild the venv after changing Python version
 
 ```bash
 echo "3.13" > .python-version
-./bootstrap.sh ~/.kl/agent --rebuild-venv
+./bootstrap.sh ~/.kl/agents/agent --rebuild-venv
 ```
 
 ### Reset completely (destructive)
 
 ```bash
 cd ~/Git/kiln-lite
-pi remove .
-rm -rf ~/.kl/
-./install.sh    # fresh scaffold
+rm -rf ~/.kl/            # wipes every agent + daemon state
+./install.sh             # fresh scaffold (just the starter)
 ```
 
 ## Conventions
 
 - **Run `install.sh` on every version bump.** Bundled skill/tool fixes only propagate via re-run. Nothing else updates automatically.
 - **`bootstrap.sh` is for targeted refreshes.** `install.sh` handles the common path; reach for `bootstrap.sh` when you want to rebuild the venv, upgrade Python deps, or `--force` a clean scaffold.
-- **Keep `AGENT_HOME` unset unless you need a custom home.** The default (`~/.kl/agent`) is what every doc and script assumes. Explicit override works, but you're on the hook for keeping your shell rc in sync.
+- **Use the positional name, not `AGENT_HOME`.** `kl beth` is the supported path. `AGENT_HOME=/some/path kl` is an escape hatch for advanced setups (CI, throwaway test homes) — it bypasses the registry entirely, so `kl agents`, `kl resume`'s prefix lookup, and `kl history` won't know about it.
 - **`.python-version` is the source of truth.** If someone asks "what Python version does this use", the answer is that file. Override by editing it, not by passing flags.
 
 ## Gotchas
 
 - **`npm link` may need sudo or a user-level prefix.** If `install.sh` warns that `kl` isn't on `$PATH`, check `npm config get prefix` — you may need `npm config set prefix ~/.npm-global` and add `~/.npm-global/bin` to `$PATH`.
 - **`pi install .` registers a source string.** Pi remembers the install path. If you move the `kiln-lite` repo on disk, `pi` will stop loading the extension until you re-run `pi install .` from the new location.
-- **Migration only fires once.** After `~/.agent` moves to `~/.kl/agent`, the prompt doesn't re-appear even if you re-run `install.sh`. If something went wrong and you want to redo it, you'll have to mv back and re-run (or just symlink).
+- **Migration only fires while the old path exists.** Once `~/.agent` or `~/.kl/agent` has been moved to `~/.kl/agents/agent`, the prompt won't reappear. If you want to redo a migration, `mv` back manually and re-run `install.sh`.
 - **`--force` is destructive.** `bootstrap.sh --force` overwrites `agent.yml`, `skills/`, `tools/`, and recreates `venv/`. Memory directories (`memory/`, `scratch/`) are not touched — but any local `agent.yml` customization is lost. Stage a backup first if you care.
 - **The uv auto-installer modifies shell rc files.** If you're in a tightly-managed environment, set `AUTO_INSTALL_UV=0` and install uv yourself ahead of time.
 - **Bundled tool/skill names are reserved.** If you create `<home>/tools/fetch` yourself, a later `install.sh` will overwrite it with the bundled version. Name your custom variants differently (e.g. `fetch-mine`).
-- **`bootstrap.sh` refuses non-empty targets without a flag.** First time this trips people: `bootstrap.sh ~/.kl/agent` on an existing home errors with a "use --force / --rebuild-venv / --refresh-..." message. That's intentional — `install.sh` handles the existing-home case for you.
+- **`bootstrap.sh` refuses non-empty targets without a flag.** First time this trips people: `bootstrap.sh ~/.kl/agents/agent` on an existing home errors with a "use --force / --rebuild-venv / --refresh-..." message. That's intentional — `install.sh` handles the existing-starter case for you; for other agents reach for `bootstrap.sh <home> --refresh-skills` (or whichever flag fits) directly.

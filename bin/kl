@@ -7,9 +7,19 @@
 #   3. Runs pi with the kiln-lite extension inside that session.
 #   4. Attaches (or switch-client, if already in tmux).
 #
+# Agent home resolution (used by run, resume, history, doctor):
+#   1. Positional <name> arg            -> $KL_AGENTS_DIR/<name>
+#   2. $AGENT_HOME env var               -> use as-is (escape hatch for weird paths)
+#   3. Default                           -> $KL_AGENTS_DIR/agent (the starter)
+#   resume parses the session-id prefix (<name>-adj-noun) to pick the home
+#   automatically — no need to set AGENT_HOME or pass a name.
+#
 # Subcommands:
-#   kl [run] [--detach] [--prompt-file FILE] [pi-args...]
+#   kl [run] [<name>] [--detach] [--prompt-file FILE] [pi-args...]
 #                           Spawn a new session (default).
+#                           <name>: optional agent name (resolved against
+#                             $KL_AGENTS_DIR). If omitted, uses AGENT_HOME or
+#                             the default starter.
 #                           --detach (-d): don't attach; print agent-id to stdout.
 #                           --prompt-file FILE: read initial prompt from FILE and
 #                             pass it to pi as --prompt. Use this instead of
@@ -19,21 +29,26 @@
 #                             never go through a shell. Useful for spawning
 #                             workers with long structured briefs.
 #   kl resume <agent-id> [pi-args...]
-#                           Resume a prior session BY NAME.
-#                           Looks up the original pi session JSONL + cwd from
-#                           ~/.kl/agent/state/sessions/<agent-id>/meta.json,
-#                           then spawns a new tmux session named <agent-id>
-#                           running `pi --session <jsonl>` with the original
-#                           cwd and AGENT_ID restored. If a tmux session with
-#                           that name is already alive, just attaches.
+#                           Resume a prior session BY NAME. Parses the
+#                           <name> prefix from the agent-id to find which agent
+#                           home owns the snapshot. Falls back to AGENT_HOME if
+#                           no agent matches the prefix.
 #   kl attach <agent-id>    Attach an existing kl session.
+#   kl new <name>           Scaffold a new agent at $KL_AGENTS_DIR/<name>.
 #   kl list                 List active kl tmux sessions.
-#   kl doctor               Run a diagnostic — checks pi, extension registration,
-#                           kl-msg, daemon socket, agent home, and env.
+#   kl agents               List installed agents under $KL_AGENTS_DIR.
+#   kl history [<name>]     Show recent sessions. Without <name>, walks all
+#                           agents under $KL_AGENTS_DIR. With <name>, just that
+#                           agent. -n N limits count; --all shows everything.
+#   kl doctor [<name>]      Run a diagnostic. Without <name>, runs system
+#                           checks + iterates all installed agents. With
+#                           <name>, just that agent.
 #   kl -h | --help          Show this help.
 #
 # Env:
-#   AGENT_HOME              Override the agent home dir (default: ~/.kl/agent).
+#   KL_AGENTS_DIR           Parent dir for all agent homes (default: ~/.kl/agents).
+#   AGENT_HOME              Explicit agent home path — bypasses the name lookup.
+#                           Escape hatch for advanced/test setups.
 #
 # Notes:
 #   - tmux window name == agent-id. Collision is extremely unlikely but if it
@@ -109,6 +124,68 @@ NOUNS=(
 
 die() { echo "kl: $*" >&2; exit 1; }
 
+# --- agent-home resolution ---
+#
+# Single source of truth for "where does this agent live on disk?". Used
+# by run/resume/history/doctor so the priority order stays consistent.
+KL_AGENTS_DIR="${KL_AGENTS_DIR:-$HOME/.kl/agents}"
+
+# Resolve an agent home from an optional name.
+#
+# Priority:
+#   1. Explicit name        -> $KL_AGENTS_DIR/<name>   (must exist)
+#   2. $AGENT_HOME env var  -> use as-is               (must exist)
+#   3. Default              -> $KL_AGENTS_DIR/agent    (must exist)
+#
+# Exits non-zero with a helpful message if no agent can be resolved.
+resolve_agent_home() {
+    local name="${1:-}"
+    if [ -n "$name" ]; then
+        local home="$KL_AGENTS_DIR/$name"
+        if [ -d "$home" ]; then
+            printf '%s' "$home"; return
+        fi
+        die "no agent named '$name' at $home (use 'kl new $name' to create, or 'kl agents' to list)"
+    fi
+    if [ -n "${AGENT_HOME:-}" ]; then
+        if [ -d "$AGENT_HOME" ]; then
+            printf '%s' "$AGENT_HOME"; return
+        fi
+        die "AGENT_HOME=$AGENT_HOME does not exist"
+    fi
+    local default_home="$KL_AGENTS_DIR/agent"
+    if [ -d "$default_home" ]; then
+        printf '%s' "$default_home"; return
+    fi
+    die "no agent home found.
+  Tried: \$KL_AGENTS_DIR/agent  -> $default_home
+         \$AGENT_HOME            -> (unset)
+  Run '$REPO_ROOT/install.sh' to scaffold a starter agent, or 'kl new <name>' to create one."
+}
+
+# Parse the agent-name prefix from a session-id like beth-bright-fox.
+# Used by `kl resume` to figure out which agent home owns a snapshot
+# without the caller having to set AGENT_HOME.
+agent_name_from_session_id() {
+    local id="$1"
+    # Names are lowercase letters/numbers/_-; adj+noun are word words.
+    # The first dash separates name from adj.
+    printf '%s' "${id%%-*}"
+}
+
+# Iterate installed agent homes (one per line). No output if none exist.
+list_agent_homes() {
+    [ -d "$KL_AGENTS_DIR" ] || return 0
+    local d
+    for d in "$KL_AGENTS_DIR"/*/; do
+        [ -d "$d" ] || continue
+        # Only count dirs that look like an agent home (have agent.yml).
+        [ -f "${d}agent.yml" ] || continue
+        # Strip trailing slash
+        printf '%s\n' "${d%/}"
+    done
+}
+
 usage() {
     # Print the top-of-file comment block (up to the first blank or non-comment line).
     awk '
@@ -177,8 +254,22 @@ enter_session() {
 # --- subcommands ---
 
 cmd_run() {
-    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
-    [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist — run $REPO_ROOT/install.sh first"
+    # Optional first positional: agent name. If it matches an installed
+    # agent under $KL_AGENTS_DIR, use it. We require the name to be a bare
+    # word (no leading dash, no path separator) AND to resolve to an
+    # existing dir — anything else is treated as a pi pass-through arg.
+    # This means `kl --detach` and `kl -- foo` still work unchanged.
+    local explicit_name=""
+    if [ $# -gt 0 ] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [ -d "$KL_AGENTS_DIR/$1" ]; then
+        explicit_name="$1"
+        shift
+    fi
+
+    local agent_home
+    agent_home="$(resolve_agent_home "$explicit_name")"
+
     local ext_path
     ext_path="$(resolve_ext_path "$agent_home")"
     [ -f "$ext_path" ] || die "extension entry not found at $ext_path (is the kiln-lite repo intact?)"
@@ -329,8 +420,18 @@ cmd_attach() {
 cmd_resume() {
     [ $# -ge 1 ] || die "resume requires an agent-id (use 'kl list' to see active sessions)"
     local id="$1"; shift
-    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
-    [ -d "$agent_home" ] || die "AGENT_HOME=$agent_home does not exist"
+
+    # Parse the agent-name prefix from the session-id to find which agent
+    # home owns the snapshot. Falls back to AGENT_HOME / default if the
+    # prefix doesn't match any installed agent (useful when the agent
+    # was renamed or moved).
+    local agent_home name
+    name="$(agent_name_from_session_id "$id")"
+    if [ -n "$name" ] && [ -d "$KL_AGENTS_DIR/$name" ]; then
+        agent_home="$KL_AGENTS_DIR/$name"
+    else
+        agent_home="$(resolve_agent_home)"
+    fi
     local ext_path
     ext_path="$(resolve_ext_path "$agent_home")"
     [ -f "$ext_path" ] || die "extension entry not found at $ext_path"
@@ -399,12 +500,90 @@ cmd_list() {
     [ "$any" = 1 ] || echo "(no kl sessions — use 'tmux list-sessions' for all tmux sessions)"
 }
 
+# --- new: scaffold a new agent home ---
+# Thin wrapper around bootstrap.sh that creates $KL_AGENTS_DIR/<name>
+# and ensures agent.yml's name field matches the directory name.
+cmd_new() {
+    [ $# -ge 1 ] || die "kl new requires an agent name (e.g. 'kl new beth')"
+    local name="$1"; shift
+    [[ "$name" =~ ^[a-z][a-z0-9_-]*$ ]] \
+        || die "invalid agent name '$name' — must start with a lowercase letter and contain only [a-z0-9_-]"
+
+    local target="$KL_AGENTS_DIR/$name"
+    if [ -e "$target" ]; then
+        die "agent '$name' already exists at $target (use 'kl agents' to list)"
+    fi
+
+    [ -x "$REPO_ROOT/bootstrap.sh" ] || die "bootstrap.sh not found or not executable at $REPO_ROOT"
+
+    mkdir -p "$KL_AGENTS_DIR"
+    "$REPO_ROOT/bootstrap.sh" "$target" "$@"
+
+    # Patch agent.yml so the name field matches the dir. The scaffold
+    # template hardcodes `name: agent` — rewrite it to the actual name.
+    if [ -f "$target/agent.yml" ]; then
+        # Use a temp file + mv for atomicity; awk -i inplace isn't portable.
+        local tmp="$target/agent.yml.tmp"
+        awk -v new_name="$name" '
+            /^name:[[:space:]]/ && !done {
+                print "name: " new_name
+                done = 1
+                next
+            }
+            { print }
+        ' "$target/agent.yml" > "$tmp" && mv "$tmp" "$target/agent.yml"
+    fi
+
+    echo
+    echo "kl: created agent '$name' at $target"
+    echo "    launch with: kl $name"
+}
+
+# --- agents: list installed agents under $KL_AGENTS_DIR ---
+cmd_agents() {
+    local found=0
+    local home
+    while IFS= read -r home; do
+        [ -n "$home" ] || continue
+        local name
+        name="$(basename "$home")"
+        # Pull agent.yml name field for sanity-check / display
+        local yml_name
+        yml_name="$(resolve_agent_name "$home")"
+        local marker=""
+        [ "$yml_name" != "$name" ] && marker=" (agent.yml name: $yml_name — mismatch)"
+        # Sessions count
+        local count=0
+        if [ -d "$home/state/sessions" ]; then
+            count="$(find "$home/state/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+        fi
+        printf '  %-20s  %s session(s)%s\n' "$name" "$count" "$marker"
+        found=1
+    done < <(list_agent_homes)
+
+    if [ "$found" = 0 ]; then
+        echo "(no agents installed under $KL_AGENTS_DIR)"
+        echo "  Create one with: kl new <name>"
+        return 0
+    fi
+}
+
 # --- doctor: diagnostic ---
 # Prints a checklist of the things kl depends on + whether each is healthy.
 # Meant for "something's wrong and I don't know what" — dump this output
 # verbatim when reporting an issue.
 cmd_doctor() {
-    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
+    # Optional positional <name>: scope agent-home checks to one agent.
+    # Without it, iterate every installed agent (and the AGENT_HOME
+    # override if present and not already covered).
+    local explicit_name=""
+    if [ $# -gt 0 ] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [ -d "$KL_AGENTS_DIR/$1" ]; then
+        explicit_name="$1"
+        shift
+    fi
+
     local ok=0 fail=0 warn=0
     local pass_pfx="  ok   " fail_pfx="  FAIL " warn_pfx="  warn "
 
@@ -415,21 +594,18 @@ cmd_doctor() {
     echo "kl doctor — kiln-lite diagnostic"
     echo
 
-    # 1. Script + repo root resolution
-    local doctor_ext_path
-    doctor_ext_path="$(resolve_ext_path "$agent_home")"
+    # --- SYSTEM SECTION (agent-agnostic) ---
+
+    # 1. Script + repo root
     echo "[paths]"
     echo "  script     $SCRIPT_PATH"
     echo "  repo root  $REPO_ROOT"
-    echo "  extension  $doctor_ext_path"
-    if [ -f "$doctor_ext_path" ]; then
-        if [ "$doctor_ext_path" != "$DEFAULT_EXT_PATH" ]; then
-            say_ok "custom harness at $agent_home/harness/index.ts (overriding default)"
-        else
-            say_ok "extension entry found (default)"
-        fi
+    echo "  agents dir $KL_AGENTS_DIR"
+    echo "  default    $DEFAULT_EXT_PATH"
+    if [ -f "$DEFAULT_EXT_PATH" ]; then
+        say_ok "bundled extension entry present"
     else
-        say_fail "extension entry missing at $doctor_ext_path"
+        say_fail "bundled extension entry missing at $DEFAULT_EXT_PATH"
     fi
     echo
 
@@ -480,32 +656,7 @@ cmd_doctor() {
     fi
     echo
 
-    # 4. Agent home
-    echo "[agent home]"
-    echo "  AGENT_HOME=$agent_home"
-    if [ -d "$agent_home" ]; then
-        say_ok "directory exists"
-        if [ -f "$agent_home/agent.yml" ]; then
-            say_ok "agent.yml present"
-        else
-            say_warn "agent.yml missing — run $REPO_ROOT/install.sh to scaffold"
-        fi
-        if [ -d "$agent_home/tools" ]; then
-            say_ok "tools/ present ($(ls "$agent_home/tools" 2>/dev/null | wc -l | tr -d ' ') entries)"
-        else
-            say_warn "tools/ missing"
-        fi
-        if [ -d "$agent_home/skills" ]; then
-            say_ok "skills/ present"
-        else
-            say_warn "skills/ missing"
-        fi
-    else
-        say_fail "AGENT_HOME does not exist — run $REPO_ROOT/install.sh"
-    fi
-    echo
-
-    # 5. Daemon
+    # 4. Daemon
     echo "[daemon]"
     local sock="${XDG_RUNTIME_DIR:-/tmp}/kiln-lite.sock"
     [ -n "${XDG_RUNTIME_DIR:-}" ] || sock="/tmp/kiln-lite-$(id -u).sock"
@@ -515,9 +666,10 @@ cmd_doctor() {
         if command -v kl-msg >/dev/null 2>&1; then
             # Minimal ping — status call returns quickly if the daemon is up.
             # kl-msg needs AGENT_ID/AGENT_HOME even for status; fake if unset.
+            local probe_home="${AGENT_HOME:-$KL_AGENTS_DIR/agent}"
             local probe_id="kl-doctor-$$"
             if AGENT_ID="${AGENT_ID:-$probe_id}" \
-               AGENT_HOME="${AGENT_HOME:-$agent_home}" \
+               AGENT_HOME="$probe_home" \
                kl-msg status >/dev/null 2>&1; then
                 say_ok "daemon responds to status"
             else
@@ -529,15 +681,77 @@ cmd_doctor() {
     fi
     echo
 
-    # 6. Current env
+    # 5. Current env
     echo "[current env]"
     echo "  AGENT_ID       ${AGENT_ID:-(unset)}"
     echo "  AGENT_HOME     ${AGENT_HOME:-(unset)}"
+    echo "  KL_AGENTS_DIR  ${KL_AGENTS_DIR}"
     echo "  _KL            ${_KL:-(unset)}"
     echo "  TMUX           ${TMUX:-(unset)}"
     echo
 
-    # 7. Summary
+    # --- PER-AGENT SECTION ---
+
+    # Build list of homes to check.
+    local -a homes=()
+    if [ -n "$explicit_name" ]; then
+        homes+=("$KL_AGENTS_DIR/$explicit_name")
+    else
+        local h
+        while IFS= read -r h; do
+            [ -n "$h" ] && homes+=("$h")
+        done < <(list_agent_homes)
+        # Include AGENT_HOME if set and not already included
+        if [ -n "${AGENT_HOME:-}" ] && [ -d "$AGENT_HOME" ]; then
+            local seen=0
+            for h in ${homes[@]+"${homes[@]}"}; do
+                [ "$h" = "$AGENT_HOME" ] && { seen=1; break; }
+            done
+            [ "$seen" = 0 ] && homes+=("$AGENT_HOME")
+        fi
+    fi
+
+    if [ ${#homes[@]} -eq 0 ]; then
+        echo "[agents]"
+        say_warn "no agent homes found under $KL_AGENTS_DIR"
+        say_warn "  scaffold one with: kl new <name>   or run install.sh"
+        echo
+    fi
+
+    local home
+    for home in ${homes[@]+"${homes[@]}"}; do
+        local short="${home/#$HOME/~}"
+        echo "[agent: $short]"
+        if [ -d "$home" ]; then
+            say_ok "directory exists"
+            if [ -f "$home/agent.yml" ]; then
+                say_ok "agent.yml present"
+            else
+                say_warn "agent.yml missing"
+            fi
+            if [ -d "$home/tools" ]; then
+                say_ok "tools/ present ($(ls "$home/tools" 2>/dev/null | wc -l | tr -d ' ') entries)"
+            else
+                say_warn "tools/ missing"
+            fi
+            if [ -d "$home/skills" ]; then
+                say_ok "skills/ present"
+            else
+                say_warn "skills/ missing"
+            fi
+            # Custom harness?
+            local home_ext
+            home_ext="$(resolve_ext_path "$home")"
+            if [ "$home_ext" != "$DEFAULT_EXT_PATH" ]; then
+                say_ok "custom harness at $home/harness/index.ts (overriding default)"
+            fi
+        else
+            say_fail "directory does not exist: $home"
+        fi
+        echo
+    done
+
+    # Summary
     echo "summary: ok=$ok warn=$warn fail=$fail"
     [ "$fail" = 0 ]
 }
@@ -545,12 +759,18 @@ cmd_doctor() {
 # --- history: show recent sessions from snapshot meta ---
 # Scans state/sessions/*/meta.json, sorts by last_seen descending.
 # Useful for finding sessions that crashed without clean exit.
+#
+# Without a name arg, walks every agent under $KL_AGENTS_DIR (plus the
+# AGENT_HOME override if set). With a name arg, scopes to that agent.
 cmd_history() {
-    local agent_home="${AGENT_HOME:-$HOME/.kl/agent}"
-    local sessions_dir="$agent_home/state/sessions"
-    if [ ! -d "$sessions_dir" ]; then
-        echo "(no session history — $sessions_dir does not exist)"
-        return 0
+    # Detect optional positional <name> arg (same shape as cmd_run).
+    # Any leading flag (--all, -n) means no name was given.
+    local explicit_name=""
+    if [ $# -gt 0 ] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [ -d "$KL_AGENTS_DIR/$1" ]; then
+        explicit_name="$1"
+        shift
     fi
 
     local limit=20
@@ -560,28 +780,57 @@ cmd_history() {
         limit=99999
     fi
 
-    # Collect meta records, sort by last_seen, print table.
-    # Uses awk for cheap JSON field extraction (same pattern as cmd_resume).
-    local entries=""
-    for meta in "$sessions_dir"/*/meta.json; do
-        [ -f "$meta" ] || continue
-        local id last model cwd
-        id="$(awk -F'"' '/"agent_id"[[:space:]]*:/ {print $4; exit}' "$meta")"
-        last="$(awk -F'"' '/"last_seen"[[:space:]]*:/ {print $4; exit}' "$meta")"
-        model="$(awk -F'"' '/"model"[[:space:]]*:/ {print $4; exit}' "$meta")"
-        cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
-        [ -n "$id" ] || continue
-        [ -n "$last" ] || last="(unknown)"
-        # Shorten model and cwd for display
-        model="${model##*/}"  # strip provider prefix
-        cwd="${cwd/#$HOME/~}"
-        # Check if tmux session is alive
-        local status="-"
-        if tmux has-session -t "$id" 2>/dev/null; then
-            status="live"
+    # Build the list of agent homes to scan.
+    local -a homes=()
+    if [ -n "$explicit_name" ]; then
+        homes+=("$KL_AGENTS_DIR/$explicit_name")
+    else
+        # All installed agents, plus AGENT_HOME if set and not already included.
+        local h
+        while IFS= read -r h; do
+            [ -n "$h" ] && homes+=("$h")
+        done < <(list_agent_homes)
+        if [ -n "${AGENT_HOME:-}" ] && [ -d "$AGENT_HOME" ]; then
+            local seen=0
+            for h in ${homes[@]+"${homes[@]}"}; do
+                [ "$h" = "$AGENT_HOME" ] && { seen=1; break; }
+            done
+            [ "$seen" = 0 ] && homes+=("$AGENT_HOME")
         fi
-        entries="${entries}${last}|${id}|${status}|${model}|${cwd}
+    fi
+
+    if [ ${#homes[@]} -eq 0 ]; then
+        echo "(no agents found — run '$REPO_ROOT/install.sh' or 'kl new <name>')"
+        return 0
+    fi
+
+    # Collect meta records across all homes, sort by last_seen, print table.
+    local entries=""
+    local home
+    for home in "${homes[@]}"; do
+        local sessions_dir="$home/state/sessions"
+        [ -d "$sessions_dir" ] || continue
+        local meta
+        for meta in "$sessions_dir"/*/meta.json; do
+            [ -f "$meta" ] || continue
+            local id last model cwd
+            id="$(awk -F'"' '/"agent_id"[[:space:]]*:/ {print $4; exit}' "$meta")"
+            last="$(awk -F'"' '/"last_seen"[[:space:]]*:/ {print $4; exit}' "$meta")"
+            model="$(awk -F'"' '/"model"[[:space:]]*:/ {print $4; exit}' "$meta")"
+            cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
+            [ -n "$id" ] || continue
+            [ -n "$last" ] || last="(unknown)"
+            # Shorten model and cwd for display
+            model="${model##*/}"  # strip provider prefix
+            cwd="${cwd/#$HOME/~}"
+            # Check if tmux session is alive
+            local status="-"
+            if tmux has-session -t "$id" 2>/dev/null; then
+                status="live"
+            fi
+            entries="${entries}${last}|${id}|${status}|${model}|${cwd}
 "
+        done
     done
 
     if [ -z "$entries" ]; then
@@ -608,11 +857,14 @@ main() {
         resume) shift; cmd_resume "$@" ;;
         attach) shift; cmd_attach "$@" ;;
         list|ls) shift; cmd_list "$@" ;;
+        agents) shift; cmd_agents "$@" ;;
+        new|init) shift; cmd_new "$@" ;;
         history) shift; cmd_history "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
         -h|--help|help) usage ;;
         "") cmd_run ;;
-        # Anything else — treat as passthrough pi args via `run`.
+        # Anything else — treat as passthrough to `run`. cmd_run does its own
+        # leading-positional detection for <name> agent lookup.
         *) cmd_run "$@" ;;
     esac
 }

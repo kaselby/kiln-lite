@@ -50,50 +50,62 @@ files, you decide what's in them.
 
 ```bash
 cd /path/to/kiln-lite
-./install.sh                 # uses ~/.kl/agent as the home
-./install.sh ~/.my-agent     # custom home
+./install.sh                 # installs kl + scaffolds starter at ~/.kl/agents/agent
+./install.sh --no-starter    # install kl only; scaffold agents explicitly later
 ```
 
 `install.sh` runs, in order:
 
 1. `npm install` — node deps
 2. `npm link` — registers `kl` globally so you can run it from any shell
-3. `pi install .` — tells pi to load the kiln-lite extension on every session
-4. `./bootstrap.sh <home>` — scaffolds the agent home (skipped if it already exists)
+3. Cleans up any legacy global pi registration of kiln-lite (idempotent)
+4. Migrates legacy `~/.agent` or `~/.kl/agent` to `~/.kl/agents/agent/` if present
+5. Scaffolds the starter agent at `~/.kl/agents/agent/` via `bootstrap.sh`
 
 Prerequisites checked up front: `node`, `npm`, `pi`, `tmux`. Missing `tmux`
 produces a warning, not a hard fail — but `kl` won't work without it.
 
-Re-running `install.sh` with an existing home skips step 4. To re-scaffold
-or refresh parts of an existing home, call `bootstrap.sh` directly:
+To add more agents after install, use `kl new <name>`:
 
 ```bash
-./bootstrap.sh ~/.my-agent --force            # full overwrite (destructive)
-./bootstrap.sh ~/.my-agent --upgrade-deps     # just Python deps
-./bootstrap.sh ~/.my-agent --refresh-skills   # recopy bundled skills
-./bootstrap.sh ~/.my-agent --refresh-tools    # recopy bundled tools
-./bootstrap.sh ~/.my-agent --rebuild-venv     # nuke + recreate venv
+kl new beth        # scaffolds ~/.kl/agents/beth/
+kl new dalet       # scaffolds ~/.kl/agents/dalet/
+kl agents          # list installed agents
+```
+
+To re-scaffold or refresh parts of an existing agent home, call `bootstrap.sh`
+directly with the agent's path:
+
+```bash
+./bootstrap.sh ~/.kl/agents/beth --force            # full overwrite (destructive)
+./bootstrap.sh ~/.kl/agents/beth --upgrade-deps     # just Python deps
+./bootstrap.sh ~/.kl/agents/beth --refresh-skills   # recopy bundled skills
+./bootstrap.sh ~/.kl/agents/beth --refresh-tools    # recopy bundled tools
+./bootstrap.sh ~/.kl/agents/beth --rebuild-venv     # nuke + recreate venv
 ```
 
 ### Quick start after install
 
 ```bash
-# Edit ~/.kl/agent/agent.yml — set 'name' and any context_injection files
-kl                       # spawn a new session (default: ~/.kl/agent)
-kl list                  # list live sessions
-kl attach agent-foo-bar  # reattach by agent-id
+# Edit ~/.kl/agents/agent/agent.yml — set 'name' and any context_injection files
+kl                       # spawn the starter agent (~/.kl/agents/agent)
+kl beth                  # spawn the 'beth' agent (~/.kl/agents/beth)
+kl agents                # list installed agents on disk
+kl list                  # list live tmux sessions
+kl attach beth-bright-fox  # reattach by agent-id
 ```
 
 ### Extension-only iteration (during dev)
 
-If you just want to load the extension without registering it globally:
+If you want to load the extension against a one-off home without registering
+anything globally:
 
 ```bash
 AGENT_HOME=~/.my-agent pi -e ./extensions/kiln-lite/index.ts
 ```
 
-This bypasses `pi install` and `kl` — useful when iterating on extension
-code without committing to a full install.
+`AGENT_HOME` is the escape-hatch override — kl honors it, bypassing the
+`~/.kl/agents/<name>` lookup.
 
 ## Launching with `kl`
 
@@ -103,18 +115,22 @@ an agent-id up front, and names the tmux session after it — so every live
 session has a stable name you can attach back to.
 
 ```bash
-kl                          # spawn a new session (and attach)
-kl run [pi-args...]         # same, with arg passthrough to pi
-kl attach agent-wise-gate   # attach an existing session
+kl                          # spawn the default starter agent (and attach)
+kl beth                     # spawn the 'beth' agent (~/.kl/agents/beth)
+kl run [name] [pi-args...]  # same, with arg passthrough to pi
+kl attach beth-bright-fox   # attach an existing session
 kl list                     # list kl-shaped tmux sessions
+kl agents                   # list installed agents on disk
+kl history [name]           # session history across all (or one) agent
+kl doctor [name]            # system + per-agent diagnostic
 ```
 
 What `kl` does at launch:
 
-1. Resolves `AGENT_HOME` (falls back to `~/.kl/agent`) and reads `name:` from
-   `agent.yml`.
-2. Generates an agent-id via the same `<name>-<adj>-<noun>` scheme the
-   extension uses.
+1. Resolves the agent home: positional name (`kl beth` → `~/.kl/agents/beth`),
+   else `$AGENT_HOME` override, else the default starter at `~/.kl/agents/agent`.
+2. Reads `name:` from `agent.yml` and generates an agent-id via the same
+   `<name>-<adj>-<noun>` scheme the extension uses.
 3. Runs `tmux new-session -d -s <agent-id> pi -e <ext-path>`, exporting
    `AGENT_ID`, `AGENT_HOME`, and `_KL=1` into the session env.
 4. `tmux attach-session` (or `switch-client` if already inside tmux).
@@ -170,9 +186,12 @@ Re-running bootstrap flags (for explicit re-scaffolds):
 ## Uninstall
 
 ```bash
-pi remove <same-source-string>    # e.g. 'pi remove .' or 'pi remove git:...'
-rm -rf ~/.my-agent                 # agent home is separate — Pi doesn't touch it
+npm unlink -g kiln-lite           # remove the kl global link
+rm -rf ~/.kl                       # agent homes + daemon state (your call)
 ```
+
+Agent homes live under `~/.kl/agents/`; daemon state under `~/.kl/daemon/`.
+Remove individually if you want to keep one while dropping the other.
 
 Skills and tools are a single source of truth: `$AGENT_HOME/skills/` and
 `$AGENT_HOME/tools/`. The extension registers the skills dir via Pi's
