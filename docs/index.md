@@ -15,7 +15,8 @@ Progressive-disclosure reference for kiln-lite. Start with `overview.md` for the
 - [`tools.md`](./tools.md) — **Shell Tools.** How `<home>/tools/` is discovered and rendered into the system prompt. YAML header format. Bundled tools reference.
 - [`skills.md`](./skills.md) — **Skills.** SKILL.md-based skill packaging. Discovery via Pi's `resources_discover`. The bundled `messaging` skill.
 - [`cli.md`](./cli.md) — **CLI.** The `kl` session launcher (tmux wrap, `--detach` for peer-spawn) and the `kl-msg` messaging CLI.
-- [`install.md`](./install.md) — **Install.** `install.sh` and `bootstrap.sh` — prerequisites, ordering, idempotency, the `~/.agent → ~/.kl/agent` migration, bundled content, uninstall.
+- [`install.md`](./install.md) — **Install.** `install.sh`, `kl new`, and `bootstrap.sh` — prerequisites, ordering, idempotency, migration from legacy single-agent layouts, bundled content, uninstall.
+- [`migration-multi-agent.md`](./migration-multi-agent.md) — **Migration.** Upgrade path from the pre-multi-agent layout (`~/.kl/agent/` singular) to the current one (`~/.kl/agents/<name>/`). What `install.sh` migrates automatically, what you need to update by hand, rollback.
 - [`tmux.md`](./tmux.md) — **tmux settings.** Recommended `~/.tmux.conf` tweaks for `kl` sessions — CSI-u extended keys (required for pi modifier-Enter), mouse scrollback, buffer size.
 
 ## Conventions used in these docs
