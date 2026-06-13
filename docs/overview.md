@@ -71,7 +71,7 @@ kiln-lite/
 │   ├── prompt.ts               # system prompt composition
 │   ├── tools.ts                # tool discovery + index rendering
 │   ├── inbox.ts                # fs.watch inbox delivery
-│   ├── cleanup.ts              # /wrapup /exit /fq
+│   ├── cleanup.ts              # /exit /fq + exit_session tool
 │   ├── bootstrap.ts            # first-run auto-scaffold
 │   └── types.ts                # shared interfaces
 ├── src/
@@ -97,7 +97,7 @@ kiln-lite/
 
 ## Lifecycle in one paragraph
 
-`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), `pi install .` (registering the extension globally), then `./bootstrap.sh` (scaffolding the agent home at `~/.kl/agent/`, unless one already exists — in which case bundled skills and tools are just refreshed). `kl` spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session wraps via `/wrapup`, the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive).
+`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), `pi install .` (registering the extension globally), then `./bootstrap.sh` (scaffolding the agent home at `~/.kl/agent/`, unless one already exists — in which case bundled skills and tools are just refreshed). `kl` spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session exits via `/exit` (or the `exit_session` tool), the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive). If the exit requested self-continuation, a new session is spawned with the handoff text as its initial prompt.
 
 ## Where to go next
 

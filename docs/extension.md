@@ -14,7 +14,7 @@ The kiln-lite extension is a Pi *extension* in the Pi sense: a TypeScript module
 - Register `<home>/skills/` as a Pi skills path.
 - Start an inbox watcher that delivers mid-turn `[INBOX: N unread]` pings and full idle-turn messages.
 - Register and deregister with the kiln-lite daemon so channel fanout and DM routing work.
-- Handle the cleanup turn (`/wrapup` / `/exit` / `/fq`).
+- Handle the cleanup turn (`/exit` / `/fq`) and self-continuation.
 - Run `agent.yml:startup` commands.
 
 Every one of these is a thin layer over Pi's APIs. The extension doesn't duplicate anything Pi already does — it fills in the gaps between a raw Pi session and a persistent, addressable agent.
@@ -33,7 +33,7 @@ session_start
   ├─ create inbox dir
   ├─ instantiate DaemonClient + fire-and-forget register()
   ├─ discover tools + render tool-index
-  ├─ register cleanup dispatcher + /wrapup /exit /fq
+  ├─ register cleanup dispatcher + /exit /fq
   ├─ start inbox watcher
   └─ run startup commands sequentially
 
@@ -86,7 +86,7 @@ The state lives in a closure inside the extension's default export and is mutate
 | `prompt.ts` | `composeSystemPrompt` (merges base + injection + tool index) + `preloadStaticInjection` (cache). |
 | `tools.ts` | `discoverTools` (scan YAML headers) + `renderToolIndex` (pretty-print for prompt). |
 | `inbox.ts` | `startInboxWatcher` — fs.watch over inbox dir; idle delivery, mid-turn suffixes, `.read` markers. |
-| `cleanup.ts` | `createCleanupDispatcher` + `registerExitCommands` (/wrapup /exit /fq). |
+| `cleanup.ts` | `createCleanupDispatcher` + `registerExitCommands` (/exit /fq). |
 | `bootstrap.ts` | First-run auto-scaffold if `$AGENT_HOME` is set explicitly and lacks `agent.yml`. |
 | `types.ts` | Shared interfaces. |
 
@@ -120,7 +120,7 @@ context_injection:
 startup:
   - "git -C $AGENT_HOME pull --ff-only"
 
-# Cleanup turn dispatched when the session wraps via /wrapup.
+# Cleanup turn dispatched when the session exits via /exit or exit_session tool.
 # Template vars: {today}, {agent_id}, {session_uuid}, {summary_path}.
 cleanup: |
   Write a session summary to {summary_path} covering what happened,
@@ -185,11 +185,13 @@ On `agent_end`, the watcher's `markAllSeen()` clears the queue so the next turn 
 
 ### Cleanup flow
 
-`cleanup.ts` hooks `/wrapup`, `/exit`, `/fq`:
+`cleanup.ts` hooks `/exit` and `/fq`:
 
-- **`/wrapup`** and its alias `/exit` dispatch the `agent.yml:cleanup` prompt as a follow-up turn. When that turn ends (`agent_end`), the session shuts down.
+- **`/exit`** dispatches the `agent.yml:cleanup` prompt as a follow-up turn. When that turn ends (`agent_end`), the session shuts down.
 - **`/fq`** force-quits without cleanup.
 - During cleanup, a second `/exit` or `/fq` forces immediate shutdown (escape hatch if cleanup hangs).
+
+The **`exit_session` tool** (`exit-session-tool.ts`) provides the same capabilities for autonomous use, plus self-continuation: `skip_cleanup` to exit without the cleanup flow, and `continue` + `handoff` to spawn a new session after shutdown (inheriting agent home and template).
 
 `agent_end` is where the dispatcher decides: did we just finish the cleanup turn? If yes, exit; if no, normal return to user input.
 
@@ -218,7 +220,7 @@ The session will:
 - generate an id like `myagent-silver-gate` deterministically from the Pi session UUID
 - compose the system prompt with Pi's default + tool index (no context_injection, so nothing added)
 - run no startup commands
-- dispatch the cleanup prompt on `/wrapup`
+- dispatch the cleanup prompt on `/exit`
 
 ### With memory injection
 

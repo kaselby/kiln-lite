@@ -29,9 +29,10 @@ messaging (direct + channel pub/sub) through a lightweight autostart daemon.
   `$AGENT_HOME/inbox/<agent-id>/`. Peers drop markdown files in; the extension
   watches for new arrivals and delivers them as user turns (if idle) or as
   `[INBOX: N unread]` suffixes on the next tool result (if mid-work).
-- **Cleanup flow.** `/wrapup` (and aliased `/exit`) runs the configured
-  cleanup prompt as a follow-up turn before shutdown. `/fq` force-exits without
-  cleanup. Escape hatch: a second exit command during cleanup force-exits.
+- **Cleanup flow.** `/exit` runs the configured cleanup prompt as a follow-up
+  turn before shutdown. `/fq` force-exits without cleanup. The `exit_session`
+  tool adds autonomous exit with optional self-continuation (spawn a new session
+  with a handoff message, inheriting the agent home and template).
 
 ## What it isn't
 
@@ -218,7 +219,7 @@ kiln-lite/
 │   ├── prompt.ts        # System prompt composition
 │   ├── tools.ts         # YAML-header tool discovery + tool-index rendering
 │   ├── inbox.ts         # fs.watch, idle delivery, mid-turn pings
-│   ├── cleanup.ts       # /wrapup /exit /fq + agent_end dispatch
+│   ├── cleanup.ts       # /exit /fq + agent_end dispatch
 │   └── types.ts         # Shared interfaces
 ├── skills/messaging/
 │   ├── SKILL.md         # Documents message + sessions scripts
@@ -262,13 +263,12 @@ Slash commands added by the extension:
 
 | Command   | Effect                                                            |
 |-----------|-------------------------------------------------------------------|
-| `/wrapup` | Run cleanup prompt → shutdown                                     |
-| `/exit`   | Alias for `/wrapup`                                               |
+| `/exit`   | Run cleanup prompt → shutdown                                     |
 | `/fq`     | Force quit — skip cleanup, immediate shutdown                     |
 
 Note: `/quit`, Ctrl+D, and double Ctrl+C bypass the cleanup flow — pi's
-interactive mode intercepts them before extension dispatch. Use `/wrapup` or
-`/exit` when you want cleanup to run.
+interactive mode intercepts them before extension dispatch. Use `/exit` when
+you want cleanup to run.
 
 ## Exported environment
 
