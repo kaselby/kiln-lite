@@ -33,6 +33,7 @@ import { createCleanupDispatcher, registerExitCommands } from "../cleanup.ts";
 import { ensureScaffold } from "../bootstrap.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildWrapupTool } from "../wrapup-tool.ts";
+import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
 import { loadCommandGates, applyCommandGates, type CompiledGate } from "../gates.ts";
@@ -90,6 +91,11 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	// exist until session_start.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
 	pi.registerTool(buildWrapupTool({ getDispatcher: () => dispatcherRef.current }));
+	const planKit = buildPlanToolKit({
+		getAgentHome: () => state?.agentHome ?? null,
+		getAgentId: () => state?.agentId ?? null,
+	});
+	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
 
 	// --- session_start ---
@@ -278,12 +284,13 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 
 		const stateBlock = sessionState ? await sessionState.maybeBuildSuffix(ctx) : "";
+		const planSuffix = planKit.maybeSuffix();
 		const inboxSuffix = watcher.midTurnSuffix();
 
-		// State block first, then notifications. State is ambient framing;
-		// notifications are event-triggered content. Stable order makes the
-		// LLM's mental model cleaner.
-		const suffix = composeToolResultSuffix([stateBlock, inboxSuffix]);
+		// State block first, then plan reminder, then notifications. State
+		// and plan are ambient framing; notifications are event-triggered.
+		// Stable order makes the LLM's mental model cleaner.
+		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix]);
 		if (suffix === null) return;
 
 		return {
