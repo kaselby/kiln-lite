@@ -123,7 +123,14 @@ fi
 maybe_migrate_legacy() {
     local from="$1"
     [ -d "$from" ] || return 0
-    [ -e "$STARTER_HOME" ] && return 0  # new layout already present, don't clobber
+    if [ -e "$STARTER_HOME" ]; then
+        # New layout already populated — don't clobber, but don't silently
+        # abandon the legacy dir either. Surface it so the user can decide.
+        warn "legacy agent home at $from will be left in place ($STARTER_HOME already exists)."
+        warn "  inspect manually: if you want it under the new layout, mv it to \$KL_AGENTS_DIR/<name>/"
+        warn "  or delete it if obsolete."
+        return 0
+    fi
 
     log "detected legacy agent home at $from"
     log "  starter agent now lives at $STARTER_HOME"
@@ -185,7 +192,7 @@ cat <<DONE
 
   Agents dir:   $KL_AGENTS_DIR
   Starter:      $STARTER_HOME
-  Pi extension: loaded via \`kl -e\` (not globally registered — bare \`pi\` is pristine)
+  Pi extension: loaded by \`kl\` via \`pi -e\` (not globally registered — bare \`pi\` stays pristine)
   kl command:   $(command -v kl 2>/dev/null || echo '(not on PATH — see warning above)')
 
 Next:

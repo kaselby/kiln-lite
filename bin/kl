@@ -261,7 +261,7 @@ cmd_run() {
     # This means `kl --detach` and `kl -- foo` still work unchanged.
     local explicit_name=""
     if [ $# -gt 0 ] \
-       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
        && [ -d "$KL_AGENTS_DIR/$1" ]; then
         explicit_name="$1"
         shift
@@ -421,16 +421,44 @@ cmd_resume() {
     [ $# -ge 1 ] || die "resume requires an agent-id (use 'kl list' to see active sessions)"
     local id="$1"; shift
 
-    # Parse the agent-name prefix from the session-id to find which agent
-    # home owns the snapshot. Falls back to AGENT_HOME / default if the
-    # prefix doesn't match any installed agent (useful when the agent
-    # was renamed or moved).
-    local agent_home name
+    # Locate which agent home owns the snapshot. Priority:
+    #   1. Parse the agent-name prefix and try $KL_AGENTS_DIR/<prefix>.
+    #   2. If no match, scan every installed agent for state/sessions/<id>/.
+    #      Exactly one match -> use it. Multiple matches -> hard error
+    #      (genuinely ambiguous). Zero matches -> proceed to step 3.
+    #   3. If $AGENT_HOME is explicitly set, honor it (escape-hatch).
+    #   4. Otherwise hard error — silently falling through to the default
+    #      starter would just hide a stale or misspelled session-id.
+    local agent_home="" name
     name="$(agent_name_from_session_id "$id")"
-    if [ -n "$name" ] && [ -d "$KL_AGENTS_DIR/$name" ]; then
+    if [ -n "$name" ] && [ -d "$KL_AGENTS_DIR/$name" ] \
+       && [ -f "$KL_AGENTS_DIR/$name/state/sessions/$id/meta.json" ]; then
         agent_home="$KL_AGENTS_DIR/$name"
-    else
-        agent_home="$(resolve_agent_home)"
+    fi
+    if [ -z "$agent_home" ]; then
+        local matches=()
+        local h
+        while IFS= read -r h; do
+            [ -n "$h" ] || continue
+            [ -f "$h/state/sessions/$id/meta.json" ] && matches+=("$h")
+        done < <(list_agent_homes)
+        if [ ${#matches[@]} -eq 1 ]; then
+            agent_home="${matches[0]}"
+        elif [ ${#matches[@]} -gt 1 ]; then
+            local m
+            local msg="snapshot for '$id' found in multiple agents — ambiguous:"
+            for m in "${matches[@]}"; do msg+=$'\n  '"$m"; done
+            msg+=$'\n''Set AGENT_HOME to disambiguate.'
+            die "$msg"
+        fi
+    fi
+    if [ -z "$agent_home" ] && [ -n "${AGENT_HOME:-}" ] && [ -d "$AGENT_HOME" ]; then
+        agent_home="$AGENT_HOME"
+    fi
+    if [ -z "$agent_home" ]; then
+        die "no agent owns session '$id'.
+  Tried prefix lookup ('$name') and scanned $KL_AGENTS_DIR/*/state/sessions/.
+  Set AGENT_HOME=<path> if the snapshot lives outside the registry."
     fi
     local ext_path
     ext_path="$(resolve_ext_path "$agent_home")"
@@ -492,8 +520,9 @@ cmd_list() {
     fi
     local any=0
     while IFS= read -r s; do
-        # Heuristic filter: <word>-<word>-<word>[-suffix]
-        [[ "$s" =~ ^[a-z]+-[a-z]+-[a-z]+ ]] || continue
+        # Heuristic filter: <name>-<adj>-<noun>[-suffix] where name matches
+        # the same grammar `kl new` accepts ([a-z][a-z0-9_]*).
+        [[ "$s" =~ ^[a-z][a-z0-9_]*-[a-z]+-[a-z]+ ]] || continue
         echo "$s"
         any=1
     done <<< "$sessions"
@@ -506,8 +535,10 @@ cmd_list() {
 cmd_new() {
     [ $# -ge 1 ] || die "kl new requires an agent name (e.g. 'kl new beth')"
     local name="$1"; shift
-    [[ "$name" =~ ^[a-z][a-z0-9_-]*$ ]] \
-        || die "invalid agent name '$name' — must start with a lowercase letter and contain only [a-z0-9_-]"
+    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] \
+        || die "invalid agent name '$name' — must start with a lowercase letter and contain only [a-z0-9_].
+  (Hyphens are reserved: session-ids are <name>-<adj>-<noun>, so a hyphenated
+  name would make 'kl resume' unable to split prefix from suffix.)"
 
     local target="$KL_AGENTS_DIR/$name"
     if [ -e "$target" ]; then
@@ -578,7 +609,7 @@ cmd_doctor() {
     # override if present and not already covered).
     local explicit_name=""
     if [ $# -gt 0 ] \
-       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
        && [ -d "$KL_AGENTS_DIR/$1" ]; then
         explicit_name="$1"
         shift
@@ -767,7 +798,7 @@ cmd_history() {
     # Any leading flag (--all, -n) means no name was given.
     local explicit_name=""
     if [ $# -gt 0 ] \
-       && [[ "$1" =~ ^[a-z][a-z0-9_-]*$ ]] \
+       && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
        && [ -d "$KL_AGENTS_DIR/$1" ]; then
         explicit_name="$1"
         shift

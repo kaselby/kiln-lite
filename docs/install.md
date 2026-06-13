@@ -92,7 +92,7 @@ If `~/.agent/` or `~/.kl/agent/` exists and `~/.kl/agents/agent/` doesn't, `inst
 
 Decline → nothing moves; you'll need to scaffold the starter manually (or use `kl new`) and `kl` won't see the legacy dir. Accept → `mv` to the new location. If `$AGENT_HOME` was set to the old path, `install.sh` warns to unset it (or accept that the env var now overrides the new default).
 
-Migration runs at most once per layout. Both `~/.agent/` and `~/.kl/agent/` are checked separately; whichever exists gets prompted.
+Migration runs at most once per layout. `~/.agent/` is checked first, then `~/.kl/agent/`. Both check `~/.kl/agents/agent/` before prompting — so once one is moved, the second is left in place (with a warning) and you'll need to inspect/move it manually.
 
 ## `bootstrap.sh`
 
@@ -168,8 +168,8 @@ Failing a step bails; earlier steps leave the system in a recoverable state.
 |------|---------|-------------|
 | `npm install` | `node_modules/` in the repo | no |
 | `npm link` | `~/.npm-global/bin/` (or equivalent) | no |
-| `pi install .` | Pi's config directory | no |
-| Migration | `~/.agent` → `~/.kl/agent` (rename) | yes, on accept |
+| Legacy pi cleanup | `pi remove <repo-path>` if previously registered | no (idempotent) |
+| Migration | `~/.agent` or `~/.kl/agent` → `~/.kl/agents/agent` (rename) | yes, on accept |
 | Fresh scaffold | `<home>/*` | no (refuses on non-empty unless `--force`) |
 | Refresh (existing home) | `<home>/skills/*`, `<home>/tools/*` | yes (overwrites bundled names) |
 
@@ -264,7 +264,7 @@ rm -rf ~/.kl/            # wipes every agent + daemon state
 ## Gotchas
 
 - **`npm link` may need sudo or a user-level prefix.** If `install.sh` warns that `kl` isn't on `$PATH`, check `npm config get prefix` — you may need `npm config set prefix ~/.npm-global` and add `~/.npm-global/bin` to `$PATH`.
-- **`pi install .` registers a source string.** Pi remembers the install path. If you move the `kiln-lite` repo on disk, `pi` will stop loading the extension until you re-run `pi install .` from the new location.
+- **`kl` loads the extension directly via `pi -e <path>`** — kiln-lite is not registered globally with pi (bare `pi` stays pristine). If `install.sh` finds a leftover `pi install` registration from a pre-v0.4 install, it removes it.
 - **Migration only fires while the old path exists.** Once `~/.agent` or `~/.kl/agent` has been moved to `~/.kl/agents/agent`, the prompt won't reappear. If you want to redo a migration, `mv` back manually and re-run `install.sh`.
 - **`--force` is destructive.** `bootstrap.sh --force` overwrites `agent.yml`, `skills/`, `tools/`, and recreates `venv/`. Memory directories (`memory/`, `scratch/`) are not touched — but any local `agent.yml` customization is lost. Stage a backup first if you care.
 - **The uv auto-installer modifies shell rc files.** If you're in a tightly-managed environment, set `AUTO_INSTALL_UV=0` and install uv yourself ahead of time.
