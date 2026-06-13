@@ -149,7 +149,18 @@ export function createCleanupDispatcher(
  * Second invocation of /exit during in-flight cleanup force-exits (escape
  * hatch for an agent stuck in a bad cleanup turn).
  */
-export function registerExitCommands(pi: ExtensionAPI, dispatcher: CleanupDispatcher): void {
+export interface ExitCommandOptions {
+	/** Called before any force-exit (via /fq or the second-/exit escape hatch). */
+	onForceExit?: () => void;
+}
+
+export function registerExitCommands(
+	pi: ExtensionAPI,
+	dispatcher: CleanupDispatcher,
+	opts?: ExitCommandOptions,
+): void {
+	const beforeForceExit = opts?.onForceExit ?? (() => {});
+
 	// /exit is not a pi built-in slash command (pi only binds it as a
 	// keybinding action name for Ctrl+D), so registering it here routes
 	// through the normal extension command dispatcher. This lets users
@@ -159,6 +170,7 @@ export function registerExitCommands(pi: ExtensionAPI, dispatcher: CleanupDispat
 		handler: async (_args, ctx) => {
 			if (dispatcher.inProgress()) {
 				ctx.ui.notify("kiln-lite: cleanup already in flight — force-exiting", "warning");
+				beforeForceExit();
 				dispatcher.forceExit(ctx);
 				return;
 			}
@@ -171,6 +183,7 @@ export function registerExitCommands(pi: ExtensionAPI, dispatcher: CleanupDispat
 	pi.registerCommand("fq", {
 		description: "Force quit — skip cleanup, exit immediately",
 		handler: async (_args, ctx) => {
+			beforeForceExit();
 			dispatcher.forceExit(ctx);
 		},
 	});

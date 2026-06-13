@@ -216,7 +216,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		toolIndexBlock = renderToolIndex(headers);
 
 		dispatcherRef.current = createCleanupDispatcher(pi, state, warn);
-		registerExitCommands(pi, dispatcherRef.current);
+		registerExitCommands(pi, dispatcherRef.current, {
+			onForceExit: () => { continuationRef.current = null; },
+		});
 
 		// Inbox watcher MUST start last so it doesn't miss messages that
 		// land during startup. Comment preserved from original index.ts.
@@ -354,6 +356,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			daemon = null;
 		}
 		gates = [];
+		dispatcherRef.current = null;
 		state = null;
 		snapshotWriter = null;
 
