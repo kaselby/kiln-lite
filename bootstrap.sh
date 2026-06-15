@@ -287,6 +287,10 @@ else
 # Agent name — first component of <name>-<adj>-<noun> session IDs.
 name: agent
 
+# Default model for this agent. Passed to pi as --model unless the caller
+# explicitly provides --model on the command line. Omit to use pi's default.
+# model: claude-sonnet-4-6
+
 # Optional: path (relative to $AGENT_HOME) of a file that replaces Pi's
 # built-in system prompt. Omit to use Pi's default.
 # system_prompt: prompts/base.md
