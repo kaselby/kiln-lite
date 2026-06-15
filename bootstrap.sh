@@ -305,12 +305,12 @@ context_injection: []
 startup: []
   # - "git -C $AGENT_HOME pull --ff-only"
 
-# Cleanup turn dispatched when the session wraps via /wrapup.
+# Cleanup turn dispatched when the session wraps via /exit or /wrapup.
 # Supports template vars: {today} {agent_id} {session_uuid} {summary_path}
 # Leave empty to skip the cleanup turn.
-cleanup: |
-  You're wrapping up this session. Write a session summary to {summary_path}
-  covering: what happened, what you learned, unresolved threads.
+# cleanup: |
+#   You're wrapping up this session. Write a session summary to {summary_path}
+#   covering: what happened, what you learned, unresolved threads.
 
 # Directory (relative to $AGENT_HOME) for shell tool discovery.
 tools_dir: tools
