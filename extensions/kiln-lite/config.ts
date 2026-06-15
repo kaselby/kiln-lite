@@ -81,6 +81,7 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 	const obj = raw as Record<string, unknown>;
 	const known = new Set([
 		"name",
+		"model",
 		"system_prompt",
 		"context_injection",
 		"startup",
