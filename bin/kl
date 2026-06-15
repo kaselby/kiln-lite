@@ -238,6 +238,16 @@ resolve_agent_name() {
     printf 'agent'
 }
 
+# Parse `model:` from agent.yml. Returns empty string if unset/commented.
+resolve_agent_model() {
+    local agent_home="$1"
+    if [ -f "$agent_home/agent.yml" ]; then
+        local m
+        m="$(awk '/^model:[[:space:]]*/{sub(/^model:[[:space:]]*/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
+        [ -n "$m" ] && printf '%s' "$m"
+    fi
+}
+
 # --- tmux helpers ---
 
 require_tool() {
@@ -331,6 +341,20 @@ cmd_run() {
         prompt_content="$(cat "$prompt_file")" || die "--prompt-file: could not read $prompt_file"
         # Append as final positional — pi treats trailing args as the prompt.
         pi_args+=("$prompt_content")
+    fi
+
+    # If agent.yml specifies a default model and the caller didn't pass
+    # --model explicitly, prepend it to pi_args. Explicit --model wins.
+    local has_model=0
+    for arg in ${pi_args[@]+"${pi_args[@]}"}; do
+        case "$arg" in --model|--model=*) has_model=1; break ;; esac
+    done
+    if [ "$has_model" = 0 ]; then
+        local default_model
+        default_model="$(resolve_agent_model "$agent_home")"
+        if [ -n "$default_model" ]; then
+            pi_args=("--model" "$default_model" ${pi_args[@]+"${pi_args[@]}"})
+        fi
     fi
 
     require_tool tmux "install with: brew install tmux"
