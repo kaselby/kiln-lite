@@ -55,7 +55,11 @@ export { createSessionStateHook, type SessionStateHook } from "../session-state.
 export {
 	loadCommandGates,
 	applyCommandGates,
+	defaultGateNotifier,
+	DEFAULT_CONFIRM_TIMEOUT_MS,
 	type CompiledGate,
+	type GateNotifier,
+	type GateNotifyInfo,
 } from "../gates.ts";
 export {
 	applyTemplate,

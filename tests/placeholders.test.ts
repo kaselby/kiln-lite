@@ -51,4 +51,21 @@ describe("buildBasePlaceholders", () => {
 		assert.equal(vars.session_uuid, "abc-123");
 		assert.match(vars.today, /^\d{4}-\d{2}-\d{2}$/);
 	});
+
+	it("includes injected pi documentation paths (empty when not provided)", () => {
+		const bare = buildBasePlaceholders({ agentId: "a", agentHome: "/h", sessionUuid: "u" });
+		assert.equal(bare.pi_readme, "");
+		assert.equal(bare.pi_docs, "");
+		assert.equal(bare.pi_examples, "");
+
+		const withPaths = buildBasePlaceholders({
+			agentId: "a",
+			agentHome: "/h",
+			sessionUuid: "u",
+			piPaths: { readme: "/pi/README.md", docs: "/pi/docs", examples: "/pi/examples" },
+		});
+		assert.equal(withPaths.pi_readme, "/pi/README.md");
+		assert.equal(withPaths.pi_docs, "/pi/docs");
+		assert.equal(withPaths.pi_examples, "/pi/examples");
+	});
 });

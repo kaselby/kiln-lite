@@ -48,6 +48,24 @@ export function resolveAgentHomeDetailed(): { path: string; explicit: boolean } 
 }
 
 /**
+ * Resolve the kiln-lite root (`~/.kl/`) — the directory that holds
+ * kl-global state (the daemon dir, guardrails.yml, and the per-agent
+ * `agents/<name>/` homes). Honors the `KL_ROOT` env var for testability,
+ * else defaults to `~/.kl`, matching the daemon/client convention.
+ *
+ * Deliberately NOT derived from $AGENT_HOME: under the multi-agent layout
+ * an agent home is `~/.kl/agents/<name>/`, two levels deep, so relative
+ * `..` resolution is fragile and layout-dependent.
+ */
+export function resolveKlRoot(): string {
+	const fromEnv = process.env.KL_ROOT;
+	if (fromEnv && fromEnv.trim()) {
+		return resolve(fromEnv);
+	}
+	return resolve(join(homedir(), ".kl"));
+}
+
+/**
  * Load agent.yml from $AGENT_HOME. Returns merged config.
  *
  * @param agentHome Resolved $AGENT_HOME
