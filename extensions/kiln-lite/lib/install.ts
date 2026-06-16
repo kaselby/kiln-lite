@@ -36,6 +36,7 @@ import { ensureScaffold } from "../bootstrap.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildExitSessionTool } from "../exit-session-tool.ts";
 import type { ContinuationConfig } from "../exit-session.ts";
+import { handoffTmuxClient } from "../exit-session.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
@@ -339,6 +340,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		// outlives teardown but state is nulled below.
 		const continuation = continuationRef.current;
 		const agentHome = state?.agentHome;
+		// Capture our own session id too — if a client is attached to this
+		// session's tmux window we hand it off to the continuation below.
+		const priorAgentId = state?.agentId;
 		continuationRef.current = null;
 
 		if (watcher) {
@@ -365,7 +369,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 
 		// Spawn continuation after all teardown is complete.
 		if (continuation && agentHome) {
-			await spawnContinuation(continuation, agentHome, (msg) => console.warn(msg));
+			await spawnContinuation(continuation, agentHome, priorAgentId, (msg) =>
+				console.warn(msg),
+			);
 		}
 	});
 
@@ -468,10 +474,17 @@ function resolvePiPaths(): { readme: string; docs: string; examples: string } {
  * temp file (safe for arbitrary content — backticks, quotes, newlines) and
  * passes it via --prompt-file. kl reads the file synchronously before
  * launching tmux, so cleanup is safe immediately after.
+ *
+ * `priorAgentId` is this (exiting) session's id. If a tmux client is attached
+ * to it — i.e. someone is watching interactively — the client is handed off
+ * to the continuation so the terminal follows along instead of being dropped
+ * to a bare shell. Autonomous (detached) sessions have no client, so nothing
+ * is handed off and the continuation simply keeps running detached.
  */
 async function spawnContinuation(
 	config: ContinuationConfig,
 	agentHome: string,
+	priorAgentId: string | undefined,
 	warn: (msg: string) => void,
 ): Promise<void> {
 	const args = ["--detach"];
@@ -501,6 +514,12 @@ async function spawnContinuation(
 		});
 		const agentId = stdout.toString().trim();
 		console.log(`kiln-lite: continuation spawned → ${agentId}`);
+		// Carry an attached terminal forward to the continuation (interactive
+		// case); a no-op for detached/autonomous runs.
+		const moved = handoffTmuxClient(priorAgentId, agentId, { warn });
+		if (moved > 0) {
+			console.log(`kiln-lite: handed ${moved} tmux client(s) off ${priorAgentId} → ${agentId}`);
+		}
 	} catch (err) {
 		warn(`kiln-lite: failed to spawn continuation: ${(err as Error).message}`);
 	} finally {

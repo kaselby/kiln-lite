@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
 import { resolveHandoff } from "../extensions/kiln-lite/exit-session.ts";
+import { handoffTmuxClient } from "../extensions/kiln-lite/exit-session.ts";
 
 function makeTmpDir(): string {
 	const dir = join(tmpdir(), `exit-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -88,4 +89,68 @@ test("resolveHandoff handles file with special characters in content", () => {
 test("resolveHandoff returns raw text for relative-looking paths", () => {
 	// ./relative paths are not supported — only absolute and ~/
 	assert.equal(resolveHandoff("./some/file.md"), "./some/file.md");
+});
+
+// --- handoffTmuxClient ---
+
+/** Records every tmux invocation; returns a scripted stdout for list-clients. */
+function fakeTmux(clientList: string) {
+	const calls: string[][] = [];
+	const run = (args: string[]): string => {
+		calls.push(args);
+		return args[0] === "list-clients" ? clientList : "";
+	};
+	return { run, calls };
+}
+
+test("handoffTmuxClient is a no-op when not inside tmux", () => {
+	const { run, calls } = fakeTmux("/dev/ttys001");
+	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: false });
+	assert.equal(moved, 0);
+	assert.equal(calls.length, 0); // never even queried tmux
+});
+
+test("handoffTmuxClient is a no-op when no client is attached (autonomous run)", () => {
+	const { run, calls } = fakeTmux(""); // list-clients returns nothing
+	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
+	assert.equal(moved, 0);
+	assert.equal(calls.length, 1); // queried once, no switch-client
+	assert.equal(calls[0][0], "list-clients");
+});
+
+test("handoffTmuxClient switches the attached client to the continuation", () => {
+	const { run, calls } = fakeTmux("/dev/ttys019");
+	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
+	assert.equal(moved, 1);
+	assert.deepEqual(calls[1], ["switch-client", "-c", "/dev/ttys019", "-t", "new-c-d"]);
+});
+
+test("handoffTmuxClient switches every attached client", () => {
+	const { run, calls } = fakeTmux("/dev/ttys019\n/dev/ttys020");
+	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
+	assert.equal(moved, 2);
+	assert.deepEqual(calls[1], ["switch-client", "-c", "/dev/ttys019", "-t", "new-c-d"]);
+	assert.deepEqual(calls[2], ["switch-client", "-c", "/dev/ttys020", "-t", "new-c-d"]);
+});
+
+test("handoffTmuxClient is a no-op when the prior session id is unknown", () => {
+	const { run, calls } = fakeTmux("/dev/ttys019");
+	const moved = handoffTmuxClient(undefined, "new-c-d", { tmux: run, inTmux: true });
+	assert.equal(moved, 0);
+	assert.equal(calls.length, 0);
+});
+
+test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", () => {
+	const warnings: string[] = [];
+	const run = (): string => {
+		throw new Error("no server running");
+	};
+	const moved = handoffTmuxClient("old-a-b", "new-c-d", {
+		tmux: run,
+		inTmux: true,
+		warn: (m) => warnings.push(m),
+	});
+	assert.equal(moved, 0);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0], /handoff failed/);
 });
