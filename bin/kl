@@ -243,7 +243,7 @@ resolve_agent_model() {
     local agent_home="$1"
     if [ -f "$agent_home/agent.yml" ]; then
         local m
-        m="$(awk '/^model:[[:space:]]*/{sub(/^model:[[:space:]]*/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
+        m="$(awk '/^model:[[:space:]]*/{sub(/^model:[[:space:]]*/,""); sub(/[[:space:]]+#.*$/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
         if [ -n "$m" ]; then printf '%s' "$m"; fi
     fi
 }
