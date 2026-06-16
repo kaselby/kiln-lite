@@ -238,6 +238,31 @@ resolve_agent_name() {
     printf 'agent'
 }
 
+# Parse `description:` from agent.yml. Returns empty if unset. Handles both
+# inline form (description: "..." or bare) and YAML block scalars
+# (description: | / >), emitting multi-line block content with its indentation
+# stripped. Descriptions are prose, so we keep internal spaces and don't strip
+# comments — only outer whitespace and one layer of quotes on the inline form.
+resolve_agent_description() {
+    local agent_home="$1"
+    [ -f "$agent_home/agent.yml" ] || return 0
+    awk '
+        /^description:[[:space:]]*/ {
+            line=$0
+            sub(/^description:[[:space:]]*/, "", line)
+            if (line ~ /^[|>]/) { block=1; next }   # block scalar: collect indented lines
+            sub(/[[:space:]]+$/, "", line)
+            sub(/^["'\'']/, "", line); sub(/["'\'']$/, "", line)
+            print line; exit
+        }
+        block {
+            if ($0 ~ /^[[:space:]]*$/) exit        # blank line ends the block
+            if ($0 ~ /^[^[:space:]]/) exit         # dedent (next key/comment) ends it
+            s=$0; sub(/^[[:space:]]+/, "", s); print s
+        }
+    ' "$agent_home/agent.yml"
+}
+
 # Parse `model:` from agent.yml. Returns empty string if unset/commented.
 resolve_agent_model() {
     local agent_home="$1"
@@ -625,7 +650,18 @@ cmd_agents() {
         if [ -d "$home/state/sessions" ]; then
             count="$(find "$home/state/sessions" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
         fi
-        printf '  %-20s  %s session(s)%s\n' "$name" "$count" "$marker"
+        # Description (one-line role, or multi-line block) — blank when unset.
+        local desc first rest
+        desc="$(resolve_agent_description "$home")"
+        first="$(printf '%s' "$desc" | head -n 1)"
+        printf '  %-12s  %-13s  %s%s\n' "$name" "$count session(s)" "$first" "$marker"
+        rest="$(printf '%s' "$desc" | tail -n +2)"
+        if [ -n "$rest" ]; then
+            # Align continuation lines under the description column.
+            printf '%s\n' "$rest" | while IFS= read -r dl; do
+                printf '  %-12s  %-13s  %s\n' "" "" "$dl"
+            done
+        fi
         found=1
     done < <(list_agent_homes)
 
