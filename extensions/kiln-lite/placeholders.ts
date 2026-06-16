@@ -11,9 +11,13 @@
  *   {agent_id}      — this session's agent id
  *   {agent_home}    — resolved $AGENT_HOME path
  *   {session_uuid}  — pi session UUID
+ *   {pi_readme}     — absolute path to pi's README.md
+ *   {pi_docs}       — absolute path to pi's docs/ directory
+ *   {pi_examples}   — absolute path to pi's examples/ directory
  *
  * Unknown placeholders are left as-is (no error, no removal).
  */
+
 
 /**
  * Expand {key} placeholders in a string using the provided vars map.
@@ -33,6 +37,9 @@ export function buildBasePlaceholders(opts: {
 	agentId: string;
 	agentHome: string;
 	sessionUuid: string;
+	/** Resolved pi doc paths, injected by the caller (kept out of this module
+	 * so it stays free of a pi-package import — see install.ts). */
+	piPaths?: { readme: string; docs: string; examples: string };
 }): Record<string, string> {
 	const now = new Date();
 	return {
@@ -40,5 +47,8 @@ export function buildBasePlaceholders(opts: {
 		agent_id: opts.agentId,
 		agent_home: opts.agentHome,
 		session_uuid: opts.sessionUuid,
+		pi_readme: opts.piPaths?.readme ?? "",
+		pi_docs: opts.piPaths?.docs ?? "",
+		pi_examples: opts.piPaths?.examples ?? "",
 	};
 }

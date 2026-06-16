@@ -23,8 +23,9 @@ import { tmpdir } from "node:os";
 import { spawn, execFileSync } from "node:child_process";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getReadmePath, getDocsPath, getExamplesPath } from "@earendil-works/pi-coding-agent";
 
-import { resolveAgentHomeDetailed, loadAgentConfig } from "../config.ts";
+import { resolveAgentHomeDetailed, loadAgentConfig, resolveKlRoot } from "../config.ts";
 import { applyTemplate } from "../template.ts";
 import { buildEnv, applyEnv } from "../env.ts";
 import { composeSystemPrompt, preloadStaticInjection } from "../prompt.ts";
@@ -180,7 +181,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			cachedSystemPrompt: existing,
 			snapshotWritten: writer.isWritten(),
 			template: appliedTemplate ?? undefined,
-			vars: buildBasePlaceholders({ agentId, agentHome, sessionUuid }),
+			vars: buildBasePlaceholders({ agentId, agentHome, sessionUuid, piPaths: resolvePiPaths() }),
 		};
 
 		// Persist / refresh the snapshot meta. Best-effort; never blocks startup.
@@ -236,7 +237,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			interval: config.session_state_interval,
 		});
 
-		gates = loadCommandGates(join(agentHome, ".."), warn);
+		gates = loadCommandGates(resolveKlRoot(), warn);
 
 		for (const cmd of config.startup) {
 			await runStartupCommand(cmd, env, ctx.cwd, warn);
@@ -255,7 +256,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	// --- tool_call: command gates from guardrails.yml ---
 	pi.on("tool_call", async (event, ctx) => {
 		if (gates.length === 0) return;
-		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx);
+		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx, {
+			agentId: state?.agentId ?? "agent",
+		});
 	});
 
 	// --- before_agent_start: assemble (or replay) the system prompt ---
@@ -443,6 +446,21 @@ function runStartupCommand(
 			resolve();
 		});
 	});
+}
+
+/**
+ * Resolve pi's bundled doc paths (README / docs / examples) for the
+ * `{pi_readme}` `{pi_docs}` `{pi_examples}` placeholders. Resolving against
+ * the installed pi package keeps the scaffold's default identity portable
+ * across machines/install prefixes. Defensive: on any failure the paths come
+ * back empty and the placeholders expand to nothing.
+ */
+function resolvePiPaths(): { readme: string; docs: string; examples: string } {
+	try {
+		return { readme: getReadmePath(), docs: getDocsPath(), examples: getExamplesPath() };
+	} catch {
+		return { readme: "", docs: "", examples: "" };
+	}
 }
 
 /**
