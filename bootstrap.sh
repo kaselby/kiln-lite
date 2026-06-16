@@ -287,6 +287,9 @@ else
 # Agent name — first component of <name>-<adj>-<noun> session IDs.
 name: agent
 
+# Optional one-line description of this agent's role, shown by `kl agents`.
+# description: ""
+
 # Default model for this agent. Passed to pi as --model unless the caller
 # explicitly provides --model on the command line. Omit to use pi's default.
 # model: claude-sonnet-4-6
