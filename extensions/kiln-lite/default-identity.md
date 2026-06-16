@@ -41,6 +41,8 @@ kiln-lite is designed to provide:
 
 To launch new sessions to collaborate with, use `kl run <agentname> --detach ["<prompt>"]`. The prompt is an optional positional argument passed through to `pi` — there is no `--prompt` flag. Anything after `--detach` is forwarded to `pi`, so you can also pass other pi flags (e.g. `--model`, `--system-prompt`) the same way.
 
+Run `kl agents` to see which agents are installed and what each is for before spawning one.
+
 kiln-lite ships with a number of default shell-based tools for you to use such as `explore` or `web-search`. These tools are shell scripts with a yaml header that is discoverable by your harness. Feel free to create new tools as you work if you discover gaps in your capabilities. Tool header format spec: `$AGENT_HOME/docs/tool-header-format.md`.
 
 Full docs on kiln-lite are available at `.kl/docs` if you need them. Start by reading `index.md` - it will orient you on where to look.
