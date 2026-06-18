@@ -15,12 +15,20 @@
 #   automatically — no need to set AGENT_HOME or pass a name.
 #
 # Subcommands:
-#   kl [run] [<name>] [--detach] [--prompt-file FILE] [--parent NAME] [pi-args...]
-#                           Spawn a new session (default).
+#   kl run [<name>] [--detach] [--prompt-file FILE] [--parent NAME] [pi-args...]
+#                           Spawn a new session. This is the canonical launch
+#                           path.
 #                           <name>: optional agent name (resolved against
 #                             $KL_AGENTS_DIR). If omitted, uses AGENT_HOME or
 #                             the default starter.
 #                           --detach (-d): don't attach; print agent-id to stdout.
+#   kl [--detach] [pi-args...]
+#                           Bare `kl` is an alias for `kl run` with the default
+#                           agent (AGENT_HOME or the starter). Flags pass
+#                           through. NOTE: `kl <name>` is NOT a shortcut for
+#                           launching agent <name> — use `kl run <name>`.
+#                           A bare unknown token is treated as an error, not a
+#                           prompt.
 #                           --parent NAME: record the agent-id that launched this
 #                             session (e.g. your own $AGENT_ID when spawning a
 #                             peer). Stored in the new session's meta.json and
@@ -982,10 +990,20 @@ main() {
         history) shift; cmd_history "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
         -h|--help|help) usage ;;
+        # Bare `kl` (optionally with flags) is an alias for `kl run` against
+        # the default agent. Empty or flag-leading invocations route to
+        # cmd_run; cmd_run still does leading-positional <name> detection for
+        # the explicit `kl run <name>` path.
         "") cmd_run ;;
-        # Anything else — treat as passthrough to `run`. cmd_run does its own
-        # leading-positional detection for <name> agent lookup.
-        *) cmd_run "$@" ;;
+        -*) cmd_run "$@" ;;
+        # A non-flag leading token that isn't a known subcommand is an
+        # unknown command — NOT a prompt and NOT an agent-launch shortcut.
+        # `kl <name>` used to silently spawn a session whose prompt was the
+        # typo'd token; error instead and point at the canonical path.
+        *) die "unknown command '$1'.
+  Run 'kl --help' for usage.
+  To launch an agent:    kl run $1
+  To launch the default: kl" ;;
     esac
 }
 
