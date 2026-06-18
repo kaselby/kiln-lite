@@ -20,6 +20,10 @@ export interface PlanTask {
 
 export interface PlanData {
 	goal: string;
+	/** Project this work belongs to, if any. */
+	project?: string;
+	/** Name or path of the worktree being worked in, if any. */
+	worktree?: string;
 	tasks: PlanTask[];
 	updated_at: string;
 }
@@ -37,6 +41,8 @@ export function readPlan(agentHome: string, agentId: string): PlanData | null {
 		const parsed = JSON.parse(readFileSync(path, "utf8"));
 		if (!parsed || typeof parsed !== "object") return null;
 		if (typeof parsed.goal !== "string") return null;
+		if (parsed.project !== undefined && typeof parsed.project !== "string") return null;
+		if (parsed.worktree !== undefined && typeof parsed.worktree !== "string") return null;
 		if (!Array.isArray(parsed.tasks)) return null;
 		return parsed as PlanData;
 	} catch {
@@ -50,6 +56,19 @@ export function writePlan(agentHome: string, agentId: string, plan: PlanData): v
 	writeFileSync(planPath(agentHome, agentId), `${JSON.stringify(plan, null, 2)}\n`);
 }
 
+/**
+ * Resolve a sticky plan field (project / worktree). These are slow-changing
+ * ambient context, not part of the task-list churn, so a plan update that
+ * omits them keeps the prior value. An explicit empty string clears it.
+ */
+export function resolveSticky(
+	param: string | undefined,
+	prior: string | undefined,
+): string | undefined {
+	if (param === undefined) return prior;
+	return param || undefined;
+}
+
 // --- Summary formatting ---
 
 export function formatPlanSummary(plan: PlanData): string {
@@ -61,7 +80,9 @@ export function formatPlanSummary(plan: PlanData): string {
 	if (counts.in_progress > 0) parts.push(`${counts.in_progress} in progress`);
 	if (counts.pending > 0) parts.push(`${counts.pending} pending`);
 
-	let summary = `[Plan] ${plan.goal} | ${parts.join(", ")}`;
+	const context = [plan.project, plan.worktree].filter(Boolean).join(" @ ");
+	const head = context ? `${plan.goal} (${context})` : plan.goal;
+	let summary = `[Plan] ${head} | ${parts.join(", ")}`;
 
 	const inProgress = plan.tasks.filter((t) => t.status === "in_progress");
 	if (inProgress.length > 0) {

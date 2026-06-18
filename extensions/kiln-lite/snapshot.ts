@@ -50,6 +50,8 @@ export interface SnapshotMeta {
 	cwd?: string;
 	/** Model id at session start (best-effort — pi sets this lazily). */
 	model?: string;
+	/** Agent-id that launched this session, from KL_PARENT (--parent). Unset for direct launches. */
+	parent?: string;
 	/** ISO-8601 timestamp of first observation. */
 	created_at: string;
 	/** ISO-8601 timestamp of most recent session_start for this agent-id. */

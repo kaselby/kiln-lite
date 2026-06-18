@@ -8,6 +8,7 @@ import {
 	planPath,
 	readPlan,
 	writePlan,
+	resolveSticky,
 	formatPlanSummary,
 	createPlanReminder,
 	type PlanData,
@@ -26,6 +27,19 @@ test("planPath builds expected path", () => {
 		planPath("/home/agent", "agent-bright-fox"),
 		join("/home/agent", "state", "sessions", "agent-bright-fox", "plan.json"),
 	);
+});
+
+// --- tool execute: sticky project/worktree ---
+
+test("resolveSticky: omit keeps prior, empty clears, value replaces", () => {
+	// undefined param -> keep prior (sticky)
+	assert.equal(resolveSticky(undefined, "webapp"), "webapp");
+	assert.equal(resolveSticky(undefined, undefined), undefined);
+	// empty string -> clear
+	assert.equal(resolveSticky("", "webapp"), undefined);
+	// non-empty -> replace
+	assert.equal(resolveSticky("api", "webapp"), "api");
+	assert.equal(resolveSticky("api", undefined), "api");
 });
 
 // --- readPlan / writePlan ---
@@ -55,6 +69,43 @@ test("writePlan persists and readPlan recovers it", () => {
 	assert.deepEqual(recovered, plan);
 
 	rmSync(home, { recursive: true });
+});
+
+test("writePlan round-trips optional project + worktree fields", () => {
+	const home = makeTmpHome();
+	const plan: PlanData = {
+		goal: "Ship it",
+		project: "webapp",
+		worktree: "../webapp-auth",
+		tasks: [{ description: "Write code", status: "in_progress" }],
+		updated_at: "2026-06-18T12:00:00.000Z",
+	};
+	writePlan(home, "agent-fields", plan);
+	assert.deepEqual(readPlan(home, "agent-fields"), plan);
+	rmSync(home, { recursive: true });
+});
+
+test("readPlan rejects non-string project / worktree", () => {
+	const home = makeTmpHome();
+	const dir = join(home, "state", "sessions", "agent-bad");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(
+		join(dir, "plan.json"),
+		JSON.stringify({ goal: "g", project: 5, tasks: [] }),
+	);
+	assert.equal(readPlan(home, "agent-bad"), null);
+	rmSync(home, { recursive: true });
+});
+
+test("formatPlanSummary appends project @ worktree context", () => {
+	const summary = formatPlanSummary({
+		goal: "Port plan tool",
+		project: "webapp",
+		worktree: "../wt",
+		tasks: [{ description: "x", status: "in_progress" }],
+		updated_at: "2026-06-18T12:00:00.000Z",
+	});
+	assert.ok(summary.startsWith("[Plan] Port plan tool (webapp @ ../wt)"));
 });
 
 test("writePlan creates session directory if absent", () => {

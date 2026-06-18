@@ -13,6 +13,8 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import {
 	writePlan,
+	readPlan,
+	resolveSticky,
 	createPlanReminder,
 	type PlanData,
 	type PlanTask,
@@ -26,6 +28,12 @@ export { type PlanData, type PlanTask, readPlan, planPath } from "./plan.ts";
 
 const PlanParams = Type.Object({
 	goal: Type.String({ description: "Brief description of what you're working on." }),
+	project: Type.Optional(
+		Type.String({ description: "What project you are working on. Sticky: omit to keep the prior value, pass \"\" to clear." }),
+	),
+	worktree: Type.Optional(
+		Type.String({ description: "Name or path of the worktree you're working in. Sticky: omit to keep the prior value, pass \"\" to clear." }),
+	),
 	tasks: Type.Array(
 		Type.Object({
 			description: Type.String({ description: "What this task involves." }),
@@ -83,8 +91,17 @@ export function buildPlanToolKit(deps: PlanToolDeps, interval = 15): PlanToolKit
 				throw new Error("Session not initialized — plan tool called before session_start.");
 			}
 
+			// project/worktree are sticky ambient context, not part of the
+			// task-list churn: omitting them keeps the prior value; pass an
+			// empty string to clear.
+			const existing = readPlan(agentHome, agentId);
+			const project = resolveSticky(params.project, existing?.project);
+			const worktree = resolveSticky(params.worktree, existing?.worktree);
+
 			const plan: PlanData = {
 				goal: params.goal,
+				...(project ? { project } : {}),
+				...(worktree ? { worktree } : {}),
 				tasks: params.tasks as PlanTask[],
 				updated_at: new Date().toISOString(),
 			};
