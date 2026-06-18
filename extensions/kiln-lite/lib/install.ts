@@ -40,6 +40,7 @@ import { handoffTmuxClient } from "../exit-session.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
+import { createTimestampInjector, createPeriodicTimestamp } from "../timestamp.ts";
 import { loadCommandGates, applyCommandGates, type CompiledGate } from "../gates.ts";
 import {
 	readMeta,
@@ -84,6 +85,14 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	let toolIndexBlock = "";
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
+	const timestamps = createTimestampInjector();
+	// Periodic clock for long autonomous stretches: stamp the passage of time
+	// every ~20 tool calls or ~10 minutes, whichever comes first. Shares the
+	// input-hook clock so "since last" reads continuously.
+	const periodicTime = createPeriodicTimestamp(timestamps, {
+		everyCalls: 20,
+		everyMs: 10 * 60 * 1000,
+	});
 	let gates: CompiledGate[] = [];
 	let snapshotWriter: SnapshotWriter | null = null;
 
@@ -254,9 +263,20 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 	});
 
+	// --- input: append a wall-clock timestamp to user prose ---
+	// Gives the agent a sense of the current time + elapsed time between
+	// messages (pi only injects a static date once at session start). Prose
+	// only: command/skill/template inputs ("/...") and extension-injected
+	// messages pass through untouched so their parsing is never disturbed.
+	pi.on("input", async (event) => {
+		if (event.source === "extension") return { action: "continue" };
+		if (event.text.startsWith("/")) return { action: "continue" };
+		periodicTime.reset();
+		return { action: "transform", text: `${event.text}\n\n${timestamps.stamp()}` };
+	});
+
 	// --- tool_call: command gates from guardrails.yml ---
-	pi.on("tool_call", async (event, ctx) => {
-		if (gates.length === 0) return;
+	pi.on("tool_call", async (event, ctx) => {		if (gates.length === 0) return;
 		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx, {
 			agentId: state?.agentId ?? "agent",
 		});
@@ -299,11 +319,12 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		const stateBlock = sessionState ? await sessionState.maybeBuildSuffix(ctx) : "";
 		const planSuffix = planKit.maybeSuffix();
 		const inboxSuffix = watcher.midTurnSuffix();
+		const timeSuffix = periodicTime.maybeSuffix();
 
 		// State block first, then plan reminder, then notifications. State
 		// and plan are ambient framing; notifications are event-triggered.
 		// Stable order makes the LLM's mental model cleaner.
-		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix]);
+		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix, timeSuffix]);
 		if (suffix === null) return;
 
 		return {
