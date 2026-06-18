@@ -416,6 +416,7 @@ function updateSnapshotMeta(
 		pi_session_jsonl: ctx.sessionManager.getSessionFile() ?? existing?.pi_session_jsonl,
 		cwd: ctx.cwd ?? existing?.cwd,
 		model: ctx.model?.id ?? existing?.model,
+		parent: process.env.KL_PARENT || existing?.parent,
 		template: state.template ?? existing?.template,
 		created_at: existing?.created_at ?? nowIso,
 		last_seen: nowIso,

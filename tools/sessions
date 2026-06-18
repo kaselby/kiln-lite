@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # ---
 # name: sessions
-# description: List active agent sessions. Queries the daemon for live presence; falls back to tmux.
-# arguments: "[list|show <agent-id>] [--others]"
+# brief: List active agent sessions
+# description: |
+#   Queries the kiln-lite daemon for live presence information.
+#   Falls back to tmux session listing if the daemon is unreachable.
+# arguments: "[list|show <agent-id>] [--others] [--full]"
 # ---
 #
-# Subcommands:
-#   list [--others]        List active sessions (default). Self is included
-#                          with a `[self]` marker; pass --others to exclude.
-#   show <agent-id>        Detail view for one session.
+# Usage:
+#   sessions                      List active sessions (self marked [self])
+#   sessions list [--others]      Same; --others hides self
+#   sessions list --full          Add parent / project / worktree / plan
+#   sessions show <agent-id>      Detail view for one session
 #
-# Primary source of truth is the kiln-lite daemon's presence registry
-# (via kl-msg list-sessions). If the daemon is unreachable, falls back
-# to tmux session listing with the <word>-<word>-<word> heuristic filter.
-#
-# Requires env: $AGENT_HOME, $AGENT_ID.
+# Notes:
+#   Primary source is the daemon's presence registry (via kl-msg
+#   list-sessions). Falls back to tmux with <word>-<word>-<word>
+#   heuristic filter.
+#   Requires env: $AGENT_HOME, $AGENT_ID.
 
 set -euo pipefail
 
@@ -22,6 +26,8 @@ set -euo pipefail
 : "${AGENT_ID:?AGENT_ID not set — is kiln-lite loaded?}"
 
 INBOX_ROOT="${AGENT_HOME}/inbox"
+# Sibling agents live alongside this one: <agents_dir>/<agent_name>/.
+AGENTS_DIR="$(dirname "$AGENT_HOME")"
 
 die() { echo "sessions: $*" >&2; exit 1; }
 
@@ -29,7 +35,9 @@ usage() {
 	cat <<'EOF' >&2
 Usage:
   sessions                      list active sessions (self marked [self])
-  sessions list [--others]      same; --others hides self
+  sessions list [--others] [--full]
+                                same; --others hides self; --full adds
+                                parent / project / worktree / plan per session
   sessions show <agent-id>      detail view for one session
 EOF
 	exit 1
@@ -85,10 +93,51 @@ human_uptime() {
 	fi
 }
 
+# Resolve the agent home for a session from its agent_name (the daemon's
+# second column). Convention: <agents_dir>/<agent_name>/.
+home_for_agent() {
+	echo "${AGENTS_DIR}/$1"
+}
+
+# Emit the indented "full" detail block for one session: parent, project,
+# worktree, and a one-line plan summary. Best-effort — missing files/fields
+# are simply omitted. Requires jq.
+session_extras() {
+	local sid="$1" aname="$2"
+	local home meta plan
+	home="$(home_for_agent "$aname")"
+	meta="${home}/state/sessions/${sid}/meta.json"
+	plan="${home}/state/sessions/${sid}/plan.json"
+
+	if command -v jq >/dev/null 2>&1 && [ -f "$meta" ]; then
+		local parent
+		parent="$(jq -r '.parent // empty' "$meta" 2>/dev/null)"
+		[ -n "$parent" ] && printf '    parent:   %s\n' "$parent"
+	fi
+
+	if command -v jq >/dev/null 2>&1 && [ -f "$plan" ]; then
+		local goal project worktree done total inprog
+		goal="$(jq -r '.goal // empty' "$plan" 2>/dev/null)"
+		project="$(jq -r '.project // empty' "$plan" 2>/dev/null)"
+		worktree="$(jq -r '.worktree // empty' "$plan" 2>/dev/null)"
+		total="$(jq -r '.tasks | length' "$plan" 2>/dev/null)"
+		done="$(jq -r '[.tasks[] | select(.status=="done")] | length' "$plan" 2>/dev/null)"
+		inprog="$(jq -r '[.tasks[] | select(.status=="in_progress")] | length' "$plan" 2>/dev/null)"
+		[ -n "$project" ]  && printf '    project:  %s\n' "$project"
+		[ -n "$worktree" ] && printf '    worktree: %s\n' "$worktree"
+		if [ -n "$goal" ]; then
+			local prog="${done:-0}/${total:-0} done"
+			[ "${inprog:-0}" -gt 0 ] 2>/dev/null && prog="${prog}, ${inprog} in progress"
+			printf '    plan:     %s (%s)\n' "$goal" "$prog"
+		fi
+	fi
+}
+
 # --- daemon-backed listing ---
 
 daemon_list() {
 	local include_self="$1"
+	local full="${2:-0}"
 	local raw
 	if ! raw=$(kl-msg list-sessions 2>/dev/null); then
 		return 1
@@ -112,6 +161,7 @@ daemon_list() {
 		marker=""
 		[ "$sid" = "$AGENT_ID" ] && marker=" [self]"
 		printf '%-28s  %-8s  %-10s  %s%s\n' "$sid" "$status" "$uptime" "$unread" "$marker"
+		[ "$full" = 1 ] && session_extras "$sid" "$aname"
 		found=1
 	done <<< "$raw"
 	[ "$found" = 1 ] || echo "(no active sessions matched)"
@@ -121,6 +171,7 @@ daemon_list() {
 
 tmux_list() {
 	local include_self="$1"
+	local full="${2:-0}"
 	local sessions
 	if ! sessions="$(tmux list-sessions -F '#{session_name} #{session_created}' 2>/dev/null)"; then
 		echo "(no tmux server running)"
@@ -156,6 +207,7 @@ tmux_list() {
 		marker=""
 		[ "$sid" = "$AGENT_ID" ] && marker=" [self]"
 		printf '%-28s  %-8s  %-10s  %s%s\n' "$sid" "tmux" "$uptime" "$unread" "$marker"
+		[ "$full" = 1 ] && session_extras "$sid" "${sid%%-*}"
 		found=1
 	done <<< "$sessions"
 	[ "$found" = 1 ] || echo "(no kl sessions found)"
@@ -188,6 +240,7 @@ uptime:       $uptime
 inbox:        ${INBOX_ROOT}/${sid}
 unread:       $unread
 EOF
+		session_extras "$sid" "$aname"
 		found=1
 		break
 	done <<< "$raw"
@@ -225,17 +278,22 @@ EOF
 
 cmd_list() {
 	local include_self=1
-	case "${1:-}" in
-		--others) include_self=0 ;;
-		--all)    include_self=1 ;;  # back-compat no-op
-		"")       ;;
-		*) die "unknown flag: $1 (try --others)" ;;
-	esac
+	local full=0
+	while [ $# -gt 0 ]; do
+		case "${1:-}" in
+			--others)    include_self=0 ;;
+			--full|-v)   full=1 ;;
+			--all)       include_self=1 ;;  # back-compat no-op
+			"")          ;;
+			*) die "unknown flag: $1 (try --others, --full)" ;;
+		esac
+		shift
+	done
 	# Try daemon first, fall back to tmux.
 	if command -v kl-msg >/dev/null 2>&1; then
-		daemon_list "$include_self" && return 0
+		daemon_list "$include_self" "$full" && return 0
 	fi
-	tmux_list "$include_self"
+	tmux_list "$include_self" "$full"
 }
 
 cmd_show() {
@@ -256,6 +314,7 @@ main() {
 		show) shift; cmd_show "$@" ;;
 		--all) cmd_list "--all" ;;       # back-compat no-op
 		--others) cmd_list "--others" ;;
+		--full|-v) cmd_list "--full" ;;
 		-h|--help|help) usage ;;
 		*) die "unknown subcommand: $sub (try -h)" ;;
 	esac

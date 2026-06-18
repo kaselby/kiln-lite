@@ -15,12 +15,16 @@
 #   automatically — no need to set AGENT_HOME or pass a name.
 #
 # Subcommands:
-#   kl [run] [<name>] [--detach] [--prompt-file FILE] [pi-args...]
+#   kl [run] [<name>] [--detach] [--prompt-file FILE] [--parent NAME] [pi-args...]
 #                           Spawn a new session (default).
 #                           <name>: optional agent name (resolved against
 #                             $KL_AGENTS_DIR). If omitted, uses AGENT_HOME or
 #                             the default starter.
 #                           --detach (-d): don't attach; print agent-id to stdout.
+#                           --parent NAME: record the agent-id that launched this
+#                             session (e.g. your own $AGENT_ID when spawning a
+#                             peer). Stored in the new session's meta.json and
+#                             shown by `sessions --full`. Optional.
 #                           --prompt-file FILE: read initial prompt from FILE and
 #                             pass it to pi as --prompt. Use this instead of
 #                             `kl --prompt "..."` for any prompt that contains
@@ -326,6 +330,7 @@ cmd_run() {
     local pi_args=()
     local prompt_file=""
     local template=""
+    local parent=""
     local -a template_vars=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -353,6 +358,14 @@ cmd_run() {
                 ;;
             --prompt-file=*)
                 prompt_file="${1#--prompt-file=}"
+                ;;
+            --parent)
+                shift
+                [ $# -ge 1 ] || die "--parent requires an agent-name argument"
+                parent="$1"
+                ;;
+            --parent=*)
+                parent="${1#--parent=}"
                 ;;
             --) shift; pi_args+=("$@"); break ;;
             *) pi_args+=("$1") ;;
@@ -439,6 +452,9 @@ cmd_run() {
     )
     if [ -n "$template" ]; then
         tmux_env_args+=(-e "KL_TEMPLATE=$template")
+    fi
+    if [ -n "$parent" ]; then
+        tmux_env_args+=(-e "KL_PARENT=$parent")
     fi
     for var in ${template_vars[@]+"${template_vars[@]}"}; do
         local key="${var%%=*}"
