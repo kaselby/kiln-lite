@@ -203,24 +203,23 @@ export async function handleSendDirect(
     if (!req) return proto.error(msg.ref!, "send_direct requires requester identity");
     ensureSession(daemon, req);
 
-    // Resolve recipient inbox: live presence first, then known-sessions
-    // fallback, then derive from sender's agent_home as a last resort.
-    // (Last-resort derivation assumes single-home; safe for kiln-lite's
-    // current shape but gracefully degrades when multi-home lands.)
+    // Direct messages go only to LIVE sessions. We resolve the recipient's
+    // inbox from the presence registry alone — no known-sessions fallback, no
+    // deriving from the sender's own home. An offline or never-registered
+    // recipient is an honest failure the sender sees, not a write parked
+    // somewhere nobody is watching. (The old fallback chain ended at the
+    // SENDER's inbox root, which was correct only under the retired
+    // single-home layout — under multi-home it silently misdelivered a
+    // peer's mail into the sender's own tree.)
     const liveRecord = daemon.state.presence.get(to);
-    const knownRecord = daemon.state.knownSessions.lookup(to);
-    const senderRecord = daemon.state.presence.get(req.session);
-    const inbox_root =
-        liveRecord?.inbox_path
-        ?? knownRecord?.inbox_path
-        ?? senderRecord?.inbox_path
-        ?? req.inbox_path;
+    const inbox_root = liveRecord?.inbox_path;
 
     if (!inbox_root) {
         return proto.error(
             msg.ref!,
-            `cannot resolve inbox for '${to}' — recipient never registered and no fallback available`,
-            "unknown_recipient",
+            `'${to}' is not a live session — direct messages can only be sent to ` +
+                `currently-running sessions. (Use 'sessions list' to see who's live.)`,
+            "recipient_not_live",
         );
     }
 
