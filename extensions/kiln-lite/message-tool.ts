@@ -61,7 +61,10 @@ const MESSAGE_DESCRIPTION =
 	"Send messages to agents and manage channel subscriptions.\n\n" +
 	"Actions:\n" +
 	"- **send**: Send a message to an agent (via `to`) or broadcast to a channel " +
-	"(via `channel`). Requires `summary` and `body`.\n" +
+	"(via `channel`). Requires `summary` and `body`. A direct message (`to`) is " +
+	"only delivered to a currently-live session; messaging an offline or unknown " +
+	"agent fails. Channel broadcasts reach offline subscribers too (parked in " +
+	"their inbox).\n" +
 	"- **subscribe**: Subscribe to a channel to receive all messages sent to it.\n" +
 	"- **unsubscribe**: Unsubscribe from a channel.";
 
