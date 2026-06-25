@@ -88,7 +88,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	const timestamps = createTimestampInjector();
 	// Periodic clock for long autonomous stretches: stamp the passage of time
 	// every ~20 tool calls or ~10 minutes, whichever comes first. Shares the
-	// input-hook clock so "since last" reads continuously.
+	// per-turn clock so "since last" reads continuously.
 	const periodicTime = createPeriodicTimestamp(timestamps, {
 		everyCalls: 20,
 		everyMs: 10 * 60 * 1000,
@@ -263,16 +263,24 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 	});
 
-	// --- input: append a wall-clock timestamp to user prose ---
-	// Gives the agent a sense of the current time + elapsed time between
-	// messages (pi only injects a static date once at session start). Prose
-	// only: command/skill/template inputs ("/...") and extension-injected
-	// messages pass through untouched so their parsing is never disturbed.
-	pi.on("input", async (event) => {
-		if (event.source === "extension") return { action: "continue" };
-		if (event.text.startsWith("/")) return { action: "continue" };
+	// --- before_agent_start: inject the per-turn wall-clock timestamp ---
+	// One `display:false` custom message per user turn carrying the `[time: ...]`
+	// line. pi persists it and feeds it to the model (custom → user), so the
+	// model sees the passage of time across the whole conversation — but it's
+	// hidden from the UI and is a separate message, never the user's own input,
+	// so it never renders as an artifact or leaks into the input box on
+	// rewind/cancel. (Replaces the old `input` transform, which baked the line
+	// into the stored user message itself.) Also restarts the autonomous-work
+	// cadence since a user turn just arrived.
+	pi.on("before_agent_start", async () => {
 		periodicTime.reset();
-		return { action: "transform", text: `${event.text}\n\n${timestamps.stamp()}` };
+		return {
+			message: {
+				customType: "kiln-timestamp",
+				content: `<system-reminder>${timestamps.stamp()}</system-reminder>`,
+				display: false,
+			},
+		};
 	});
 
 	// --- tool_call: command gates from guardrails.yml ---
