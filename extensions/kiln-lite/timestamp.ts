@@ -2,10 +2,14 @@
  * Message timestamping — gives the agent an ambient sense of wall-clock
  * time and how much of it has passed between user messages.
  *
- * Pure module — no pi SDK dependencies. The `input`-event wiring lives in
- * lib/install.ts and uses createTimestampInjector() to append a single
- * `[time: ...]` line to each user message (prose only; command/skill/template
- * inputs are left untouched by the caller).
+ * Pure module — no pi SDK dependencies. The wiring lives in lib/install.ts:
+ * a `before_agent_start` handler injects a single `display:false` custom
+ * message per user turn whose content is the `[time: ...]` line from
+ * createTimestampInjector(). pi persists that message and feeds it to the
+ * model (convertToLlm maps custom → user), so the model sees the passage of
+ * time across the whole conversation — but it is hidden from the UI and is a
+ * separate message, never the user's own input, so it never shows as an
+ * artifact or leaks into the input box on rewind/cancel.
  *
  * Pi injects a static `Current date: YYYY-MM-DD` once at session start and
  * never updates it — no time of day, no weekday, no elapsed-time signal.
