@@ -10,12 +10,61 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 export interface ContinuationConfig {
+	/**
+	 * Orienting context for the continuation, injected into its system prompt
+	 * (via `--append-system-prompt`) rather than sent as a turn-1 user message.
+	 * Keeping it out of the conversation means the continuation treats it as
+	 * background, not a fresh directive.
+	 */
 	handoff: string;
 	template?: string;
+	/**
+	 * When true, the continuation is started unattended: a fixed turn-1 ping is
+	 * sent so its agent loop kicks off on its own. When false (the default),
+	 * no startup prompt is sent — the continuation spawns idle with the handoff
+	 * as context and waits for the human who is handed the terminal.
+	 */
+	autonomous?: boolean;
 }
 
 /** Runs a tmux subcommand and returns its stdout. Injectable for tests. */
 export type TmuxRunner = (args: string[]) => string;
+
+/**
+ * Turn-1 message sent to an autonomous continuation so its agent loop starts
+ * without a human. The substantive context lives in the system prompt (the
+ * handoff); this is only a neutral kick-off, deliberately free of fresh
+ * directives so the continuation resumes the prior work rather than treating
+ * the ping as a new task.
+ */
+export const CONTINUATION_STARTUP_PING =
+	"You are an autonomous continuation of a prior session. Your orienting context — what the " +
+	"prior session was doing and where it left off — is in your system prompt. Pick up from there " +
+	"and continue the work; no new instructions are coming.";
+
+/**
+ * Build the `kl --detach` argument list for a continuation. Pure (no I/O) so
+ * the launch shape is unit-testable.
+ *
+ * The handoff rides `--append-system-prompt` so it lands as orienting context
+ * in the continuation's system prompt rather than a turn-1 user message. When
+ * `autonomous` is set, a fixed startup ping is appended as a positional
+ * message so the loop kicks off unattended; otherwise no startup prompt is
+ * sent and the session spawns idle for the human handed the terminal.
+ */
+export function buildContinuationArgs(config: ContinuationConfig): string[] {
+	const args = ["--detach"];
+	if (config.template) {
+		args.push("--template", config.template);
+	}
+	if (config.handoff) {
+		args.push("--append-system-prompt", config.handoff);
+	}
+	if (config.autonomous) {
+		args.push(CONTINUATION_STARTUP_PING);
+	}
+	return args;
+}
 
 const defaultTmuxRunner: TmuxRunner = (args) =>
 	execFileSync("tmux", args, { timeout: 2000 }).toString();
