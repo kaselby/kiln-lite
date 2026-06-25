@@ -17,9 +17,8 @@
  * the extraction preserves.
  */
 
-import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { spawn, execFileSync } from "node:child_process";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -36,7 +35,7 @@ import { ensureScaffold } from "../bootstrap.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildExitSessionTool } from "../exit-session-tool.ts";
 import type { ContinuationConfig } from "../exit-session.ts";
-import { handoffTmuxClient } from "../exit-session.ts";
+import { handoffTmuxClient, buildContinuationArgs } from "../exit-session.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
@@ -500,10 +499,23 @@ function resolvePiPaths(): { readme: string; docs: string; examples: string } {
 }
 
 /**
- * Spawn a continuation session via `kl --detach`. Writes the handoff to a
- * temp file (safe for arbitrary content — backticks, quotes, newlines) and
- * passes it via --prompt-file. kl reads the file synchronously before
- * launching tmux, so cleanup is safe immediately after.
+ * Spawn a continuation session via `kl --detach`.
+ *
+ * The handoff is passed directly as the `--append-system-prompt` value (not
+ * via a temp file): kl forwards it to pi through tmux's execvp path, so it
+ * survives as a single argv element with no shell re-interpretation, however
+ * weird its contents (backticks, quotes, newlines). pi's prompt loader treats
+ * a value that isn't an existing file path as literal text, so multi-line
+ * handoff content lands as orienting context in the continuation's system
+ * prompt — never a turn-1 user message. (A temp file would race here: pi reads
+ * `--append-system-prompt` lazily at startup, after this function returns, so
+ * any cleanup we did would delete the file out from under it.)
+ *
+ * When `config.autonomous` is set, a fixed turn-1 ping is appended as a
+ * positional message so the continuation's agent loop kicks off unattended.
+ * Otherwise no startup prompt is sent: the session spawns idle with the
+ * handoff as context and waits for the human handed the terminal. The launch
+ * arg shape is built by `buildContinuationArgs` (pure, unit-tested).
  *
  * `priorAgentId` is this (exiting) session's id. If a tmux client is attached
  * to it — i.e. someone is watching interactively — the client is handed off
@@ -517,25 +529,7 @@ async function spawnContinuation(
 	priorAgentId: string | undefined,
 	warn: (msg: string) => void,
 ): Promise<void> {
-	const args = ["--detach"];
-
-	if (config.template) {
-		args.push("--template", config.template);
-	}
-
-	let tmpFile: string | null = null;
-	if (config.handoff) {
-		tmpFile = join(tmpdir(), `kl-handoff-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.md`);
-		try {
-			writeFileSync(tmpFile, config.handoff);
-		} catch (err) {
-			warn(`kiln-lite: failed to write handoff file: ${(err as Error).message}`);
-			tmpFile = null;
-		}
-		if (tmpFile) {
-			args.push("--prompt-file", tmpFile);
-		}
-	}
+	const args = buildContinuationArgs(config);
 
 	try {
 		const stdout = execFileSync("kl", args, {
@@ -552,13 +546,5 @@ async function spawnContinuation(
 		}
 	} catch (err) {
 		warn(`kiln-lite: failed to spawn continuation: ${(err as Error).message}`);
-	} finally {
-		if (tmpFile) {
-			try {
-				unlinkSync(tmpFile);
-			} catch {
-				// temp file cleanup is best-effort
-			}
-		}
 	}
 }

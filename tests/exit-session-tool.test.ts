@@ -6,6 +6,10 @@ import { tmpdir, homedir } from "node:os";
 
 import { resolveHandoff } from "../extensions/kiln-lite/exit-session.ts";
 import { handoffTmuxClient } from "../extensions/kiln-lite/exit-session.ts";
+import {
+	buildContinuationArgs,
+	CONTINUATION_STARTUP_PING,
+} from "../extensions/kiln-lite/exit-session.ts";
 
 function makeTmpDir(): string {
 	const dir = join(tmpdir(), `exit-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -153,4 +157,66 @@ test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", (
 	assert.equal(moved, 0);
 	assert.equal(warnings.length, 1);
 	assert.match(warnings[0], /handoff failed/);
+});
+
+// --- buildContinuationArgs ---
+
+test("buildContinuationArgs passes the handoff via --append-system-prompt, not a turn-1 prompt", () => {
+	const args = buildContinuationArgs({ handoff: "orienting context here" });
+	assert.deepEqual(args, ["--detach", "--append-system-prompt", "orienting context here"]);
+	// Never --prompt-file (the old turn-1 mechanism) and no trailing positional.
+	assert.ok(!args.includes("--prompt-file"));
+});
+
+test("buildContinuationArgs omits the handoff flag when handoff is empty", () => {
+	assert.deepEqual(buildContinuationArgs({ handoff: "" }), ["--detach"]);
+});
+
+test("buildContinuationArgs default (autonomous unset) sends no startup ping", () => {
+	const args = buildContinuationArgs({ handoff: "ctx" });
+	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
+	assert.equal(args.at(-1), "ctx"); // ends at the handoff value, no extra positional
+});
+
+test("buildContinuationArgs autonomous:false sends no startup ping", () => {
+	const args = buildContinuationArgs({ handoff: "ctx", autonomous: false });
+	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
+});
+
+test("buildContinuationArgs autonomous:true appends the startup ping as the final positional", () => {
+	const args = buildContinuationArgs({ handoff: "ctx", autonomous: true });
+	assert.deepEqual(args, [
+		"--detach",
+		"--append-system-prompt",
+		"ctx",
+		CONTINUATION_STARTUP_PING,
+	]);
+	// The ping is the trailing arg → pi treats it as the turn-1 message.
+	assert.equal(args.at(-1), CONTINUATION_STARTUP_PING);
+});
+
+test("buildContinuationArgs threads --template through before the handoff", () => {
+	const args = buildContinuationArgs({ handoff: "ctx", template: "worker", autonomous: true });
+	assert.deepEqual(args, [
+		"--detach",
+		"--template",
+		"worker",
+		"--append-system-prompt",
+		"ctx",
+		CONTINUATION_STARTUP_PING,
+	]);
+});
+
+test("buildContinuationArgs autonomous-only (no handoff) still sends the ping", () => {
+	assert.deepEqual(buildContinuationArgs({ handoff: "", autonomous: true }), [
+		"--detach",
+		CONTINUATION_STARTUP_PING,
+	]);
+});
+
+test("CONTINUATION_STARTUP_PING is a neutral kick-off, not a fresh directive", () => {
+	// Guards the design intent: the ping points at the system prompt and tells
+	// the continuation to resume, rather than handing it a new task.
+	assert.match(CONTINUATION_STARTUP_PING, /system prompt/);
+	assert.match(CONTINUATION_STARTUP_PING, /continue the work/);
 });

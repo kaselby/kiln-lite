@@ -9,7 +9,13 @@
  *   - **continue** (default false): spawn a new session after this one shuts
  *     down. The continuation inherits the agent home and template.
  *   - **handoff**: context for the continuation — raw text, or a file path
- *     whose contents are read. Ignored unless continue is true.
+ *     whose contents are read. Injected into the continuation's system prompt
+ *     as orienting context (not a turn-1 user message). Ignored unless
+ *     continue is true.
+ *   - **autonomous** (default false): when true, the continuation is started
+ *     unattended with a fixed turn-1 ping so its loop kicks off on its own.
+ *     When false, it spawns idle with the handoff as context and waits for the
+ *     human handed the terminal. Ignored unless continue is true.
  *
  * The tool-call equivalent of the `/exit` slash command, plus continuation
  * support that slash commands don't expose.
@@ -44,8 +50,18 @@ const ExitSessionParams = Type.Object({
 	handoff: Type.Optional(
 		Type.String({
 			description:
-				"Context to pass to the continuation session as its initial prompt. " +
+				"Context to pass to the continuation session, injected into its system prompt as " +
+				"orienting context (not a turn-1 user message). " +
 				"Can be raw text or a file path (absolute, or ~/…) whose contents will be read. " +
+				"Only used when continue is true.",
+		}),
+	),
+	autonomous: Type.Optional(
+		Type.Boolean({
+			description:
+				"When true, start the continuation unattended: a fixed turn-1 ping is sent so its " +
+				"agent loop begins on its own. When false (default), the continuation spawns idle " +
+				"with the handoff as context and waits for the human handed the terminal. " +
 				"Only used when continue is true.",
 		}),
 	),
@@ -94,6 +110,7 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps) {
 				deps.setContinuation({
 					handoff: handoffText,
 					template: deps.getTemplate(),
+					autonomous: params.autonomous ?? false,
 				});
 			}
 
