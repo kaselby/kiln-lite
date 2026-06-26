@@ -12,7 +12,7 @@ Concretely, installing kiln-lite gives you:
 - **built-in tools**: `plan` (externalized task breakdown with periodic reminders), `exit_session` (autonomous exit with self-continuation and handoff), and `message` (inter-agent messaging);
 - a **Node daemon** that routes messages between sessions (direct messages and channel pub/sub) and autostarts on first use;
 - a **multi-agent home layout** under `~/.kl/agents/<name>/` — each agent gets its own memory, tools, skills, sessions, inboxes;
-- a `kl` **launcher** that wraps Pi in a named tmux session so every agent has a stable address (`kl new`, `kl <name>`, `kl agents`);
+- a `kl` **launcher** that wraps Pi in a named tmux session so every agent has a stable address (`kl new`, `kl run <name>`, `kl agents`);
 - **bundled shell tools and the `messaging` skill**, installed into each home and editable in place;
 - a **`kl-msg` CLI** for scripting messaging from the shell or agent prompt.
 
@@ -114,7 +114,7 @@ kiln-lite/
 
 ## Lifecycle in one paragraph
 
-`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), migrates any legacy single-agent layout, then scaffolds a starter agent at `~/.kl/agents/agent/` (or refreshes its bundled skills and tools if it already exists). Add more agents with `kl new <name>`. `kl` (or `kl <name>`) spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session exits via `/exit` (or the `exit_session` tool), the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive). If the exit requested self-continuation, a new session is spawned with the handoff text as its initial prompt.
+`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), migrates any legacy single-agent layout, then scaffolds a starter agent at `~/.kl/agents/agent/` (or refreshes its bundled skills and tools if it already exists). Add more agents with `kl new <name>`. `kl` (or `kl run <name>`) spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session exits via `/exit` (or the `exit_session` tool), the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive). If the exit requested self-continuation, a new session is spawned with the handoff text as its initial prompt.
 
 ## Where to go next
 
