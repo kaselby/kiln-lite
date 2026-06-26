@@ -4,17 +4,20 @@
  * The pi-dependent tool wrapper lives in exit-session-tool.ts.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 
 export interface ContinuationConfig {
 	/**
-	 * Orienting context for the continuation, injected into its system prompt
-	 * (via `--append-system-prompt`) rather than sent as a turn-1 user message.
-	 * Keeping it out of the conversation means the continuation treats it as
-	 * background, not a fresh directive.
+	 * Resolved handoff *content* (text). Orienting context for the
+	 * continuation, injected into its system prompt (via
+	 * `--append-system-prompt`) rather than sent as a turn-1 user message, so
+	 * the continuation treats it as background, not a fresh directive. The
+	 * content is persisted to a file at spawn time ({@link persistHandoff}) and
+	 * the file path — not this content — is what reaches pi.
 	 */
 	handoff: string;
 	template?: string;
@@ -42,28 +45,77 @@ export const CONTINUATION_STARTUP_PING =
 	"prior session was doing and where it left off — is in your system prompt. Pick up from there " +
 	"and continue the work; no new instructions are coming.";
 
+/** Options for {@link buildContinuationArgs}. */
+export interface ContinuationArgsOptions {
+	/**
+	 * Path to a file holding the handoff content. Passed as the
+	 * `--append-system-prompt` value — pi reads the file itself (it treats an
+	 * existing path as a file, anything else as literal text). Passing a path
+	 * rather than the content keeps the argv element short, so a large handoff
+	 * never trips tmux's ~16 KB command-length cap (which silently aborts
+	 * `tmux new-session` with "command too long").
+	 */
+	handoffPath?: string;
+	template?: string;
+	autonomous?: boolean;
+}
+
 /**
  * Build the `kl --detach` argument list for a continuation. Pure (no I/O) so
  * the launch shape is unit-testable.
  *
- * The handoff rides `--append-system-prompt` so it lands as orienting context
- * in the continuation's system prompt rather than a turn-1 user message. When
- * `autonomous` is set, a fixed startup ping is appended as a positional
- * message so the loop kicks off unattended; otherwise no startup prompt is
- * sent and the session spawns idle for the human handed the terminal.
+ * The handoff file path rides `--append-system-prompt` so its contents land as
+ * orienting context in the continuation's system prompt rather than a turn-1
+ * user message. When `autonomous` is set, a fixed startup ping is appended as
+ * a positional message so the loop kicks off unattended; otherwise no startup
+ * prompt is sent and the session spawns idle for the human handed the terminal.
  */
-export function buildContinuationArgs(config: ContinuationConfig): string[] {
+export function buildContinuationArgs(opts: ContinuationArgsOptions): string[] {
 	const args = ["--detach"];
-	if (config.template) {
-		args.push("--template", config.template);
+	if (opts.template) {
+		args.push("--template", opts.template);
 	}
-	if (config.handoff) {
-		args.push("--append-system-prompt", config.handoff);
+	if (opts.handoffPath) {
+		args.push("--append-system-prompt", opts.handoffPath);
 	}
-	if (config.autonomous) {
+	if (opts.autonomous) {
 		args.push(CONTINUATION_STARTUP_PING);
 	}
 	return args;
+}
+
+/**
+ * Filesystem-safe handoff file name: `<agentName>-<timestamp>-<shortuuid>.md`.
+ * Pure (now/uuid injectable) so it's unit-testable. The ISO timestamp's colons
+ * and dots are swapped for dashes so the name is portable across filesystems.
+ */
+export function handoffFileName(
+	agentName: string,
+	when: Date = new Date(),
+	uuid: string = randomUUID(),
+): string {
+	const stamp = when.toISOString().replace(/[:.]/g, "-");
+	return `${agentName}-${stamp}-${uuid.slice(0, 8)}.md`;
+}
+
+/**
+ * Persist handoff content to a durable file under `<agentHome>/handoffs/` and
+ * return its absolute path. Every continuation handoff is captured here — both
+ * to give the continuation a short path to pass to pi (see
+ * {@link buildContinuationArgs}) and to leave a durable record of what each
+ * session handed off. The file is never cleaned up by us, so pi's lazy read of
+ * `--append-system-prompt` at startup can't race a deletion.
+ */
+export function persistHandoff(
+	agentHome: string,
+	agentName: string,
+	content: string,
+	opts?: { when?: Date; uuid?: string },
+): string {
+	const path = join(agentHome, "handoffs", handoffFileName(agentName, opts?.when, opts?.uuid));
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, content, "utf8");
+	return path;
 }
 
 const defaultTmuxRunner: TmuxRunner = (args) =>

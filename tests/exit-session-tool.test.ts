@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
@@ -8,6 +8,8 @@ import { resolveHandoff } from "../extensions/kiln-lite/exit-session.ts";
 import { handoffTmuxClient } from "../extensions/kiln-lite/exit-session.ts";
 import {
 	buildContinuationArgs,
+	handoffFileName,
+	persistHandoff,
 	CONTINUATION_STARTUP_PING,
 } from "../extensions/kiln-lite/exit-session.ts";
 
@@ -161,34 +163,34 @@ test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", (
 
 // --- buildContinuationArgs ---
 
-test("buildContinuationArgs passes the handoff via --append-system-prompt, not a turn-1 prompt", () => {
-	const args = buildContinuationArgs({ handoff: "orienting context here" });
-	assert.deepEqual(args, ["--detach", "--append-system-prompt", "orienting context here"]);
+test("buildContinuationArgs passes the handoff PATH via --append-system-prompt, not a turn-1 prompt", () => {
+	const args = buildContinuationArgs({ handoffPath: "/home/scout/handoffs/scout-x.md" });
+	assert.deepEqual(args, ["--detach", "--append-system-prompt", "/home/scout/handoffs/scout-x.md"]);
 	// Never --prompt-file (the old turn-1 mechanism) and no trailing positional.
 	assert.ok(!args.includes("--prompt-file"));
 });
 
-test("buildContinuationArgs omits the handoff flag when handoff is empty", () => {
-	assert.deepEqual(buildContinuationArgs({ handoff: "" }), ["--detach"]);
+test("buildContinuationArgs omits the handoff flag when no path is given", () => {
+	assert.deepEqual(buildContinuationArgs({}), ["--detach"]);
 });
 
 test("buildContinuationArgs default (autonomous unset) sends no startup ping", () => {
-	const args = buildContinuationArgs({ handoff: "ctx" });
+	const args = buildContinuationArgs({ handoffPath: "/h/p.md" });
 	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
-	assert.equal(args.at(-1), "ctx"); // ends at the handoff value, no extra positional
+	assert.equal(args.at(-1), "/h/p.md"); // ends at the handoff path, no extra positional
 });
 
 test("buildContinuationArgs autonomous:false sends no startup ping", () => {
-	const args = buildContinuationArgs({ handoff: "ctx", autonomous: false });
+	const args = buildContinuationArgs({ handoffPath: "/h/p.md", autonomous: false });
 	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
 });
 
 test("buildContinuationArgs autonomous:true appends the startup ping as the final positional", () => {
-	const args = buildContinuationArgs({ handoff: "ctx", autonomous: true });
+	const args = buildContinuationArgs({ handoffPath: "/h/p.md", autonomous: true });
 	assert.deepEqual(args, [
 		"--detach",
 		"--append-system-prompt",
-		"ctx",
+		"/h/p.md",
 		CONTINUATION_STARTUP_PING,
 	]);
 	// The ping is the trailing arg → pi treats it as the turn-1 message.
@@ -196,22 +198,60 @@ test("buildContinuationArgs autonomous:true appends the startup ping as the fina
 });
 
 test("buildContinuationArgs threads --template through before the handoff", () => {
-	const args = buildContinuationArgs({ handoff: "ctx", template: "worker", autonomous: true });
+	const args = buildContinuationArgs({
+		handoffPath: "/h/p.md",
+		template: "worker",
+		autonomous: true,
+	});
 	assert.deepEqual(args, [
 		"--detach",
 		"--template",
 		"worker",
 		"--append-system-prompt",
-		"ctx",
+		"/h/p.md",
 		CONTINUATION_STARTUP_PING,
 	]);
 });
 
-test("buildContinuationArgs autonomous-only (no handoff) still sends the ping", () => {
-	assert.deepEqual(buildContinuationArgs({ handoff: "", autonomous: true }), [
+test("buildContinuationArgs autonomous-only (no handoff path) still sends the ping", () => {
+	assert.deepEqual(buildContinuationArgs({ autonomous: true }), [
 		"--detach",
 		CONTINUATION_STARTUP_PING,
 	]);
+});
+
+// --- handoffFileName / persistHandoff ---
+
+test("handoffFileName is filesystem-safe: agentName-timestamp-shortuuid.md", () => {
+	const when = new Date("2026-06-26T14:58:03.123Z");
+	const name = handoffFileName("scout", when, "a1b2c3d4-e5f6-7890-abcd-ef0123456789");
+	assert.equal(name, "scout-2026-06-26T14-58-03-123Z-a1b2c3d4.md");
+	// No colons or dots that would be awkward across filesystems (except the .md ext).
+	assert.ok(!name.slice(0, -3).includes(":"));
+	assert.ok(!name.slice(0, -3).includes("."));
+});
+
+test("handoffFileName uses distinct names across calls (uuid component)", () => {
+	const when = new Date("2026-06-26T14:58:03.123Z");
+	assert.notEqual(handoffFileName("scout", when), handoffFileName("scout", when));
+});
+
+test("persistHandoff writes content under <agentHome>/handoffs/ and returns its path", () => {
+	const home = makeTmpDir();
+	try {
+		const content = "line one\nline two with `backticks` and $vars\n".repeat(2000); // ~80KB, well over tmux's ~16KB cap
+		const path = persistHandoff(home, "scout", content, {
+			when: new Date("2026-06-26T14:58:03.123Z"),
+			uuid: "a1b2c3d4-0000-0000-0000-000000000000",
+		});
+		assert.equal(path, join(home, "handoffs", "scout-2026-06-26T14-58-03-123Z-a1b2c3d4.md"));
+		assert.equal(readFileSync(path, "utf8"), content);
+		// The PATH we pass to pi is short even though the content is huge — that's
+		// the whole point: it never trips tmux's command-length cap.
+		assert.ok(path.length < 1000);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
 });
 
 test("CONTINUATION_STARTUP_PING is a neutral kick-off, not a fresh directive", () => {

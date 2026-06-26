@@ -18,7 +18,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -35,7 +35,7 @@ import { ensureScaffold } from "../bootstrap.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildExitSessionTool } from "../exit-session-tool.ts";
 import type { ContinuationConfig } from "../exit-session.ts";
-import { handoffTmuxClient, buildContinuationArgs } from "../exit-session.ts";
+import { handoffTmuxClient, buildContinuationArgs, persistHandoff } from "../exit-session.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
@@ -501,15 +501,18 @@ function resolvePiPaths(): { readme: string; docs: string; examples: string } {
 /**
  * Spawn a continuation session via `kl --detach`.
  *
- * The handoff is passed directly as the `--append-system-prompt` value (not
- * via a temp file): kl forwards it to pi through tmux's execvp path, so it
- * survives as a single argv element with no shell re-interpretation, however
- * weird its contents (backticks, quotes, newlines). pi's prompt loader treats
- * a value that isn't an existing file path as literal text, so multi-line
- * handoff content lands as orienting context in the continuation's system
- * prompt — never a turn-1 user message. (A temp file would race here: pi reads
- * `--append-system-prompt` lazily at startup, after this function returns, so
- * any cleanup we did would delete the file out from under it.)
+ * The handoff content is first persisted to a durable file under
+ * `<agentHome>/handoffs/` and that file *path* is passed as the
+ * `--append-system-prompt` value. kl forwards it to pi through tmux's execvp
+ * path; pi treats an existing path as a file and reads its contents lazily at
+ * startup, so the handoff lands as orienting context in the continuation's
+ * system prompt — never a turn-1 user message.
+ *
+ * Passing a path rather than the content is what keeps this robust for large
+ * handoffs: `tmux new-session` aborts with "command too long" once the total
+ * command string exceeds ~16 KB (well under ARG_MAX), so inlining a multi-KB
+ * handoff silently dropped the continuation. A short path never trips that
+ * cap. The file is never deleted by us, so pi's lazy read can't race a cleanup.
  *
  * When `config.autonomous` is set, a fixed turn-1 ping is appended as a
  * positional message so the continuation's agent loop kicks off unattended.
@@ -529,7 +532,21 @@ async function spawnContinuation(
 	priorAgentId: string | undefined,
 	warn: (msg: string) => void,
 ): Promise<void> {
-	const args = buildContinuationArgs(config);
+	let handoffPath: string | undefined;
+	if (config.handoff) {
+		try {
+			handoffPath = persistHandoff(agentHome, basename(agentHome), config.handoff);
+		} catch (err) {
+			warn(
+				`kiln-lite: failed to persist handoff (${(err as Error).message}) — continuation will spawn without it`,
+			);
+		}
+	}
+	const args = buildContinuationArgs({
+		handoffPath,
+		template: config.template,
+		autonomous: config.autonomous,
+	});
 
 	try {
 		const stdout = execFileSync("kl", args, {
