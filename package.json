@@ -1,6 +1,6 @@
 {
   "name": "kiln-lite",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Kiln/Beth-style infrastructure for Pi: config-driven lifecycle plumbing, file-based messaging, and shell tool conventions.",
   "license": "MIT",
   "private": true,

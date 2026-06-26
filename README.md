@@ -1,296 +1,527 @@
 # kiln-lite
 
-A Pi package that adds persistent-agent infrastructure to Pi sessions: stable
-identity across `/resume`, a composed system prompt driven by `agent.yml`,
-shell tool conventions, a bundled `messaging` skill, and inter-session
-messaging (direct + channel pub/sub) through a lightweight autostart daemon.
+**kiln-lite turns [Pi](https://github.com/earendil-works/pi) sessions into persistent, addressable agents.**
 
-> **Full docs live under [`docs/`](./docs/index.md).** Start with
-> [`docs/overview.md`](./docs/overview.md) for the shape; drill into topic docs
-> (`home.md`, `daemon.md`, `messaging.md`, …) for depth. This README is
-> quick-start only.
+Pi is a coding agent that runs in your terminal: you talk to a model, it
+reads files, runs commands, and edits code. Out of the box, every Pi session
+is anonymous and starts cold — no stable name, no memory of past sessions, no
+way for two sessions to talk to each other.
 
-## What it gives you
+kiln-lite is a Pi *package* (an extension plus a couple of CLIs) that layers
+the missing infrastructure on top, without replacing anything Pi already does:
 
-- **Config-driven lifecycle.** One `agent.yml` in `$AGENT_HOME` controls system
-  prompt composition, context injection, startup commands, and the cleanup turn.
-- **Stable session identity.** Every Pi session gets a deterministic agent ID
-  (`<name>-<adj>-<noun>`, seeded from the session UUID) that survives `/resume`.
-- **Dynamic system prompt.** `context_injection` entries are labelled and composed
-  into the prompt per turn. Entries marked `dynamic: true` are re-read every turn.
-- **Shell tool conventions.** Scripts in `$AGENT_HOME/tools/` are plain
-  executables with a YAML header. kiln-lite discovers them at session start
-  and injects a compact tool index into the system prompt; the agent invokes
-  them through Pi's built-in `bash` tool (the tools dir is prepended to
-  `PATH`, so bare names work). Bundled tools are copied there by
-  `bootstrap.sh` — edit or replace them freely; `--refresh-tools` recopies
-  from the package.
-- **File-based messaging.** Each session has an inbox at
-  `$AGENT_HOME/inbox/<agent-id>/`. Peers drop markdown files in; the extension
-  watches for new arrivals and delivers them as user turns (if idle) or as
-  `[INBOX: N unread]` suffixes on the next tool result (if mid-work).
-- **Cleanup flow.** `/exit` runs the configured cleanup prompt as a follow-up
-  turn before shutdown. `/fq` force-exits without cleanup. The `exit_session`
-  tool adds autonomous exit with optional self-continuation (spawn a new session
-  with a handoff message, inheriting the agent home and template).
+- **Stable identity.** Every session gets a deterministic agent ID like
+  `cal-bright-raven` that survives `/resume`, so an agent has a name you can
+  address and reattach to.
+- **A config-driven home.** Each agent lives in its own directory
+  (`~/.kl/agents/<name>/`) holding its config, system prompt, memory, tools,
+  and skills. One `agent.yml` controls how the session is assembled.
+- **Persistent memory.** You point `agent.yml` at markdown files; kiln-lite
+  composes them into the system prompt every session. A configurable cleanup
+  turn lets the agent write back to those files before it exits.
+- **Custom tools and skills.** Drop an executable in `tools/` or a `SKILL.md`
+  in `skills/` and the agent discovers it automatically.
+- **Multi-agent messaging.** Run several sessions at once — the same agent
+  twice or different agents — and they send each other direct messages and
+  broadcast to channels through a lightweight background daemon. Each session
+  has a file-based inbox.
+- **A session launcher (`kl`).** Wraps Pi in a named tmux session so every
+  agent is something you can launch, list, attach to, and resume by name.
 
-## What it isn't
+> The name: "kiln" is a larger agent-infrastructure system; **kiln-lite** is
+> the standalone, Pi-native subset. You don't need kiln to use it — this repo
+> is self-contained.
 
-v1 is intentionally small. Out of scope for now:
+Full reference docs live under [`docs/`](./docs/index.md). This README is the
+guided tour: install it, scaffold an agent, and learn how to give that agent
+memory, tools, skills, and peers.
 
-- Daemon-based channels (`message subscribe` is stubbed)
-- Cross-machine messaging
-- Recall-style session search
-- Gateway bridging (Discord, Slack, etc.)
-- Tree-branched summary semantics
+---
 
-Memory architecture is also out of scope — `agent.yml:context_injection` names
-files, you decide what's in them.
+## How it fits together
+
+Four pieces, layered around Pi:
+
+```
+  kl run <name>
+      │  launches a tmux + pi session
+      ▼
+  ┌─────────────────────────────────────────────┐
+  │ pi session                                  │
+  │   loads the kiln-lite extension:            │
+  │   identity · system prompt · tool listing · │
+  │   inbox · cleanup turn                      │
+  └─────────────────────────────────────────────┘
+      │  registers + routes messages through
+      ▼
+  ┌─────────────────────────────────────────────┐
+  │ kiln-lite daemon   (one shared process)     │
+  │   presence · channels · inbox routing       │
+  └─────────────────────────────────────────────┘
+      ▲
+      └─ every session connects here, so they can
+         message one another
+```
+
+- **The extension** loads into every Pi session. It reads `agent.yml`,
+  assigns the agent ID, composes the system prompt (base prompt + your memory
+  files + a listing of your tools), watches the inbox, and runs the cleanup
+  turn on exit. It owns no process of its own and never touches Pi's model
+  loop.
+- **The daemon** is a small Node process that autostarts on first use and
+  self-exits when idle. It's the only shared state between agents — it knows
+  who's alive and routes messages. You never start or stop it manually.
+- **The agent home** (`~/.kl/agents/<name>/`) is the on-disk identity: config,
+  memory, tools, skills, inbox. It's yours to edit; kiln-lite only reads it.
+- **`kl`** is the launcher. It wraps Pi in a tmux session named after the
+  agent ID, so sessions are addressable and survive disconnects.
+
+You can use raw `pi` if you want — the extension still works — but `kl` is the
+ergonomic path for anything multi-session.
+
+---
 
 ## Install
 
 ```bash
-cd /path/to/kiln-lite
-./install.sh                 # installs kl + scaffolds starter at ~/.kl/agents/agent
-./install.sh --no-starter    # install kl only; scaffold agents explicitly later
+git clone <this-repo> kiln-lite
+cd kiln-lite
+./install.sh
 ```
 
-`install.sh` runs, in order:
+`install.sh` does, in order:
 
-1. `npm install` — node deps
-2. `npm link` — registers `kl` globally so you can run it from any shell
-3. Cleans up any legacy global pi registration of kiln-lite (idempotent)
-4. Migrates legacy `~/.agent` or `~/.kl/agent` to `~/.kl/agents/agent/` if present
-5. Scaffolds the starter agent at `~/.kl/agents/agent/` via `bootstrap.sh`
+1. `npm install` — Node dependencies.
+2. `npm link` — puts `kl` and `kl-msg` on your `PATH` globally.
+3. Migrates any legacy single-agent layout (`~/.agent/`, `~/.kl/agent/`) to
+   the current `~/.kl/agents/agent/` layout, if present.
+4. Scaffolds a starter agent at `~/.kl/agents/agent/`.
 
-Prerequisites checked up front: `node`, `npm`, `pi`, `tmux`. Missing `tmux`
-produces a warning, not a hard fail — but `kl` won't work without it.
-
-To add more agents after install, use `kl new <name>`:
+Prerequisites (checked up front): **Node ≥ 20**, **npm**, **pi**, **tmux**,
+and **[uv](https://docs.astral.sh/uv/)** (for the Python tool venv — bootstrap
+offers to install it if missing). Without tmux you get a warning, but `kl`
+won't work.
 
 ```bash
-kl new beth        # scaffolds ~/.kl/agents/beth/
-kl new dalet       # scaffolds ~/.kl/agents/dalet/
-kl agents          # list installed agents
+./install.sh --no-starter    # install kl + kl-msg only; scaffold agents later
 ```
 
-To re-scaffold or refresh parts of an existing agent home, call `bootstrap.sh`
-directly with the agent's path:
+---
+
+## Your first agent
+
+Installing leaves a ready-to-run starter agent at `~/.kl/agents/agent/`:
 
 ```bash
-./bootstrap.sh ~/.kl/agents/beth --force            # full overwrite (destructive)
-./bootstrap.sh ~/.kl/agents/beth --upgrade-deps     # just Python deps
-./bootstrap.sh ~/.kl/agents/beth --refresh-skills   # recopy bundled skills
-./bootstrap.sh ~/.kl/agents/beth --refresh-tools    # recopy bundled tools
-./bootstrap.sh ~/.kl/agents/beth --rebuild-venv     # nuke + recreate venv
+kl run              # launch the starter agent (and attach to its tmux session)
 ```
 
-### Quick start after install
+That's a working Pi session with a stable ID, the bundled tools, and the
+`messaging` skill. To create more agents, scaffold them by name:
 
 ```bash
-# Edit ~/.kl/agents/agent/agent.yml — set 'name' and any context_injection files
-kl                       # spawn the starter agent (~/.kl/agents/agent)
-kl beth                  # spawn the 'beth' agent (~/.kl/agents/beth)
-kl agents                # list installed agents on disk
-kl list                  # list live tmux sessions
-kl attach beth-bright-fox  # reattach by agent-id
+kl new beth         # creates ~/.kl/agents/beth/
+kl run beth         # launch it
+kl agents           # list every agent on disk
 ```
 
-### Extension-only iteration (during dev)
+Each `kl new` produces the standard home shape:
 
-If you want to load the extension against a one-off home without registering
-anything globally:
-
-```bash
-AGENT_HOME=~/.my-agent pi -e ./extensions/kiln-lite/index.ts
+```
+~/.kl/agents/beth/
+├── agent.yml         # config — edit this
+├── memory/           # your persistent memory files (you define the shape)
+├── scratch/          # ephemeral working notes (never injected into context)
+├── tools/            # shell tools — bundled ones copied here, add your own
+├── skills/           # SKILL.md skill packages — messaging bundled
+├── inbox/            # per-session inboxes live at inbox/<agent-id>/
+├── sessions/         # session summaries (written by the cleanup turn)
+└── venv/             # Python venv for the bundled tools
 ```
 
-`AGENT_HOME` is the escape-hatch override — kl honors it, bypassing the
-`~/.kl/agents/<name>` lookup.
+Everything below is about filling that home in: configuring the agent, giving
+it memory, tools, skills, and peers.
 
-## Launching with `kl`
+---
 
-`kl` (ships as `bin/kl`, linked via the `bin` entry in `package.json`) is
-the normal way to start a session. It wraps pi in a tmux session, generates
-an agent-id up front, and names the tmux session after it — so every live
-session has a stable name you can attach back to.
+## Configuring an agent: `agent.yml`
+
+`agent.yml` is the one file that controls how a session is assembled. Every
+field is optional except `name`. Here's a complete example with the pieces
+explained:
+
+```yaml
+# Name prefix for the agent ID (<name>-<adj>-<noun>) and $AGENT_NAME.
+name: beth
+
+# Optional: a file (relative to the home) that REPLACES Pi's default system
+# prompt. Omit to keep Pi's default.
+system_prompt: BETH.md
+
+# Files (or command output) prepended to the system prompt every session.
+# This is how an agent gets memory — see "Giving an agent memory" below.
+context_injection:
+  - path: memory/core.md
+    label: Core Memory
+  - path: memory/volatile.md
+    label: Working State
+    dynamic: true              # re-read every turn instead of once at start
+
+# Shell commands run once at session start (e.g. pull latest memory).
+startup:
+  - "git -C $AGENT_HOME pull --ff-only"
+
+# A follow-up turn dispatched when the session exits via /exit or exit_session.
+# Template vars: {today} {agent_id} {session_uuid} {summary_path}
+cleanup: |
+  You're wrapping up. Write a session summary to {summary_path} covering what
+  we did, decisions made, and anything the next session needs to know.
+
+# Directory names, relative to the home (defaults shown).
+tools_dir: tools
+inbox_dir: inbox
+sessions_dir: sessions
+```
+
+A few notes:
+
+- **`name`** seeds the agent ID. A session of the `beth` agent gets an ID like
+  `beth-silver-gate`, deterministic from Pi's session UUID, so `/resume`
+  recovers the same one.
+- **`system_prompt`** lets you give the agent a custom identity/persona. If you
+  also have a file named `<NAME>.md` (uppercased) in the home, it's injected as
+  its own block automatically.
+- **`startup`** commands run with the full agent environment and `cwd =` the
+  home. Non-zero exits warn but don't abort startup.
+- **`cleanup`** is the agent's chance to persist state before shutting down.
+  It's a normal turn — the agent can edit files, run tools, commit to git.
+
+Full schema and edge cases: [`docs/extension.md`](./docs/extension.md).
+
+---
+
+## Giving an agent memory
+
+kiln-lite doesn't prescribe a memory format. You write markdown files under
+the home (conventionally in `memory/`) and list them in `context_injection`.
+Each listed entry becomes a labelled block in the system prompt:
+
+```yaml
+context_injection:
+  - path: memory/core.md            # durable identity & facts
+    label: Core Memory
+  - path: memory/volatile.md        # in-flight working state
+    label: Working State
+    dynamic: true
+  - command: project list           # inject command OUTPUT, not a file
+    label: Active Projects
+    dynamic: true
+```
+
+- **`path`** entries inject a file's contents. **`command`** entries inject a
+  shell command's stdout instead (the two are mutually exclusive).
+- **Static** entries (the default) are read once at session start and cached.
+- **`dynamic: true`** re-reads the file (or re-runs the command) every turn —
+  use it for files the agent edits mid-session, at the cost of prompt-cache
+  reuse.
+
+The loop that makes memory *persist*: list a file under `context_injection` so
+the agent reads it at the start of every session, then write a `cleanup` prompt
+that tells the agent to update that same file before it exits. The agent reads
+its memory in, works, and writes it back out.
+
+For a fully worked example — layered core/volatile/active memory, a
+project-tracking convention, and a real multi-step cleanup turn — see
+[`example/`](./example/). Drop the whole thing into a home or take the pieces
+you want.
+
+---
+
+## Giving an agent tools
+
+Tools beyond Pi's built-ins are plain executable scripts under the home's
+`tools/` directory. They are **not** registered as Pi tools — they sit on
+`$PATH` and the agent calls them through Pi's built-in `bash` tool. kiln-lite's
+job is to discover them and list them in the system prompt so the agent knows
+they exist.
+
+A tool is any executable with a `# ---` YAML header:
 
 ```bash
-kl                          # spawn the default starter agent (and attach)
-kl beth                     # spawn the 'beth' agent (~/.kl/agents/beth)
-kl run [name] [pi-args...]  # same, with arg passthrough to pi
-kl attach beth-bright-fox   # attach an existing session
-kl list                     # list kl-shaped tmux sessions
+#!/usr/bin/env bash
+# ---
+# name: ping
+# brief: Check a service heartbeat
+# arguments: "<url>"
+# description: |
+#   Curl a URL and report ok/down. Used for quick liveness checks.
+# ---
+set -euo pipefail
+curl -sf "$1" >/dev/null && echo ok || echo down
+```
+
+```bash
+chmod +x ~/.kl/agents/beth/tools/ping
+```
+
+Next session, the agent's prompt shows:
+
+```
+- **ping** `<url>` — Check a service heartbeat
+```
+
+and it can run `ping https://...` through bash. Header fields: `name`
+(required), `description` or `brief` (at least one), optional `arguments`
+(usage signature) and `cost` (renders a per-call price tag). The script needs
+the executable bit, and only top-level files are scanned (no subdirectories).
+
+Tools inherit `$AGENT_HOME`, `$AGENT_ID`, `$INBOX`, and friends, and the home's
+`venv/bin` is on `$PATH` — so a `#!/usr/bin/env python3` tool resolves to the
+agent's venv. Add Python deps with
+`VIRTUAL_ENV="$AGENT_HOME/venv" uv pip install <pkg>`.
+
+> Discovery runs at session start, so a tool added mid-session is callable
+> immediately but won't appear in the prompt listing until the next session.
+
+**Bundled tools** (copied into every home, editable in place):
+
+| Tool | Purpose |
+|------|---------|
+| `message` | Send DMs / broadcast to channels / manage subscriptions. |
+| `sessions` | Discover live peers — `list`, `show <agent-id>`, `resolve <uuid>`. |
+| `fetch` | Fetch a web page as readable text (Chrome fallback for JS pages). |
+| `web-search` | Web search via Tavily or Exa. |
+| `seek` | Fast filename search (`fd` if present, else `find`). |
+| `explore` | Spawn a Haiku subagent to read/summarize without burning context. |
+| `todo` | Task tracker with project boards. |
+
+Full reference: [`docs/tools.md`](./docs/tools.md).
+
+---
+
+## Giving an agent skills
+
+A **skill** is packaged domain knowledge the agent opts into on demand. It's a
+folder under `skills/` containing a `SKILL.md` with YAML frontmatter:
+
+```
+~/.kl/agents/beth/skills/docs-style/
+└── SKILL.md
+```
+
+```markdown
+---
+name: docs-style
+description: House style for reference docs — when to use, tone, structure.
+---
+
+# Docs Style
+
+## Tone
+- Mechanism-first, assume competent readers, short sections.
+...
+```
+
+The difference from a tool: the **listing** (one line — name + description) is
+always in the prompt, but the **body** only loads when the agent calls Pi's
+`activate_skill` tool. So a long guide can exist without costing tokens every
+session — the description is the "should I open this?" signal.
+
+This is [Anthropic's open Skill format](https://www.anthropic.com/news/skills),
+so the same skill folder works in Claude Code, Pi, and any Skill-aware runtime.
+Put deep material in sibling files (`references/`, `assets/`) that the SKILL.md
+body points the agent at. kiln-lite bundles one skill — `messaging` — into
+every home.
+
+Full reference: [`docs/skills.md`](./docs/skills.md).
+
+---
+
+## Sessions that talk to each other
+
+Every live session — whether it's the same agent launched twice or two
+different agents — gets its own unique ID (`<name>-<adj>-<noun>`) and its own
+file-based inbox at `inbox/<agent-id>/`. Any session can message any other
+live session by that ID. Routing goes through the daemon, which autostarts on
+first use.
+
+Sessions send messages with the built-in **`message`** tool:
+
+```
+message(action="send", to="beth-silver-gate", summary="…", body="…")     # DM
+message(action="send", channel="review", summary="…", body="…")          # broadcast
+message(action="subscribe", channel="review")
+message(action="unsubscribe", channel="review")
+```
+
+Delivery depends on whether the recipient is busy:
+
+- **Idle** — the message is delivered as a full user turn right away.
+- **Mid-work** — a `[INBOX: N unread]` marker is appended to the agent's next
+  tool result; it reads the message file when convenient.
+
+To find peers, the `sessions` tool lists who's alive. From the shell, `kl-msg`
+is the low-level CLI behind it all (`kl-msg status`, `kl-msg list-sessions`).
+DMs reach only live sessions; channel broadcasts also reach offline
+subscribers (parked in their inbox).
+
+Full reference: [`docs/messaging.md`](./docs/messaging.md) and
+[`docs/daemon.md`](./docs/daemon.md).
+
+---
+
+## Built-in tools and commands
+
+The extension registers three tools beyond Pi's built-ins, available to every
+agent:
+
+| Tool | What it does |
+|------|--------------|
+| `plan` | Externalize a task breakdown (goal + ordered tasks). Periodically re-surfaced as a reminder so the agent stays on track. |
+| `message` | Inter-agent messaging (DMs, channels) — see above. |
+| `exit_session` | Exit autonomously, with optional self-continuation: spawn a fresh session inheriting the home, handing off context. |
+
+Slash commands:
+
+| Command | Effect |
+|---------|--------|
+| `/exit` | Run the `agent.yml:cleanup` turn, then shut down. |
+| `/fq` | Force quit — skip cleanup, immediate shutdown. |
+
+> `/quit`, Ctrl+D, and double Ctrl+C are intercepted by Pi *before* the
+> extension and bypass cleanup. Use `/exit` when you want the cleanup turn to
+> run.
+
+---
+
+## The `kl` launcher
+
+`kl` wraps Pi in a named tmux session so every agent is addressable. The
+canonical form is `kl run [name]`; bare `kl` is shorthand for the default
+starter agent.
+
+```bash
+kl                          # launch the default starter agent
+kl run beth                 # launch the 'beth' agent
+kl run beth [pi-args...]    # extra args pass through to pi (e.g. --model)
+kl resume beth-silver-gate  # resume a past session by agent ID
+kl attach beth-silver-gate  # reattach to a live session
+kl list                     # list live kl sessions
 kl agents                   # list installed agents on disk
-kl history [name]           # session history across all (or one) agent
+kl new beth                 # scaffold a new agent home
+kl history [name]           # recent sessions, across all agents or one
 kl doctor [name]            # system + per-agent diagnostic
 ```
 
-What `kl` does at launch:
+> `kl <name>` (without `run`) is **not** a shortcut — an unknown leading token
+> is an error, not an agent launch. Use `kl run <name>`.
 
-1. Resolves the agent home: positional name (`kl beth` → `~/.kl/agents/beth`),
-   else `$AGENT_HOME` override, else the default starter at `~/.kl/agents/agent`.
-2. Reads `name:` from `agent.yml` and generates an agent-id via the same
-   `<name>-<adj>-<noun>` scheme the extension uses.
-3. Runs `tmux new-session -d -s <agent-id> pi -e <ext-path>`, exporting
-   `AGENT_ID`, `AGENT_HOME`, and `_KL=1` into the session env.
-4. `tmux attach-session` (or `switch-client` if already inside tmux).
+At launch `kl` resolves the home (positional name → `~/.kl/agents/<name>`, else
+`$AGENT_HOME` override, else the starter), generates the agent ID up front,
+exports `AGENT_ID` / `AGENT_HOME` / `_KL=1`, and starts Pi inside tmux. Because
+the ID is fixed before Pi starts, the tmux session name, the extension's ID,
+and the inbox directory all agree from spawn.
 
-The kiln-lite extension prefers `$AGENT_ID` from env over UUID-derivation,
-so the tmux session name, the extension's agent-id, and the inbox directory
-all agree from spawn time.
-
-Raw `pi` launches still work — the extension falls back to deriving the
-agent-id from Pi's session UUID when `$AGENT_ID` isn't set, so `/resume`
-recovers the same id. You don't have to use `kl`; it's the ergonomic path
-for multi-session / multi-agent workflows.
-
-## Quick start
-
-To scaffold manually (without running Pi):
+**Iterating on the extension itself** (no install, no tmux):
 
 ```bash
-./bootstrap.sh ~/.my-agent
-# then edit ~/.my-agent/agent.yml — set `name`, wire context_injection, etc.
+AGENT_HOME=~/.kl/agents/agent pi -e ./extensions/kiln-lite/index.ts
 ```
 
-The resulting home looks like:
+`AGENT_HOME` is the escape-hatch override — it bypasses the `kl agents`
+registry, so use it for one-off or throwaway homes only.
+
+---
+
+## Re-scaffolding and refreshing
+
+`kl new` and `install.sh` call `bootstrap.sh` under the hood. You can call it
+directly to refresh parts of an existing home:
+
+| Command | Effect |
+|---------|--------|
+| `./bootstrap.sh <home> --force` | Overwrite all scaffolding (destructive). |
+| `./bootstrap.sh <home> --refresh-tools` | Recopy bundled tools over local edits. |
+| `./bootstrap.sh <home> --refresh-skills` | Recopy bundled skills. |
+| `./bootstrap.sh <home> --upgrade-deps` | Upgrade Python deps in the existing venv. |
+| `./bootstrap.sh <home> --rebuild-venv` | Nuke and recreate the venv. |
+
+Re-running `install.sh` refreshes bundled tools and skills on the starter but
+never touches `agent.yml`, `memory/`, `scratch/`, or `venv/`. Bundled tools and
+skills are copied (not symlinked), so edits to them are yours until a refresh
+overwrites them — rename a tool/skill if you want a custom version that sticks.
+
+---
+
+## Repo layout
 
 ```
-~/.my-agent/
-├── agent.yml         # config (edit this)
-├── memory/           # your memory files (Core/Volatile/sessions — your shape)
-├── scratch/          # working notes
-├── tools/            # your own shell tools (override bundled by shared name)
-├── inbox/            # per-session inboxes live at inbox/<agent-id>/
-├── sessions/         # session summaries (written by the cleanup turn)
-├── skills/           # active skills — bundled ones copied here by bootstrap
-└── venv/             # python venv with bundled-tool deps
+kiln-lite/
+├── bin/kl                       # session launcher (tmux wrap + agent ID)
+├── extensions/kiln-lite/        # the Pi extension
+│   ├── index.ts                 # entry — registers lifecycle hooks
+│   ├── config.ts                # agent.yml loader + defaults
+│   ├── identity.ts              # deterministic agent-id generation
+│   ├── prompt.ts                # system prompt composition
+│   ├── tools.ts                 # tool discovery + index rendering
+│   ├── inbox.ts                 # inbox watcher + delivery
+│   ├── cleanup.ts               # /exit /fq dispatch
+│   ├── exit-session.ts          # exit logic — cleanup, continuation, shutdown
+│   ├── plan-tool.ts             # plan tool + periodic reminders
+│   ├── message-tool.ts          # message tool
+│   ├── spawn.ts                 # peer / continuation spawning
+│   └── lib/                     # stable public API (for custom harnesses)
+├── src/
+│   ├── daemon/                  # the messaging daemon (socket, registries, routing)
+│   └── client/                  # DaemonClient + autostart + the kl-msg CLI
+├── skills/messaging/            # bundled skill (copied into each home)
+├── tools/                       # bundled shell tools (copied into each home)
+├── example/                     # opinionated reference agent home
+├── docs/                        # full reference docs (start at index.md)
+├── install.sh                   # one-stop install
+└── bootstrap.sh                 # scaffold / refresh a home
 ```
 
-For a more opinionated reference — a fully populated agent home with
-custom identity, layered context injection, a real cleanup turn, and
-project-memory scaffolding — see [`example/`](./example/). Drop the
-whole thing into `$AGENT_HOME` or pick the pieces you want.
+Need to customize behavior beyond `agent.yml` — your own event hooks, a
+replaced prompt assembly, role-specific cleanup? Write a personal *harness* at
+`<home>/harness/index.ts`; `kl` loads it in preference to the bundled
+extension. See "Customizing via a personal harness" in
+[`docs/extension.md`](./docs/extension.md).
 
-Re-running bootstrap flags (for explicit re-scaffolds):
+---
 
-| Flag                | Effect                                                     |
-|---------------------|------------------------------------------------------------|
-| *(none, target full)* | Refuses. Use one of the below.                           |
-| `--force`           | Overwrite existing scaffolding (destructive)               |
-| `--upgrade-deps`    | Only: upgrade Python deps in the existing venv             |
-| `--rebuild-venv`    | Only: nuke and recreate the venv at the pinned version     |
-| `--refresh-skills`  | Only: recopy `<repo>/skills/*` into `$AGENT_HOME/skills/`  |
-| `--refresh-tools`   | Only: recopy `<repo>/tools/*` into `$AGENT_HOME/tools/`    |
+## Reference docs
+
+| Doc | Topic |
+|-----|-------|
+| [`docs/overview.md`](./docs/overview.md) | The 30-second shape — read this first. |
+| [`docs/home.md`](./docs/home.md) | Agent home layout, `~/.kl/` ownership, exported env vars. |
+| [`docs/extension.md`](./docs/extension.md) | How the extension wires into Pi; full `agent.yml` schema; custom harnesses. |
+| [`docs/tools.md`](./docs/tools.md) | Shell tool discovery and the YAML header format. |
+| [`docs/skills.md`](./docs/skills.md) | SKILL.md packaging and activation. |
+| [`docs/messaging.md`](./docs/messaging.md) | Inbox format, DMs, channels, delivery modes. |
+| [`docs/daemon.md`](./docs/daemon.md) | Daemon architecture, wire protocol, autostart. |
+| [`docs/cli.md`](./docs/cli.md) | `kl` and `kl-msg` command reference. |
+| [`docs/install.md`](./docs/install.md) | Install, scaffold, migration, uninstall. |
+| [`docs/migration-multi-agent.md`](./docs/migration-multi-agent.md) | Upgrading from the legacy single-agent layout. |
+| [`docs/tmux.md`](./docs/tmux.md) | Recommended `~/.tmux.conf` settings for `kl` sessions. |
+
+---
 
 ## Uninstall
 
 ```bash
-npm unlink -g kiln-lite           # remove the kl global link
-rm -rf ~/.kl                       # agent homes + daemon state (your call)
+npm unlink -g kiln-lite     # remove the kl / kl-msg global links
+rm -rf ~/.kl                 # agent homes + daemon state (your call)
 ```
 
-Agent homes live under `~/.kl/agents/`; daemon state under `~/.kl/daemon/`.
-Remove individually if you want to keep one while dropping the other.
+Agent homes live under `~/.kl/agents/`, daemon state under `~/.kl/daemon/` —
+remove them individually if you want to keep one while dropping the other.
 
-Skills and tools are a single source of truth: `$AGENT_HOME/skills/` and
-`$AGENT_HOME/tools/`. The extension registers the skills dir via Pi's
-`resources_discover` event and scans the tools dir at `session_start` to
-render the tool index into the system prompt. Tools are plain scripts,
-invoked by the agent via Pi's built-in `bash` tool — not registered as pi
-tools. Any `SKILL.md` or executable script you drop in is picked up on next
-session or `/reload`. kiln-lite's bundled skills (currently just `messaging`)
-and tools (`explore`, `fetch`, `seek`, `todo`, `web-search`) are installed by
-`bootstrap.sh` — you can edit them freely after install; re-running with
-`--refresh-skills` or `--refresh-tools` overwrites.
-
-## Layout
-
-```
-kiln-lite/
-├── bin/
-│   └── kl               # Session launcher — tmux wrap + agent-id + exec pi
-├── extensions/kiln-lite/
-│   ├── index.ts             # Entry + lifecycle wiring
-│   ├── config.ts            # agent.yml loader + defaults
-│   ├── identity.ts          # Deterministic agent ID from session UUID
-│   ├── env.ts               # Env var export (hoisted to process.env)
-│   ├── prompt.ts            # System prompt composition
-│   ├── tools.ts             # YAML-header tool discovery + tool-index rendering
-│   ├── inbox.ts             # fs.watch, idle delivery, mid-turn pings
-│   ├── cleanup.ts           # /exit /fq dispatch
-│   ├── exit-session.ts      # Exit logic — cleanup, continuation, shutdown
-│   ├── exit-session-tool.ts # exit_session tool (autonomous exit + self-continuation)
-│   ├── plan.ts              # Plan state persistence + reminder logic
-│   ├── plan-tool.ts         # plan tool registration + periodic reminders
-│   ├── message-tool.ts      # message tool registration
-│   ├── session-state.ts     # SessionState type + shared state
-│   ├── spawn.ts             # Peer/continuation session spawning
-│   ├── template.ts          # Template resolution
-│   ├── types.ts             # Shared interfaces
-│   └── lib/                 # Internal helpers
-├── skills/messaging/
-│   ├── SKILL.md         # Documents message + sessions scripts
-│   └── scripts/
-│       ├── message      # send, read, list, clear, stats
-│       └── sessions     # peer discovery (active agents, uuid resolve)
-└── tools/               # Bundled shell scripts (copied to $AGENT_HOME/tools/)
-    ├── fetch            # Web page fetcher (trafilatura + Chrome fallback)
-    ├── web-search       # Tavily/Exa backends
-    ├── seek             # Fast file search (fd-or-find wrapper)
-    ├── explore          # Haiku subagent for code exploration
-    └── todo             # Task tracker with project boards
-```
-
-## Runtime dependencies
-
-- **Node** ≥ 20 (Pi's requirement)
-- **[uv](https://docs.astral.sh/uv/)** — used for Python version management and
-  package install. If `uv` isn't on `PATH` when you run `bootstrap.sh`, the
-  script offers to install it via the official installer
-  (`curl -LsSf https://astral.sh/uv/install.sh | sh`). Set `AUTO_INSTALL_UV=1`
-  to skip the prompt and install silently (useful in CI), or install uv
-  yourself ahead of time. Bootstrap then calls
-  `uv venv --python $(cat .python-version)` to create `$AGENT_HOME/venv/` at
-  the pinned Python version (uv auto-downloads the interpreter if needed),
-  then `uv pip install -r requirements.txt` (`PyYAML` for `todo`, `trafilatura`
-  for `fetch`; `web-search` is stdlib-only). The extension prepends `venv/bin`
-  to `PATH` at `session_start` so tools with `#!/usr/bin/env python3` resolve
-  to the venv.
-- **Python version** — pinned via `.python-version` at the repo root (currently
-  `3.12`). Edit that file to change it; re-run `./bootstrap.sh <home> --rebuild-venv`
-  to apply.
-- **Optional**: `fd` (faster `seek`), headless Chrome/Chromium (JS fallback in
-  `fetch` — set `$CHROME` to override path), `claude` CLI (for `explore`)
-- **API keys** (for `web-search`): `TAVILY_API_KEY` or `EXA_API_KEY`, read from
-  environment or `$AGENT_HOME/credentials/`
-
-## Commands
-
-Slash commands added by the extension:
-
-| Command   | Effect                                                            |
-|-----------|-------------------------------------------------------------------|
-| `/exit`   | Run cleanup prompt → shutdown                                     |
-| `/fq`     | Force quit — skip cleanup, immediate shutdown                     |
-
-Note: `/quit`, Ctrl+D, and double Ctrl+C bypass the cleanup flow — pi's
-interactive mode intercepts them before extension dispatch. Use `/exit` when
-you want cleanup to run.
-
-## Exported environment
-
-Available to every child process (startup commands, tools, Pi's `bash`, etc):
-
-| Var             | Value                                   |
-|-----------------|-----------------------------------------|
-| `AGENT_HOME`    | Resolved agent home                     |
-| `AGENT_ID`      | `<name>-<adj>-<noun>` for this session  |
-| `AGENT_NAME`    | Name prefix (from `agent.yml`)          |
-| `SESSION_UUID`  | Pi session UUID                         |
-| `INBOX`         | `$AGENT_HOME/inbox/$AGENT_ID/`          |
+---
 
 ## Status
 
-v1, pre-release. Not published to npm. Iterate in-place for now.
+v0.4, unreleased — not published to npm. Iterate in-place. The `lib/` surface
+([`docs/extension.md`](./docs/extension.md)) is the stable public API for
+custom harnesses; additions are non-breaking, renames are breaking.

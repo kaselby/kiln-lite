@@ -7,7 +7,7 @@ If your agent home was installed before multi-agent support landed, this is the 
 | Concept | Before | After |
 |---------|--------|-------|
 | Default home | `~/.kl/agent/` (singular) | `~/.kl/agents/<name>/` (plural) |
-| Identifying an agent | `$AGENT_HOME` env var | positional name (`kl beth`) |
+| Identifying an agent | `$AGENT_HOME` env var | positional name (`kl run beth`) |
 | `AGENT_HOME` role | Primary mechanism | Escape-hatch override |
 | Scaffolding | `install.sh` (every time) | `install.sh` once for starter, `kl new <name>` for the rest |
 | Agent registry | None (one home per `AGENT_HOME`) | `kl agents` lists `$KL_AGENTS_DIR/*` |
@@ -58,8 +58,8 @@ AGENT_HOME=~/.kl/agent kl --detach --prompt-file brief.md
 New shape:
 
 ```bash
-kl agent --detach --prompt-file brief.md     # 'agent' is the starter's name
-kl beth --detach --prompt-file brief.md      # another agent
+kl run agent --detach --prompt-file brief.md  # 'agent' is the starter's name
+kl run beth --detach --prompt-file brief.md   # another agent
 ```
 
 `AGENT_HOME` still works as before — just rarely needed.

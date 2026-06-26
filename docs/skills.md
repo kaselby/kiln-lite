@@ -19,11 +19,8 @@ Everything else — discovery, listing, activation, body injection — is owned 
 
 ```
 <home>/skills/
-├── messaging/               # bundled
-│   ├── SKILL.md
-│   └── scripts/
-│       ├── message
-│       └── sessions
+├── messaging/               # bundled (pure documentation — no scripts dir)
+│   └── SKILL.md
 └── my-skill/                # agent-added
     ├── SKILL.md
     └── references/

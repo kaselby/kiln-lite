@@ -226,7 +226,7 @@ kl    # launch the starter agent
 
 ```bash
 kl new beth        # → ~/.kl/agents/beth/
-kl beth            # launch it
+kl run beth        # launch it
 kl agents          # list everything
 ```
 
@@ -258,7 +258,7 @@ rm -rf ~/.kl/            # wipes every agent + daemon state
 
 - **Run `install.sh` on every version bump.** Bundled skill/tool fixes only propagate via re-run. Nothing else updates automatically.
 - **`bootstrap.sh` is for targeted refreshes.** `install.sh` handles the common path; reach for `bootstrap.sh` when you want to rebuild the venv, upgrade Python deps, or `--force` a clean scaffold.
-- **Use the positional name, not `AGENT_HOME`.** `kl beth` is the supported path. `AGENT_HOME=/some/path kl` is an escape hatch for advanced setups (CI, throwaway test homes) — it bypasses the registry entirely, so `kl agents`, `kl resume`'s prefix lookup, and `kl history` won't know about it.
+- **Use the positional name, not `AGENT_HOME`.** `kl run beth` is the supported path. `AGENT_HOME=/some/path kl` is an escape hatch for advanced setups (CI, throwaway test homes) — it bypasses the registry entirely, so `kl agents`, `kl resume`'s prefix lookup, and `kl history` won't know about it.
 - **`.python-version` is the source of truth.** If someone asks "what Python version does this use", the answer is that file. Override by editing it, not by passing flags.
 
 ## Gotchas

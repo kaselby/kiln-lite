@@ -12,6 +12,8 @@ The directory layout is **flat** — one script per file at the top level, no su
 
 ```
 <home>/tools/
+├── message         # bundled
+├── sessions        # bundled
 ├── fetch           # bundled
 ├── web-search      # bundled
 ├── seek            # bundled

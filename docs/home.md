@@ -63,7 +63,7 @@ A fresh `./install.sh` creates the starter agent at `~/.kl/agents/agent/`. Each 
 
 - `<home>/agent.yml` from a template — `name:` is auto-patched to match the dir name; you wire `context_injection:` and the cleanup turn
 - empty `memory/`, `scratch/`, `inbox/`, `sessions/` directories (with `.gitkeep` if you later init a git repo)
-- `tools/` populated with bundled shell tools (`fetch`, `web-search`, `seek`, `explore`, `todo`)
+- `tools/` populated with bundled shell tools (`message`, `sessions`, `fetch`, `web-search`, `seek`, `explore`, `todo`)
 - `skills/` populated with bundled skills (`messaging/`)
 - `venv/` created by `uv` at the version in `<repo>/.python-version`, with `requirements.txt` installed
 
@@ -116,7 +116,7 @@ See [`daemon.md`](./daemon.md) for the full schema. In short:
 
 ## Conventions
 
-- **Multi-agent is first-class.** Each agent lives under `$KL_AGENTS_DIR/<name>/` (default `~/.kl/agents/<name>/`). Create with `kl new <name>`, launch with `kl <name>`. The daemon routes by per-session `inbox_path`, so agents coexist cleanly. `AGENT_HOME=/some/path` is the escape-hatch override for one-off homes outside the registry.
+- **Multi-agent is first-class.** Each agent lives under `$KL_AGENTS_DIR/<name>/` (default `~/.kl/agents/<name>/`). Create with `kl new <name>`, launch with `kl run <name>`. The daemon routes by per-session `inbox_path`, so agents coexist cleanly. `AGENT_HOME=/some/path` is the escape-hatch override for one-off homes outside the registry.
 - **Secrets live under `credentials/`.** Each file's name is the env var it populates (e.g. `credentials/TAVILY_API_KEY` → `$TAVILY_API_KEY`). Bundled tools read this path; nothing else should.
 - **Ephemeral work goes in `scratch/`.** It's never injected into context, never indexed, fair game to delete.
 - **Don't edit daemon-owned state by hand.** `~/.kl/daemon/*` files are machine-written JSON — correct by construction when the daemon writes them. If you need to reset, stop the daemon and `rm -rf ~/.kl/daemon/`; the daemon will recreate what it needs on next autostart.

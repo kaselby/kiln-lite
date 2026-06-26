@@ -17,7 +17,7 @@ Both are exposed via `package.json` `bin` entries. `npm link` (part of install) 
 
 ```
 kl                          # spawn starter agent (~/.kl/agents/agent), attach
-kl <name>                   # spawn a named agent (~/.kl/agents/<name>)
+kl run <name>               # spawn a named agent (~/.kl/agents/<name>)
 kl run [name] [--detach] [pi-args]  # with optional detach + pi passthrough
 kl --detach [pi-args]       # spawn detached, print agent-id to stdout
 kl attach <agent-id>        # reattach an existing tmux session
@@ -29,9 +29,9 @@ kl doctor [name]            # system + per-agent diagnostics
 kl -h | --help              # show usage
 ```
 
-`kl` (no args) is the common case — spawn the starter agent and attach. `kl <name>` spawns a named agent instead. Under the hood:
+`kl` (no args) is the common case — spawn the starter agent and attach. `kl run <name>` spawns a named agent instead. (`kl <name>` without `run` is **not** a shortcut — an unknown leading token errors.) Under the hood:
 
-1. Resolve the agent home: positional name (`kl beth` → `~/.kl/agents/beth`), else `$AGENT_HOME` override, else the default starter at `~/.kl/agents/agent`.
+1. Resolve the agent home: positional name (`kl run beth` → `~/.kl/agents/beth`), else `$AGENT_HOME` override, else the default starter at `~/.kl/agents/agent`.
 2. Read `name:` from `agent.yml`.
 3. Generate a fresh `<name>-<adj>-<noun>` agent-id (16 bytes of entropy → sha256 → pool indices).
 4. Check for tmux session collision; suffix with 2 hex bytes if found.
@@ -137,7 +137,7 @@ kl
 # [kiln-lite: online as agent-bright-jay]
 # pi session opens, attached
 
-kl beth
+kl run beth
 # [kiln-lite: online as beth-silver-gate]
 # spawns the 'beth' agent
 ```
@@ -151,7 +151,7 @@ echo "spawned: $peer"
 kl-msg send "$peer" "ping" --body "How's it going?"
 
 # Spawn a specific agent detached:
-peer=$(kl beth --detach --prompt "Review my draft")
+peer=$(kl run beth --detach --prompt "Review my draft")
 ```
 
 ### Inspect the daemon
