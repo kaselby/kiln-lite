@@ -10,6 +10,7 @@ import {
 	readPromptSnapshot,
 	writePromptSnapshot,
 	findAgentIdForUuid,
+	resolveForkInheritedPrompt,
 	uniquifyAgentId,
 	metaPath,
 	promptPath,
@@ -210,3 +211,64 @@ test("snapshot dirs are created on first write (idempotent)", () => {
 		cleanup(home);
 	}
 });
+
+// --- resolveForkInheritedPrompt (fork inheritance) ---
+
+const PARENT_FILE = "/p/sessions/2026-06-27T17-28-11-138Z_019f0a1f-e882-780a-9014-77c9ae096ab8.jsonl";
+const PARENT_UUID = "019f0a1f-e882-780a-9014-77c9ae096ab8";
+
+test("resolveForkInheritedPrompt returns the parent's snapshot when present", () => {
+	const home = makeHome();
+	try {
+		writeMeta(home, fixtureMeta("scout-amber-finch", PARENT_UUID));
+		writePromptSnapshot(home, "scout-amber-finch", "PARENT PROMPT\nwith handoff");
+		assert.equal(
+			resolveForkInheritedPrompt(home, PARENT_FILE),
+			"PARENT PROMPT\nwith handoff",
+		);
+	} finally {
+		cleanup(home);
+	}
+});
+
+test("resolveForkInheritedPrompt returns null for no previousSessionFile", () => {
+	const home = makeHome();
+	try {
+		assert.equal(resolveForkInheritedPrompt(home, undefined), null);
+	} finally {
+		cleanup(home);
+	}
+});
+
+test("resolveForkInheritedPrompt returns null when path has no uuid", () => {
+	const home = makeHome();
+	try {
+		assert.equal(resolveForkInheritedPrompt(home, "/p/sessions/not-a-session.txt"), null);
+	} finally {
+		cleanup(home);
+	}
+});
+
+test("resolveForkInheritedPrompt returns null when parent uuid has no recorded agent-id", () => {
+	const home = makeHome();
+	try {
+		// meta exists for a DIFFERENT uuid only.
+		writeMeta(home, fixtureMeta("scout-other", "some-other-uuid"));
+		writePromptSnapshot(home, "scout-other", "unrelated");
+		assert.equal(resolveForkInheritedPrompt(home, PARENT_FILE), null);
+	} finally {
+		cleanup(home);
+	}
+});
+
+test("resolveForkInheritedPrompt returns null when parent agent-id has no snapshot file", () => {
+	const home = makeHome();
+	try {
+		// meta maps uuid -> agent-id, but no system-prompt.txt was written.
+		writeMeta(home, fixtureMeta("scout-amber-finch", PARENT_UUID));
+		assert.equal(resolveForkInheritedPrompt(home, PARENT_FILE), null);
+	} finally {
+		cleanup(home);
+	}
+});
+

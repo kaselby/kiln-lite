@@ -44,6 +44,8 @@ import { loadCommandGates, applyCommandGates, type CompiledGate } from "../gates
 import {
 	readMeta,
 	writeMeta,
+	writePromptSnapshot,
+	resolveForkInheritedPrompt,
 	type SnapshotMeta,
 } from "../snapshot.ts";
 import type { SessionState } from "../types.ts";
@@ -116,7 +118,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	registerSpawnCommand(pi);
 
 	// --- session_start ---
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		const warn = (msg: string) => {
 			console.warn(msg);
 			if (ctx.hasUI) ctx.ui.notify(msg, "warning");
@@ -172,11 +174,26 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		// is a resumed session — replay verbatim on every before_agent_start.
 		// If not, before_agent_start composes normally and writes the
 		// snapshot on first compose.
-		const { writer, existing } = loadOrCreateSnapshotWriter({
+		const { writer, existing: existingSnapshot } = loadOrCreateSnapshotWriter({
 			agentHome,
 			agentId,
 			warn,
 		});
+		let existing = existingSnapshot;
+		// Fork inheritance: a forked session has no snapshot under its own
+		// (fresh) agent-id, so it would recompose from current state and lose
+		// the parent's launch-time handoff. Inherit the parent's frozen prompt
+		// verbatim (matching resume) and persist it under THIS agent-id so later
+		// resumes of the fork stay consistent. Guarded on reason==="fork";
+		// falls back to a fresh compose when the parent has no snapshot.
+		if (existing === null && event.reason === "fork") {
+			const inherited = resolveForkInheritedPrompt(agentHome, event.previousSessionFile, warn);
+			if (inherited !== null) {
+				writePromptSnapshot(agentHome, agentId, inherited, warn);
+				writer.markExisting();
+				existing = inherited;
+			}
+		}
 		snapshotWriter = writer;
 
 		state = {

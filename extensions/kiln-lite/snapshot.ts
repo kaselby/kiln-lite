@@ -196,6 +196,42 @@ export function findAgentIdForUuid(
 }
 
 /**
+ * Fork inheritance.
+ *
+ * A forked session (via `/spawn` or `pi --fork`) gets a fresh pi-session-uuid
+ * and therefore a fresh agent-id with no snapshot of its own. Left alone it
+ * would recompose the system prompt from current on-disk state — dropping
+ * anything injected at the PARENT's launch, most importantly the handoff
+ * appended via `--append-system-prompt` (which is never persisted in the
+ * session JSONL). Resume doesn't have this problem because it keeps the same
+ * uuid → same agent-id → same snapshot.
+ *
+ * Given the parent's session file (from `SessionStartEvent.previousSessionFile`),
+ * resolve the parent's frozen system-prompt snapshot so the fork can replay it
+ * verbatim, matching resume semantics. The caller is responsible for writing
+ * the result under the FORK's own agent-id so later resumes of the fork stay
+ * consistent.
+ *
+ * Returns null when there's no parent file, the uuid can't be parsed, the
+ * parent has no recorded agent-id, or the parent has no snapshot — in every
+ * such case the caller falls back to a fresh compose. Best-effort: never
+ * throws.
+ */
+export function resolveForkInheritedPrompt(
+	agentHome: string,
+	previousSessionFile: string | undefined,
+	warn?: (msg: string) => void,
+): string | null {
+	if (!previousSessionFile) return null;
+	// Same shape as inferSessionUuid: the uuid is the basename before .jsonl.
+	const m = previousSessionFile.match(/([0-9a-fA-F-]{20,})\.jsonl$/);
+	if (!m) return null;
+	const parentAgentId = findAgentIdForUuid(agentHome, m[1], warn);
+	if (!parentAgentId) return null;
+	return readPromptSnapshot(agentHome, parentAgentId, warn);
+}
+
+/**
  * Pick a non-colliding agent-id given a desired one. If the desired id
  * is free OR already bound to the same pi-session-uuid, return it as-is.
  * Otherwise append "-2", "-3", … until we find a free slot. Used at
