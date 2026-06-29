@@ -292,6 +292,19 @@ require_tool() {
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found on PATH${hint:+ — $hint}"
 }
 
+# Run the bundled state-cli (snapshot/journal reader) via tsx. tsx is a
+# direct dependency, so it lives in the package's own node_modules; fall back
+# to a PATH tsx if that's somehow absent. Always the bundled state-cli — the
+# journal/snapshot logic is shared infra, not a per-agent harness override.
+run_tsx() {
+    local tsx_bin="$REPO_ROOT/node_modules/.bin/tsx"
+    if [ ! -x "$tsx_bin" ]; then
+        tsx_bin="$(command -v tsx 2>/dev/null || true)"
+    fi
+    [ -n "$tsx_bin" ] || die "tsx not found (expected $REPO_ROOT/node_modules/.bin/tsx — run install.sh)"
+    "$tsx_bin" "$REPO_ROOT/extensions/kiln-lite/state-cli.ts" "$@"
+}
+
 # Enter a tmux session by switch-client if already inside tmux, else attach.
 enter_session() {
     local session="$1"
@@ -569,11 +582,12 @@ cmd_resume() {
    use 'pi --resume' to pick from pi's session list directly)"
     fi
 
-    # Cheap JSON extraction — grep-then-trim. Avoids a jq dep. The fields
-    # we need are simple string scalars; if either is missing we bail.
+    # Resolve pi_session_jsonl + cwd through state-cli (real JSON.parse). Output
+    # is NUL-separated so a cwd containing quotes/tabs/spaces survives intact —
+    # the old awk -F'"' split on quotes and could resume in the wrong directory.
     local jsonl cwd
-    jsonl="$(awk -F'"' '/"pi_session_jsonl"[[:space:]]*:/ {print $4; exit}' "$meta")"
-    cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
+    { IFS= read -r -d '' jsonl; IFS= read -r -d '' cwd; } \
+        < <(run_tsx resolve "$id" --home "$agent_home")
     [ -n "$jsonl" ] || die "snapshot meta for '$id' has no pi_session_jsonl field"
     [ -f "$jsonl" ] || die "pi session file recorded for '$id' is gone: $jsonl"
     [ -n "$cwd" ] || cwd="$(pwd)"
@@ -891,22 +905,34 @@ cmd_doctor() {
 # Without a name arg, walks every agent under $KL_AGENTS_DIR (plus the
 # AGENT_HOME override if set). With a name arg, scopes to that agent.
 cmd_history() {
-    # Detect optional positional <name> arg (same shape as cmd_run).
-    # Any leading flag (--all, -n) means no name was given.
-    local explicit_name=""
-    if [ $# -gt 0 ] \
-       && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
-       && [ -d "$KL_AGENTS_DIR/$1" ]; then
-        explicit_name="$1"
+    # Strict arg parse: optional positional <name>, -n <int>, --all.
+    # Unknown flags and unknown/invalid agent names error rather than
+    # silently falling through to "all agents".
+    local explicit_name="" limit=20 all_mode=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -n)
+                shift
+                case "${1:-}" in
+                    ""|*[!0-9]*) die "history: -n requires a non-negative integer (got '${1:-}')" ;;
+                esac
+                limit="$1"
+                ;;
+            --all)
+                all_mode=1
+                ;;
+            -*)
+                die "history: unknown flag '$1' (use -n <N> or --all)"
+                ;;
+            *)
+                [ -z "$explicit_name" ] || die "history: unexpected argument '$1'"
+                [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] || die "history: '$1' is not a valid agent name"
+                [ -d "$KL_AGENTS_DIR/$1" ] || die "history: no agent '$1' under $KL_AGENTS_DIR"
+                explicit_name="$1"
+                ;;
+        esac
         shift
-    fi
-
-    local limit=20
-    if [ "${1:-}" = "-n" ] && [ -n "${2:-}" ]; then
-        limit="$2"
-    elif [ "${1:-}" = "--all" ]; then
-        limit=99999
-    fi
+    done
 
     # Build the list of agent homes to scan.
     local -a homes=()
@@ -932,49 +958,61 @@ cmd_history() {
         return 0
     fi
 
-    # Collect meta records across all homes, sort by last_seen, print table.
-    local entries=""
-    local home
-    for home in "${homes[@]}"; do
-        local sessions_dir="$home/state/sessions"
-        [ -d "$sessions_dir" ] || continue
-        local meta
-        for meta in "$sessions_dir"/*/meta.json; do
-            [ -f "$meta" ] || continue
-            local id last model cwd
-            id="$(awk -F'"' '/"agent_id"[[:space:]]*:/ {print $4; exit}' "$meta")"
-            last="$(awk -F'"' '/"last_seen"[[:space:]]*:/ {print $4; exit}' "$meta")"
-            model="$(awk -F'"' '/"model"[[:space:]]*:/ {print $4; exit}' "$meta")"
-            cwd="$(awk -F'"' '/"cwd"[[:space:]]*:/ {print $4; exit}' "$meta")"
-            [ -n "$id" ] || continue
-            [ -n "$last" ] || last="(unknown)"
-            # Shorten model and cwd for display
-            model="${model##*/}"  # strip provider prefix
-            cwd="${cwd/#$HOME/~}"
-            # Check if tmux session is alive
-            local status="-"
-            if tmux has-session -t "$id" 2>/dev/null; then
-                status="live"
-            fi
-            entries="${entries}${last}|${id}|${status}|${model}|${cwd}
-"
-        done
-    done
+    require_tool tmux
 
-    if [ -z "$entries" ]; then
+    # One snapshot of live tmux session names; membership tested in-process
+    # below (replaces the old per-row `tmux has-session` spawn).
+    local live_sessions
+    live_sessions="$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)"
+
+    # Hand state-cli the homes that actually have a snapshot dir. It reads the
+    # recency journal (rebuilding from meta files if missing), dedupes, sorts
+    # newest-first, and emits a bounded TSV — so the shell never opens or
+    # parses a single meta.json. --all switches it to an exact full scan.
+    local -a cli_args=(history)
+    local home have_home=0
+    for home in "${homes[@]}"; do
+        [ -d "$home/state/sessions" ] || continue
+        cli_args+=(--home "$home")
+        have_home=1
+    done
+    if [ "$have_home" = 0 ]; then
+        echo "(no session history found)"
+        return 0
+    fi
+    if [ "$all_mode" = 1 ]; then
+        cli_args+=(--all)
+    else
+        cli_args+=(--limit "$limit")
+    fi
+
+    local out
+    out="$(run_tsx "${cli_args[@]}")"
+    if [ -z "$out" ]; then
         echo "(no session history found)"
         return 0
     fi
 
-    # Sort descending by timestamp, limit, format as table
+    # TSV in: last_seen \t agent_id \t model \t cwd \t home (already sorted+limited).
     printf "%-24s  %-22s  %-5s  %-30s  %s\n" "LAST SEEN" "SESSION" "STATE" "MODEL" "CWD"
-    echo "$entries" | sort -t'|' -k1 -r | head -n "$limit" | while IFS='|' read -r ts sid st mdl wd; do
-        [ -n "$ts" ] || continue
-        # Trim ISO timestamp to human-readable
-        local display_ts="${ts%%.*}"  # drop fractional seconds
-        display_ts="${display_ts/T/ }"  # T -> space
-        printf "%-24s  %-22s  %-5s  %-30s  %s\n" "$display_ts" "$sid" "$st" "$mdl" "$wd"
-    done
+    while IFS=$'\t' read -r ts id model cwd home; do
+        [ -n "$id" ] || continue
+        # Live? exact membership against the one-shot tmux snapshot.
+        local status="-"
+        case $'\n'"$live_sessions"$'\n' in
+            *$'\n'"$id"$'\n'*) status="live" ;;
+        esac
+        # Presentation-only transforms.
+        local display_ts="${ts%%.*}"      # drop fractional seconds
+        display_ts="${display_ts/T/ }"     # T -> space
+        model="${model##*/}"               # strip provider prefix
+        if [ "$cwd" = "$HOME" ]; then
+            cwd="~"
+        elif [ "${cwd#$HOME/}" != "$cwd" ]; then
+            cwd="~/${cwd#$HOME/}"
+        fi
+        printf "%-24s  %-22s  %-5s  %-30s  %s\n" "$display_ts" "$id" "$status" "$model" "$cwd"
+    done <<< "$out"
 }
 
 # --- main ---
