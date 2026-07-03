@@ -96,6 +96,9 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 	});
 	let gates: CompiledGate[] = [];
 	let snapshotWriter: SnapshotWriter | null = null;
+	// One-shot latch: the fork/resume orientation reminder is injected on the
+	// first before_agent_start of the process only.
+	let originReminderSent = false;
 
 	const dispatcherRef: { current: ReturnType<typeof createCleanupDispatcher> | null } = { current: null };
 	const continuationRef: { current: ContinuationConfig | null } = { current: null };
@@ -196,6 +199,31 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		}
 		snapshotWriter = writer;
 
+		// Classify how this session was launched so the first turn can carry a
+		// one-time orientation reminder. A fork (`/spawn`) and a resume
+		// (`kl resume`) both boot as a fresh `pi --session` process — reason
+		// "startup", not "resume"/"fork" (those only fire for pi's in-process
+		// slash-command switches). Discriminate on durable signals:
+		//   * resume  → a snapshot already existed for this agent-id at boot.
+		//   * fork    → the session header carries a parentSession and no
+		//               snapshot exists yet (a fresh fork's first boot).
+		// Guard on reason so an in-process /reload (which re-emits session_start
+		// with a snapshot already on disk) isn't mistaken for a resume.
+		let sessionOrigin: SessionState["sessionOrigin"];
+		const freshBoot = event.reason === "startup";
+		if (event.reason === "resume" || (freshBoot && existing !== null)) {
+			sessionOrigin = { kind: "resume" };
+		} else if (event.reason === "fork" || (freshBoot && existing === null)) {
+			const header = ctx.sessionManager.getHeader?.();
+			if (header?.parentSession) {
+				// KL_PARENT names the parent only for a fresh-boot fork (`/spawn`
+				// passes --parent). An in-process /fork leaves KL_PARENT pointing at
+				// THIS session's own parent, so don't trust it there.
+				const parentAgentId = freshBoot ? process.env.KL_PARENT || undefined : undefined;
+				sessionOrigin = { kind: "fork", parentAgentId };
+			}
+		}
+
 		state = {
 			agentHome,
 			agentId,
@@ -207,6 +235,7 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			cachedSystemPrompt: existing,
 			snapshotWritten: writer.isWritten(),
 			template: appliedTemplate ?? undefined,
+			sessionOrigin,
 			vars: buildBasePlaceholders({ agentId, agentHome, sessionUuid, piPaths: resolvePiPaths() }),
 		};
 
@@ -294,6 +323,24 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 			message: {
 				customType: "kiln-timestamp",
 				content: `<system-reminder>${timestamps.stamp()}</system-reminder>`,
+				display: false,
+			},
+		};
+	});
+
+	// --- before_agent_start: one-time fork/resume orientation reminder ---
+	// When this process was launched as a fork (`/spawn`) or resume
+	// (`kl resume`), inject a single hidden `<system-reminder>` on the first
+	// turn so the model knows its context was branched/reconstituted. Composes
+	// with the timestamp message above — the runner collects every handler's
+	// `message` return — so neither clobbers the other.
+	pi.on("before_agent_start", async () => {
+		if (originReminderSent || !state?.sessionOrigin) return;
+		originReminderSent = true;
+		return {
+			message: {
+				customType: "kiln-session-origin",
+				content: buildOriginReminder(state.sessionOrigin, state.agentId),
 				display: false,
 			},
 		};
@@ -426,6 +473,32 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		getState: () => state,
 		getWatcher: () => watcher,
 	};
+}
+
+/**
+ * Build the one-time orientation `<system-reminder>` for a forked or resumed
+ * session. Forks name both the new and (when known) parent agent-id; resumes
+ * note the fresh process + possible time gap. Kept as plain string assembly so
+ * the exact wording lives in one place.
+ */
+function buildOriginReminder(
+	origin: NonNullable<SessionState["sessionOrigin"]>,
+	agentId: string,
+): string {
+	if (origin.kind === "fork") {
+		const from = origin.parentAgentId
+			? `parent session ${origin.parentAgentId}`
+			: "a parent session";
+		return (
+			`<system-reminder>You are a new session (${agentId}) forked via /spawn from ${from} ` +
+			`at this point in the conversation. Context above this point is shared with the parent; ` +
+			`from here the two diverge independently.</system-reminder>`
+		);
+	}
+	return (
+		`<system-reminder>This session was resumed via \`kl resume\` in a fresh process; ` +
+		`time may have passed since the last message. You continue as the same agent (${agentId}).</system-reminder>`
+	);
 }
 
 /**

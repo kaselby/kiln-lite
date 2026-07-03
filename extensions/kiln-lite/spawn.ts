@@ -175,13 +175,15 @@ export function registerSpawnCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Launch in a new tmux window via kl.
+			// Launch in a new tmux window via kl. Pass --parent so the forked
+			// session records its origin (surfaced in snapshot meta) and can name
+			// the parent agent-id in its fork-origin orientation reminder.
 			try {
-				const { stdout } = await execFileAsync(
-					"kl",
-					["--detach", "--", "--session", forkedFile],
-					{ cwd: ctx.cwd, env: process.env },
-				);
+				const parentId = process.env.AGENT_ID;
+				const klArgs = ["--detach"];
+				if (parentId) klArgs.push("--parent", parentId);
+				klArgs.push("--", "--session", forkedFile);
+				const { stdout } = await execFileAsync("kl", klArgs, { cwd: ctx.cwd, env: process.env });
 				const agentId = stdout.trim();
 				ctx.ui.notify(agentId ? `Spawned → ${agentId}` : "Spawned (could not read agent-id)", agentId ? "info" : "warning");
 			} catch (err: unknown) {
