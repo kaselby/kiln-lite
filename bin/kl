@@ -20,7 +20,10 @@
 #                           path.
 #                           <name>: optional agent name (resolved against
 #                             $KL_AGENTS_DIR). If omitted, uses AGENT_HOME or
-#                             the default starter.
+#                             the default starter. A first positional that
+#                             looks like a name but doesn't resolve to an
+#                             installed agent errors (it is NOT spawned as the
+#                             default agent with the token as a prompt).
 #                           --detach (-d): don't attach; print agent-id to stdout.
 #   kl [--detach] [pi-args...]
 #                           Bare `kl` is an alias for `kl run` with the default
@@ -325,15 +328,18 @@ enter_session() {
 # --- subcommands ---
 
 cmd_run() {
-    # Optional first positional: agent name. If it matches an installed
-    # agent under $KL_AGENTS_DIR, use it. We require the name to be a bare
-    # word (no leading dash, no path separator) AND to resolve to an
-    # existing dir — anything else is treated as a pi pass-through arg.
-    # This means `kl --detach` and `kl -- foo` still work unchanged.
+    # Optional first positional: agent name. A bare word matching the agent
+    # name grammar (^[a-z][a-z0-9_]*$ — no leading dash, no path separators) is
+    # always interpreted as an intended agent name: if it resolves to an
+    # installed agent under $KL_AGENTS_DIR we use it, otherwise
+    # resolve_agent_home errors ("no agent named '<x>'"). This matches bare
+    # `kl foo` erroring rather than silently spawning the DEFAULT agent with
+    # the token as its first prompt. Anything that isn't a name-grammar word
+    # (a flag like --detach, the `--` separator, or a multi-word/quoted
+    # prompt) is left untouched for flag handling / pi pass-through — so
+    # `kl --detach`, `kl -- foo`, and `kl run <name> "prompt"` all still work.
     local explicit_name=""
-    if [ $# -gt 0 ] \
-       && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
-       && [ -d "$KL_AGENTS_DIR/$1" ]; then
+    if [ $# -gt 0 ] && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]]; then
         explicit_name="$1"
         shift
     fi
