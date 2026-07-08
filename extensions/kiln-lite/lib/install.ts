@@ -250,6 +250,21 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		// Persist / refresh the snapshot meta. Best-effort; never blocks startup.
 		updateSnapshotMeta(state, ctx, warn);
 
+		// TUI marker: make a continuation-handoff session visually distinct from
+		// a fresh one. A persistent footer status (survives across renders) is
+		// enough to flag it at a glance. Best-effort — a headless/UI-less context
+		// must never break startup.
+		if (sessionOrigin?.kind === "handoff") {
+			try {
+				ctx.ui?.setStatus?.(
+					"kiln-handoff",
+					ctx.ui.theme.fg("accent", "⇄ handoff"),
+				);
+			} catch (err) {
+				warn(`kiln-lite: failed to set handoff status (${(err as Error).message})`);
+			}
+		}
+
 		preloadStaticInjection(state, warn);
 
 		try {
