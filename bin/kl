@@ -363,6 +363,7 @@ cmd_run() {
     local -a template_vars=()
     while [ $# -gt 0 ]; do
         case "$1" in
+            -h|--help) usage ;;
             --detach|-d) detach=1 ;;
             --template)
                 shift
