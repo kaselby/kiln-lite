@@ -33,6 +33,13 @@
 #                             session (e.g. your own $AGENT_ID when spawning a
 #                             peer). Stored in the new session's meta.json and
 #                             shown by `sessions --full`. Optional.
+#                           --handoff FILE: mark this session as a continuation
+#                             handoff and point it at FILE (an orientation
+#                             handoff written by the exiting session). Exported
+#                             as KL_HANDOFF; the extension injects a one-time
+#                             pointer to FILE on the first turn instead of
+#                             baking its contents into the system prompt.
+#                             Optional.
 #                           --prompt-file FILE: read initial prompt from FILE and
 #                             pass it to pi as --prompt. Use this instead of
 #                             `kl --prompt "..."` for any prompt that contains
@@ -352,6 +359,7 @@ cmd_run() {
     local prompt_file=""
     local template=""
     local parent=""
+    local handoff=""
     local -a template_vars=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -387,6 +395,14 @@ cmd_run() {
                 ;;
             --parent=*)
                 parent="${1#--parent=}"
+                ;;
+            --handoff)
+                shift
+                [ $# -ge 1 ] || die "--handoff requires a file-path argument"
+                handoff="$1"
+                ;;
+            --handoff=*)
+                handoff="${1#--handoff=}"
                 ;;
             --) shift; pi_args+=("$@"); break ;;
             *) pi_args+=("$1") ;;
@@ -476,6 +492,9 @@ cmd_run() {
     fi
     if [ -n "$parent" ]; then
         tmux_env_args+=(-e "KL_PARENT=$parent")
+    fi
+    if [ -n "$handoff" ]; then
+        tmux_env_args+=(-e "KL_HANDOFF=$handoff")
     fi
     for var in ${template_vars[@]+"${template_vars[@]}"}; do
         local key="${var%%=*}"

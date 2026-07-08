@@ -9,8 +9,9 @@
  *   - **continue** (default false): spawn a new session after this one shuts
  *     down. The continuation inherits the agent home and template.
  *   - **handoff**: context for the continuation — raw text, or a file path
- *     whose contents are read. Injected into the continuation's system prompt
- *     as orienting context (not a turn-1 user message). Ignored unless
+ *     whose contents are read. Persisted to a file the continuation is pointed
+ *     at by a one-time first-turn reminder (it reads the file to orient) —
+ *     NOT baked into the continuation's system prompt. Ignored unless
  *     continue is true.
  *   - **autonomous** (default false): when true, the continuation is started
  *     unattended with a fixed turn-1 ping so its loop kicks off on its own.
@@ -50,8 +51,9 @@ const ExitSessionParams = Type.Object({
 	handoff: Type.Optional(
 		Type.String({
 			description:
-				"Context to pass to the continuation session, injected into its system prompt as " +
-				"orienting context (not a turn-1 user message). " +
+				"Context to pass to the continuation session. Persisted to a handoff file that the " +
+				"continuation is pointed at by a one-time first-turn reminder (it reads the file to " +
+				"orient itself) — not baked into its system prompt. " +
 				"Can be raw text or a file path (absolute, or ~/…) whose contents will be read. " +
 				"Only used when continue is true.",
 		}),

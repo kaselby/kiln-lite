@@ -13,11 +13,12 @@ import { randomUUID } from "node:crypto";
 export interface ContinuationConfig {
 	/**
 	 * Resolved handoff *content* (text). Orienting context for the
-	 * continuation, injected into its system prompt (via
-	 * `--append-system-prompt`) rather than sent as a turn-1 user message, so
-	 * the continuation treats it as background, not a fresh directive. The
-	 * content is persisted to a file at spawn time ({@link persistHandoff}) and
-	 * the file path — not this content — is what reaches pi.
+	 * continuation. The content is persisted to a file at spawn time
+	 * ({@link persistHandoff}); the continuation is then handed the file *path*
+	 * (via `--handoff`, exported as `KL_HANDOFF`) and injects a one-time pointer
+	 * to it on its first turn — the session reads the file itself to orient.
+	 * The handoff content is deliberately NOT baked into the continuation's
+	 * system prompt.
 	 */
 	handoff: string;
 	template?: string;
@@ -35,25 +36,27 @@ export type TmuxRunner = (args: string[]) => string;
 
 /**
  * Turn-1 message sent to an autonomous continuation so its agent loop starts
- * without a human. The substantive context lives in the system prompt (the
- * handoff); this is only a neutral kick-off, deliberately free of fresh
- * directives so the continuation resumes the prior work rather than treating
- * the ping as a new task.
+ * without a human. The substantive context lives in the handoff file, which
+ * the continuation is pointed at by a first-turn reminder; this is only a
+ * neutral kick-off, deliberately free of fresh directives so the continuation
+ * resumes the prior work rather than treating the ping as a new task.
  */
 export const CONTINUATION_STARTUP_PING =
 	"You are an autonomous continuation of a prior session. Your orienting context — what the " +
-	"prior session was doing and where it left off — is in your system prompt. Pick up from there " +
-	"and continue the work; no new instructions are coming.";
+	"prior session was doing and where it left off — is in a handoff file that a first-turn " +
+	"reminder points you at. Read that file, pick up from there and continue the work; no new " +
+	"instructions are coming.";
 
 /** Options for {@link buildContinuationArgs}. */
 export interface ContinuationArgsOptions {
 	/**
-	 * Path to a file holding the handoff content. Passed as the
-	 * `--append-system-prompt` value — pi reads the file itself (it treats an
-	 * existing path as a file, anything else as literal text). Passing a path
-	 * rather than the content keeps the argv element short, so a large handoff
-	 * never trips tmux's ~16 KB command-length cap (which silently aborts
-	 * `tmux new-session` with "command too long").
+	 * Path to a file holding the handoff content. Passed as the `--handoff`
+	 * value, which `kl` exports as `KL_HANDOFF` for the continuation. The
+	 * extension detects that env var at session_start and injects a one-time
+	 * pointer to the file on the first turn (see the origin-reminder path in
+	 * install.ts) — the handoff is NOT read into the system prompt. Passing a
+	 * path rather than the content also keeps the argv element short, so a large
+	 * handoff never trips tmux's ~16 KB command-length cap.
 	 */
 	handoffPath?: string;
 	template?: string;
@@ -64,11 +67,12 @@ export interface ContinuationArgsOptions {
  * Build the `kl --detach` argument list for a continuation. Pure (no I/O) so
  * the launch shape is unit-testable.
  *
- * The handoff file path rides `--append-system-prompt` so its contents land as
- * orienting context in the continuation's system prompt rather than a turn-1
- * user message. When `autonomous` is set, a fixed startup ping is appended as
- * a positional message so the loop kicks off unattended; otherwise no startup
- * prompt is sent and the session spawns idle for the human handed the terminal.
+ * The handoff file path rides `--handoff` (exported by kl as `KL_HANDOFF`), so
+ * the continuation is pointed at the file via a one-time first-turn reminder
+ * rather than having the handoff baked into its system prompt. When
+ * `autonomous` is set, a fixed startup ping is appended as a positional message
+ * so the loop kicks off unattended; otherwise no startup prompt is sent and the
+ * session spawns idle for the human handed the terminal.
  */
 export function buildContinuationArgs(opts: ContinuationArgsOptions): string[] {
 	const args = ["--detach"];
@@ -76,7 +80,7 @@ export function buildContinuationArgs(opts: ContinuationArgsOptions): string[] {
 		args.push("--template", opts.template);
 	}
 	if (opts.handoffPath) {
-		args.push("--append-system-prompt", opts.handoffPath);
+		args.push("--handoff", opts.handoffPath);
 	}
 	if (opts.autonomous) {
 		args.push(CONTINUATION_STARTUP_PING);
@@ -101,10 +105,10 @@ export function handoffFileName(
 /**
  * Persist handoff content to a durable file under `<agentHome>/handoffs/` and
  * return its absolute path. Every continuation handoff is captured here — both
- * to give the continuation a short path to pass to pi (see
+ * to give the continuation a short path to point at (see
  * {@link buildContinuationArgs}) and to leave a durable record of what each
- * session handed off. The file is never cleaned up by us, so pi's lazy read of
- * `--append-system-prompt` at startup can't race a deletion.
+ * session handed off. The file is never cleaned up by us, so the continuation's
+ * read of it at startup can't race a deletion.
  */
 export function persistHandoff(
 	agentHome: string,

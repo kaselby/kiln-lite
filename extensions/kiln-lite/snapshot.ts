@@ -378,9 +378,8 @@ export function findAgentIdForUuid(
  * A forked session (via `/spawn` or `pi --fork`) gets a fresh pi-session-uuid
  * and therefore a fresh agent-id with no snapshot of its own. Left alone it
  * would recompose the system prompt from current on-disk state — dropping
- * anything injected at the PARENT's launch, most importantly the handoff
- * appended via `--append-system-prompt` (which is never persisted in the
- * session JSONL). Resume doesn't have this problem because it keeps the same
+ * anything injected at the PARENT's launch, e.g. content appended via
+ * `--append-system-prompt` (which is never persisted in the session JSONL). Resume doesn't have this problem because it keeps the same
  * uuid → same agent-id → same snapshot.
  *
  * Given the parent's session file (from `SessionStartEvent.previousSessionFile`),

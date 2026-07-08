@@ -163,11 +163,13 @@ test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", (
 
 // --- buildContinuationArgs ---
 
-test("buildContinuationArgs passes the handoff PATH via --append-system-prompt, not a turn-1 prompt", () => {
+test("buildContinuationArgs passes the handoff PATH via --handoff, not a turn-1 prompt", () => {
 	const args = buildContinuationArgs({ handoffPath: "/home/scout/handoffs/scout-x.md" });
-	assert.deepEqual(args, ["--detach", "--append-system-prompt", "/home/scout/handoffs/scout-x.md"]);
+	assert.deepEqual(args, ["--detach", "--handoff", "/home/scout/handoffs/scout-x.md"]);
 	// Never --prompt-file (the old turn-1 mechanism) and no trailing positional.
 	assert.ok(!args.includes("--prompt-file"));
+	// Never --append-system-prompt: the handoff is no longer baked into the prompt.
+	assert.ok(!args.includes("--append-system-prompt"));
 });
 
 test("buildContinuationArgs omits the handoff flag when no path is given", () => {
@@ -189,7 +191,7 @@ test("buildContinuationArgs autonomous:true appends the startup ping as the fina
 	const args = buildContinuationArgs({ handoffPath: "/h/p.md", autonomous: true });
 	assert.deepEqual(args, [
 		"--detach",
-		"--append-system-prompt",
+		"--handoff",
 		"/h/p.md",
 		CONTINUATION_STARTUP_PING,
 	]);
@@ -207,7 +209,7 @@ test("buildContinuationArgs threads --template through before the handoff", () =
 		"--detach",
 		"--template",
 		"worker",
-		"--append-system-prompt",
+		"--handoff",
 		"/h/p.md",
 		CONTINUATION_STARTUP_PING,
 	]);
@@ -255,8 +257,9 @@ test("persistHandoff writes content under <agentHome>/handoffs/ and returns its 
 });
 
 test("CONTINUATION_STARTUP_PING is a neutral kick-off, not a fresh directive", () => {
-	// Guards the design intent: the ping points at the system prompt and tells
-	// the continuation to resume, rather than handing it a new task.
-	assert.match(CONTINUATION_STARTUP_PING, /system prompt/);
+	// Guards the design intent: the ping points at the handoff file (via the
+	// first-turn reminder) and tells the continuation to resume, rather than
+	// handing it a new task.
+	assert.match(CONTINUATION_STARTUP_PING, /handoff file/);
 	assert.match(CONTINUATION_STARTUP_PING, /continue the work/);
 });

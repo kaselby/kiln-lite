@@ -200,10 +200,15 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		snapshotWriter = writer;
 
 		// Classify how this session was launched so the first turn can carry a
-		// one-time orientation reminder. A fork (`/spawn`) and a resume
-		// (`kl resume`) both boot as a fresh `pi --session` process — reason
-		// "startup", not "resume"/"fork" (those only fire for pi's in-process
-		// slash-command switches). Discriminate on durable signals:
+		// one-time orientation reminder. A continuation handoff, a fork
+		// (`/spawn`), and a resume (`kl resume`) all boot as a fresh
+		// `pi --session` process — reason "startup", not "resume"/"fork" (those
+		// only fire for pi's in-process slash-command switches). Discriminate on
+		// durable signals:
+		//   * handoff → KL_HANDOFF names the handoff file (`kl --handoff`, set by
+		//               exit_session's continuation spawn). Checked first: a
+		//               continuation is a fresh boot with no snapshot, so it would
+		//               otherwise fall through the fork/resume branches.
 		//   * resume  → a snapshot already existed for this agent-id at boot.
 		//   * fork    → the session header carries a parentSession and no
 		//               snapshot exists yet (a fresh fork's first boot).
@@ -211,7 +216,10 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		// with a snapshot already on disk) isn't mistaken for a resume.
 		let sessionOrigin: SessionState["sessionOrigin"];
 		const freshBoot = event.reason === "startup";
-		if (event.reason === "resume" || (freshBoot && existing !== null)) {
+		const handoffPath = freshBoot ? process.env.KL_HANDOFF?.trim() || undefined : undefined;
+		if (handoffPath) {
+			sessionOrigin = { kind: "handoff", handoffPath };
+		} else if (event.reason === "resume" || (freshBoot && existing !== null)) {
 			sessionOrigin = { kind: "resume" };
 		} else if (event.reason === "fork" || (freshBoot && existing === null)) {
 			const header = ctx.sessionManager.getHeader?.();
@@ -476,15 +484,24 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 }
 
 /**
- * Build the one-time orientation `<system-reminder>` for a forked or resumed
- * session. Forks name both the new and (when known) parent agent-id; resumes
- * note the fresh process + possible time gap. Kept as plain string assembly so
- * the exact wording lives in one place.
+ * Build the one-time orientation `<system-reminder>` for a forked, resumed, or
+ * handed-off session. Forks name both the new and (when known) parent
+ * agent-id; resumes note the fresh process + possible time gap; handoffs point
+ * the session at the handoff file to read for itself. Kept as plain string
+ * assembly so the exact wording lives in one place.
  */
 function buildOriginReminder(
 	origin: NonNullable<SessionState["sessionOrigin"]>,
 	agentId: string,
 ): string {
+	if (origin.kind === "handoff") {
+		return (
+			`<system-reminder>You have received a handoff from a previous session. ` +
+			`Read \`${origin.handoffPath}\` to orient yourself — it holds what the prior ` +
+			`session was doing and where it left off — then continue that work as ` +
+			`agent ${agentId}.</system-reminder>`
+		);
+	}
 	if (origin.kind === "fork") {
 		const from = origin.parentAgentId
 			? `parent session ${origin.parentAgentId}`
@@ -592,17 +609,19 @@ function resolvePiPaths(): { readme: string; docs: string; examples: string } {
  * Spawn a continuation session via `kl --detach`.
  *
  * The handoff content is first persisted to a durable file under
- * `<agentHome>/handoffs/` and that file *path* is passed as the
- * `--append-system-prompt` value. kl forwards it to pi through tmux's execvp
- * path; pi treats an existing path as a file and reads its contents lazily at
- * startup, so the handoff lands as orienting context in the continuation's
- * system prompt — never a turn-1 user message.
+ * `<agentHome>/handoffs/` and that file *path* is passed as the `--handoff`
+ * value. kl exports it to the continuation as `KL_HANDOFF`; the extension
+ * detects that at session_start and injects a one-time pointer to the file on
+ * the first turn (see the origin-reminder path). The continuation reads the
+ * file itself to orient — the handoff is never baked into its system prompt
+ * nor sent as a turn-1 user message.
  *
- * Passing a path rather than the content is what keeps this robust for large
- * handoffs: `tmux new-session` aborts with "command too long" once the total
- * command string exceeds ~16 KB (well under ARG_MAX), so inlining a multi-KB
- * handoff silently dropped the continuation. A short path never trips that
- * cap. The file is never deleted by us, so pi's lazy read can't race a cleanup.
+ * Passing a path rather than the content is also what keeps this robust for
+ * large handoffs: `tmux new-session` aborts with "command too long" once the
+ * total command string exceeds ~16 KB (well under ARG_MAX), so inlining a
+ * multi-KB handoff silently dropped the continuation. A short path never trips
+ * that cap. The file is never deleted by us, so the continuation's read can't
+ * race a cleanup.
  *
  * When `config.autonomous` is set, a fixed turn-1 ping is appended as a
  * positional message so the continuation's agent loop kicks off unattended.

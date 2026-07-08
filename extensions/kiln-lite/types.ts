@@ -88,12 +88,14 @@ export interface SessionState {
 	/** Template name applied to this session (from KL_TEMPLATE), if any. */
 	template?: string;
 	/**
-	 * How this session was launched, when it's a fork (`/spawn`) or a resume
-	 * (`kl resume`). Drives a one-time orientation <system-reminder> injected
-	 * on the first turn. Undefined for a plain fresh session. `parentAgentId`
-	 * is populated for forks (from KL_PARENT) when available.
+	 * How this session was launched, when it's a fork (`/spawn`), a resume
+	 * (`kl resume`), or a continuation handoff (`exit_session continue=true`).
+	 * Drives a one-time orientation <system-reminder> injected on the first
+	 * turn. Undefined for a plain fresh session. `parentAgentId` is populated
+	 * for forks (from KL_PARENT) when available; `handoffPath` is the handoff
+	 * file the continuation should read (from KL_HANDOFF).
 	 */
-	sessionOrigin?: { kind: "fork" | "resume"; parentAgentId?: string };
+	sessionOrigin?: { kind: "fork" | "resume" | "handoff"; parentAgentId?: string; handoffPath?: string };
 	/**
 	 * Placeholder variables for {key} expansion across prompts and config
 	 * fields. Populated with base set at session_start; custom harnesses
