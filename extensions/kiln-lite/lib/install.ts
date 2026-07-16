@@ -669,6 +669,7 @@ async function spawnContinuation(
 	const args = buildContinuationArgs({
 		handoffPath,
 		template: config.template,
+		model: config.model,
 		autonomous: config.autonomous,
 	});
 

@@ -23,6 +23,15 @@ export interface ContinuationConfig {
 	handoff: string;
 	template?: string;
 	/**
+	 * Model id the continuation should launch with (e.g.
+	 * `anthropic/claude-opus-4-8`). Captured from the exiting session's live
+	 * model so a continuation inherits the model actually in use — including a
+	 * mid-session `/model` switch — rather than silently reverting to the
+	 * `agent.yml` default (or pi's default) that a bare `kl --detach` resolves.
+	 * When unset, the launch falls back to that default.
+	 */
+	model?: string;
+	/**
 	 * When true, the continuation is started unattended: a fixed turn-1 ping is
 	 * sent so its agent loop kicks off on its own. When false (the default),
 	 * no startup prompt is sent — the continuation spawns idle with the handoff
@@ -60,6 +69,13 @@ export interface ContinuationArgsOptions {
 	 */
 	handoffPath?: string;
 	template?: string;
+	/**
+	 * Model id to launch the continuation with. Passed through to `kl` as
+	 * `--model <id>`; kl forwards it to pi and, seeing an explicit `--model`,
+	 * skips prepending the `agent.yml` default. Omitted → kl's default
+	 * resolution applies.
+	 */
+	model?: string;
 	autonomous?: boolean;
 }
 
@@ -69,8 +85,9 @@ export interface ContinuationArgsOptions {
  *
  * The handoff file path rides `--handoff` (exported by kl as `KL_HANDOFF`), so
  * the continuation is pointed at the file via a one-time first-turn reminder
- * rather than having the handoff baked into its system prompt. When
- * `autonomous` is set, a fixed startup ping is appended as a positional message
+ * rather than having the handoff baked into its system prompt. When `model` is
+ * set it rides `--model`, so the continuation inherits the exiting session's
+ * model instead of kl's default. When `autonomous` is set, a fixed startup ping is appended as a positional message
  * so the loop kicks off unattended; otherwise no startup prompt is sent and the
  * session spawns idle for the human handed the terminal.
  */
@@ -78,6 +95,12 @@ export function buildContinuationArgs(opts: ContinuationArgsOptions): string[] {
 	const args = ["--detach"];
 	if (opts.template) {
 		args.push("--template", opts.template);
+	}
+	if (opts.model) {
+		// Not a kl flag — falls through to pi_args, where kl's has-model check
+		// sees it and skips the agent.yml default. pi parses it as an option
+		// ahead of any positional startup ping.
+		args.push("--model", opts.model);
 	}
 	if (opts.handoffPath) {
 		args.push("--handoff", opts.handoffPath);

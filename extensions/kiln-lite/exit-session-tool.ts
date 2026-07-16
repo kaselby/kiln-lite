@@ -112,6 +112,7 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps) {
 				deps.setContinuation({
 					handoff: handoffText,
 					template: deps.getTemplate(),
+					model: ctx.model?.id,
 					autonomous: params.autonomous ?? false,
 				});
 			}

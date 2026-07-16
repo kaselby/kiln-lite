@@ -222,6 +222,35 @@ test("buildContinuationArgs autonomous-only (no handoff path) still sends the pi
 	]);
 });
 
+test("buildContinuationArgs threads --model so the continuation inherits the model", () => {
+	const args = buildContinuationArgs({ model: "anthropic/claude-opus-4-8" });
+	assert.deepEqual(args, ["--detach", "--model", "anthropic/claude-opus-4-8"]);
+});
+
+test("buildContinuationArgs omits --model when no model is given", () => {
+	const args = buildContinuationArgs({ handoffPath: "/h/p.md" });
+	assert.ok(!args.includes("--model"));
+});
+
+test("buildContinuationArgs orders --template, --model, --handoff, then the ping", () => {
+	const args = buildContinuationArgs({
+		handoffPath: "/h/p.md",
+		template: "worker",
+		model: "anthropic/claude-opus-4-8",
+		autonomous: true,
+	});
+	assert.deepEqual(args, [
+		"--detach",
+		"--template",
+		"worker",
+		"--model",
+		"anthropic/claude-opus-4-8",
+		"--handoff",
+		"/h/p.md",
+		CONTINUATION_STARTUP_PING,
+	]);
+});
+
 // --- handoffFileName / persistHandoff ---
 
 test("handoffFileName is filesystem-safe: agentName-timestamp-shortuuid.md", () => {
