@@ -442,10 +442,12 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		});
 	});
 
-	// --- resources_discover: register $AGENT_HOME/skills ---
+	// --- resources_discover: register $AGENT_HOME/skills/active ---
+	// Only the active/ subtree is autodiscovered; archived/ and wip/ are
+	// deliberately excluded so stale or in-progress skills don't get loaded.
 	pi.on("resources_discover", async (_event, _ctx) => {
 		if (!state) return;
-		const skillsDir = join(state.agentHome, "skills");
+		const skillsDir = join(state.agentHome, "skills", "active");
 		return { skillPaths: [skillsDir] };
 	});
 
