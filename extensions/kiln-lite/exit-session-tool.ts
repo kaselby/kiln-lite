@@ -31,7 +31,7 @@ import { Type } from "@sinclair/typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { CleanupDispatcher } from "./cleanup.ts";
-import { resolveHandoff, type ContinuationConfig } from "./exit-session.ts";
+import { modelReference, resolveHandoff, type ContinuationConfig } from "./exit-session.ts";
 
 export type { ContinuationConfig } from "./exit-session.ts";
 
@@ -112,7 +112,7 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps) {
 				deps.setContinuation({
 					handoff: handoffText,
 					template: deps.getTemplate(),
-					model: ctx.model?.id,
+					model: modelReference(ctx.model),
 					autonomous: params.autonomous ?? false,
 				});
 			}

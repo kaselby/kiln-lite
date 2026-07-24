@@ -23,12 +23,12 @@ export interface ContinuationConfig {
 	handoff: string;
 	template?: string;
 	/**
-	 * Model id the continuation should launch with (e.g.
-	 * `anthropic/claude-opus-4-8`). Captured from the exiting session's live
-	 * model so a continuation inherits the model actually in use — including a
-	 * mid-session `/model` switch — rather than silently reverting to the
-	 * `agent.yml` default (or pi's default) that a bare `kl --detach` resolves.
-	 * When unset, the launch falls back to that default.
+	 * Provider-qualified model reference the continuation should launch with
+	 * (e.g. `openai-codex/gpt-5.6-sol`). Captured from the exiting session's
+	 * live model so a continuation inherits the exact provider/model actually
+	 * in use — including a mid-session `/model` switch — rather than silently
+	 * reverting to the `agent.yml` default (or letting pi resolve an ambiguous
+	 * bare model id). When unset, the launch falls back to that default.
 	 */
 	model?: string;
 	/**
@@ -38,6 +38,13 @@ export interface ContinuationConfig {
 	 * as context and waits for the human who is handed the terminal.
 	 */
 	autonomous?: boolean;
+}
+
+/** Build pi's canonical provider/model reference for a live model. */
+export function modelReference(
+	model: { provider: string; id: string } | undefined,
+): string | undefined {
+	return model ? `${model.provider}/${model.id}` : undefined;
 }
 
 /** Runs a tmux subcommand and returns its stdout. Injectable for tests. */
@@ -70,10 +77,10 @@ export interface ContinuationArgsOptions {
 	handoffPath?: string;
 	template?: string;
 	/**
-	 * Model id to launch the continuation with. Passed through to `kl` as
-	 * `--model <id>`; kl forwards it to pi and, seeing an explicit `--model`,
-	 * skips prepending the `agent.yml` default. Omitted → kl's default
-	 * resolution applies.
+	 * Provider-qualified model reference to launch the continuation with. Passed
+	 * through to `kl` as `--model <provider/id>`; kl forwards it to pi and,
+	 * seeing an explicit `--model`, skips prepending the `agent.yml` default.
+	 * Omitted → kl's default resolution applies.
 	 */
 	model?: string;
 	autonomous?: boolean;

@@ -8,6 +8,7 @@ import { resolveHandoff } from "../extensions/kiln-lite/exit-session.ts";
 import { handoffTmuxClient } from "../extensions/kiln-lite/exit-session.ts";
 import {
 	buildContinuationArgs,
+	modelReference,
 	handoffFileName,
 	persistHandoff,
 	CONTINUATION_STARTUP_PING,
@@ -161,6 +162,19 @@ test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", (
 	assert.match(warnings[0], /handoff failed/);
 });
 
+// --- modelReference ---
+
+test("modelReference preserves the live provider and model id", () => {
+	assert.equal(
+		modelReference({ provider: "openai-codex", id: "gpt-5.6-sol" }),
+		"openai-codex/gpt-5.6-sol",
+	);
+});
+
+test("modelReference returns undefined when no live model is available", () => {
+	assert.equal(modelReference(undefined), undefined);
+});
+
 // --- buildContinuationArgs ---
 
 test("buildContinuationArgs passes the handoff PATH via --handoff, not a turn-1 prompt", () => {
@@ -222,9 +236,9 @@ test("buildContinuationArgs autonomous-only (no handoff path) still sends the pi
 	]);
 });
 
-test("buildContinuationArgs threads --model so the continuation inherits the model", () => {
-	const args = buildContinuationArgs({ model: "anthropic/claude-opus-4-8" });
-	assert.deepEqual(args, ["--detach", "--model", "anthropic/claude-opus-4-8"]);
+test("buildContinuationArgs threads the provider-qualified model reference", () => {
+	const args = buildContinuationArgs({ model: "openai-codex/gpt-5.6-sol" });
+	assert.deepEqual(args, ["--detach", "--model", "openai-codex/gpt-5.6-sol"]);
 });
 
 test("buildContinuationArgs omits --model when no model is given", () => {
@@ -236,7 +250,7 @@ test("buildContinuationArgs orders --template, --model, --handoff, then the ping
 	const args = buildContinuationArgs({
 		handoffPath: "/h/p.md",
 		template: "worker",
-		model: "anthropic/claude-opus-4-8",
+		model: "openai-codex/gpt-5.6-sol",
 		autonomous: true,
 	});
 	assert.deepEqual(args, [
@@ -244,7 +258,7 @@ test("buildContinuationArgs orders --template, --model, --handoff, then the ping
 		"--template",
 		"worker",
 		"--model",
-		"anthropic/claude-opus-4-8",
+		"openai-codex/gpt-5.6-sol",
 		"--handoff",
 		"/h/p.md",
 		CONTINUATION_STARTUP_PING,
