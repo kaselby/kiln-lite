@@ -12,6 +12,8 @@
  * daemon restarted mid-session.
  */
 
+import { isAbsolute, resolve } from "node:path";
+
 import * as proto from "./protocol.ts";
 import type { SessionRecord } from "./state.ts";
 import { appendChannelHistory, writeInboxMessage } from "./inbox.ts";
@@ -234,6 +236,49 @@ export async function handleSendDirect(
     return proto.ack(msg.ref!, { message: `sent to ${to}` });
 }
 
+/**
+ * Deliver to the requester's own inbox without touching presence state.
+ *
+ * Detached helpers can outlive the interactive session, so treating them as
+ * ordinary senders would make ensureSession() create an unprunable pid=0
+ * presence record. The requester envelope already carries the authoritative
+ * inbox root; self-delivery can safely use it directly while peer DMs retain
+ * their live-recipient requirement.
+ */
+export async function handleDeliverSelf(
+    msg: proto.Message,
+    daemon: Daemon,
+): Promise<proto.Message> {
+    const summary = typeof msg.data.summary === "string" ? msg.data.summary : "";
+    const body = typeof msg.data.body === "string" ? msg.data.body : "";
+    const priority = (msg.data.priority === "high" ? "high" : "normal") as "normal" | "high";
+    const req = requireRequester(msg);
+    if (!req?.inbox_path) {
+        return proto.error(msg.ref!, "deliver_self requires requester identity and inbox_path");
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(req.session)) {
+        return proto.error(msg.ref!, "deliver_self requester session is invalid");
+    }
+    if (!isAbsolute(req.inbox_path)) {
+        return proto.error(msg.ref!, "deliver_self requester inbox_path must be absolute");
+    }
+    const known = daemon.state.knownSessions.lookup(req.session);
+    if (known && resolve(known.inbox_path) !== resolve(req.inbox_path)) {
+        return proto.error(msg.ref!, "deliver_self requester inbox_path conflicts with known session path");
+    }
+    if (!summary) return proto.error(msg.ref!, "deliver_self requires a summary");
+
+    writeInboxMessage({
+        inboxRoot: req.inbox_path,
+        recipient: req.session,
+        sender: req.session,
+        summary,
+        body,
+        priority,
+    });
+    return proto.ack(msg.ref!, { message: `delivered to ${req.session}` });
+}
+
 export async function handleListSubscriptions(
     msg: proto.Message,
     daemon: Daemon,
@@ -289,6 +334,7 @@ export const handlers: Record<string, Handler> = {
     [proto.UNSUBSCRIBE]: handleUnsubscribe,
     [proto.PUBLISH]: handlePublish,
     [proto.SEND_DIRECT]: handleSendDirect,
+    [proto.DELIVER_SELF]: handleDeliverSelf,
     [proto.LIST_SUBSCRIPTIONS]: handleListSubscriptions,
     [proto.LIST_SESSIONS]: handleListSessions,
     [proto.GET_STATUS]: handleGetStatus,

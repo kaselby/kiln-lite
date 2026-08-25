@@ -83,6 +83,7 @@ Adjective and noun pools live in both `bin/kl` and `extensions/kiln-lite/identit
 
 ```
 kl-msg send <to> <summary> [--body <text> | --body-stdin] [--priority normal|high]
+kl-msg deliver-self <summary> [--body <text> | --body-stdin] [--priority normal|high]
 kl-msg publish <channel> <summary> [--body <text> | --body-stdin] [--priority normal|high]
 kl-msg subscribe <channel>
 kl-msg unsubscribe <channel>
@@ -98,7 +99,8 @@ Reads its identity from env vars:
 | `AGENT_ID` | This session's agent-id | required |
 | `AGENT_HOME` | This session's home dir | required |
 | `AGENT_NAME` | Agent name prefix | inferred from first `-` segment of `AGENT_ID` |
-| `INBOX_DIR` | Inbox dir name under `AGENT_HOME` | `inbox` |
+| `INBOX` | Exact per-session inbox path; its parent becomes the requester inbox root | unset |
+| `INBOX_DIR` | Inbox dir name under `AGENT_HOME`, used when `INBOX` is unset | `inbox` |
 
 All set automatically by the kiln-lite extension on `session_start`. If you invoke `kl-msg` outside a session, you must set them yourself.
 
@@ -118,7 +120,8 @@ Every `kl-msg` invocation ends up calling `DaemonClient.sendOnce(...)`, which au
 
 | Command | Args | What it does |
 |---------|------|--------------|
-| `send` | `<to> <summary>` + body | Write a DM to `<to>`'s inbox. |
+| `send` | `<to> <summary>` + body | Write a DM to a live `<to>` session's inbox. |
+| `deliver-self` | `<summary>` + body | Write to the requester's own inbox without registering presence. Intended for detached helpers such as `schedule`. |
 | `publish` | `<channel> <summary>` + body | Fan out to every subscriber ≠ sender. |
 | `subscribe` | `<channel>` | Add this session to the channel's subscriber set. |
 | `unsubscribe` | `<channel>` | Remove from subscriber set. |

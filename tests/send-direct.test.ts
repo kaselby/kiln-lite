@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { handleSendDirect } from "../src/daemon/handlers.ts";
+import { handleDeliverSelf, handleSendDirect } from "../src/daemon/handlers.ts";
 import { DaemonState, type SessionRecord } from "../src/daemon/state.ts";
 import * as proto from "../src/daemon/protocol.ts";
 
@@ -101,5 +101,47 @@ describe("handleSendDirect — live-only delivery", () => {
 		assert.equal(res.data.code, "recipient_not_live");
 		// The old fallback wrote <sender_inbox>/<recipient>/… — assert it didn't.
 		assert.ok(!existsSync(inboxRootFor("a-x-1")), "no black-hole write into sender's tree");
+	});
+});
+
+describe("handleDeliverSelf — detached self-delivery", () => {
+	it("writes to the requester's own inbox without creating presence", async () => {
+		const from = "a-x-1";
+		const msg = proto.deliverSelf("Scheduled wake", "check the build", "normal", requester(from));
+		const res = await handleDeliverSelf(msg, daemon as never);
+
+		assert.equal(res.type, proto.ACK);
+		assert.equal(daemon.state.presence.get(from), undefined, "detached delivery must not register presence");
+		const inbox = join(inboxRootFor(from), from);
+		const files = readdirSync(inbox).filter((f) => f.endsWith(".md"));
+		assert.equal(files.length, 1);
+	});
+
+	it("rejects a requester without an inbox path", async () => {
+		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
+			agent: "a",
+			session: "a-x-1",
+		});
+		const res = await handleDeliverSelf(msg, daemon as never);
+		assert.equal(res.type, proto.ERROR);
+		assert.ok(!existsSync(inboxRootFor("a-x-1")));
+	});
+
+	it("rejects unsafe session IDs and paths that conflict with known state", async () => {
+		const unsafe = proto.deliverSelf("Scheduled wake", "body", "normal", {
+			agent: "a",
+			session: "../../escape",
+			inbox_path: join(dir, "inbox"),
+		});
+		assert.equal((await handleDeliverSelf(unsafe, daemon as never)).type, proto.ERROR);
+
+		registerOffline("a-x-1");
+		const conflicting = proto.deliverSelf("Scheduled wake", "body", "normal", {
+			agent: "a",
+			session: "a-x-1",
+			inbox_path: join(dir, "different-home", "inbox"),
+		});
+		assert.equal((await handleDeliverSelf(conflicting, daemon as never)).type, proto.ERROR);
+		assert.ok(!existsSync(join(dir, "different-home")));
 	});
 });

@@ -192,6 +192,17 @@ export class DaemonClient {
         );
     }
 
+    /** Deliver to this requester's inbox without registering live presence. */
+    async deliverSelf(
+        summary: string,
+        body: string,
+        priority: "normal" | "high" = "normal",
+    ): Promise<void> {
+        this.expect(
+            await this.call(proto.deliverSelf(summary, body, priority, this.requester)),
+        );
+    }
+
     async listSubscriptions(): Promise<string[]> {
         const res = this.expect(await this.call(proto.listSubscriptions(this.requester)));
         return Array.isArray(res.data.channels) ? (res.data.channels as string[]) : [];

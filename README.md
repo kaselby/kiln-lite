@@ -283,12 +283,12 @@ agent's venv. Add Python deps with
 > Discovery runs at session start, so a tool added mid-session is callable
 > immediately but won't appear in the prompt listing until the next session.
 
-**Bundled tools** (copied into every home, editable in place):
+**Bundled shell tools** (copied into every home, editable in place):
 
 | Tool | Purpose |
 |------|---------|
-| `message` | Send DMs / broadcast to channels / manage subscriptions. |
-| `sessions` | Discover live peers — `list`, `show <agent-id>`, `resolve <uuid>`. |
+| `sessions` | Discover live peers — `list`, `show <agent-id>`. |
+| `schedule` | Wake the current session after a delay/time or when a PID exits. |
 | `fetch` | Fetch a web page as readable text (Chrome fallback for JS pages). |
 | `web-search` | Web search via Tavily or Exa. |
 | `seek` | Fast filename search (`fd` if present, else `find`). |

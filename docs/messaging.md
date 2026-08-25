@@ -8,7 +8,7 @@ Each Pi session running kiln-lite has an inbox directory at `<home>/inbox/<agent
 
 Two routing modes:
 
-- **Direct** — address another session by agent-id. The daemon resolves the recipient's inbox (via live presence, or `known-sessions.json` fallback) and writes the file.
+- **Direct** — address a currently-live session by agent-id. The daemon resolves the recipient through live presence and writes the file; offline or unknown recipients return an error.
 - **Channel** — publish to a named channel. The daemon fans out: for every subscriber ≠ sender, write a file to their inbox.
 
 Delivery is asynchronous. The recipient's extension watches the inbox:
@@ -57,10 +57,8 @@ agent → message send <to> <summary>
     → DaemonClient.sendDirect
       → socket: {type: "send_direct", to, summary, body, priority, requester}
         → handleSendDirect
-          ├─ resolve inbox_path for <to>:
-          │    1. presence registry (is <to> alive?)
-          │    2. known-sessions.json (have we seen <to> before?)
-          │    3. fall back to sender's own inbox_path (single-home scenario)
+          ├─ resolve <to> through live presence
+          ├─ return recipient_not_live if absent
           ├─ writeInboxMessage → <inbox>/<to>/<ts>-<rand>.md
           └─ ack
 ```
@@ -166,6 +164,7 @@ Full wire reference in [`daemon.md`](./daemon.md). The messaging-relevant subset
 | `unsubscribe` | `channel`, `requester` | `ack { subscriber_count }` |
 | `publish` | `channel`, `summary`, `body`, `priority`, `requester` | `ack { recipient_count }` |
 | `send_direct` | `to`, `summary`, `body`, `priority`, `requester` | `ack` |
+| `deliver_self` | `summary`, `body`, `priority`, `requester` with `inbox_path` | `ack` |
 | `list_subscriptions` | `requester` | `result { channels: [str] }` |
 
 ### Inbox notification format
@@ -186,15 +185,16 @@ Written by the daemon to `~/.kl/daemon/subscriptions/<session-id>.json` on every
 
 The extension does **not** track "desired subscriptions" on the session side — if the daemon drops a subscription and the session doesn't notice, that channel is just lost for that session. Re-subscribe to recover. A future iteration could reconcile a desired-set against the daemon's actual state, but today it doesn't.
 
-### Recipient resolution order
+### Recipient resolution
 
-`handleSendDirect` tries, in order:
+`handleSendDirect` resolves recipients only through the live presence registry.
+This prevents an unknown or offline target from being silently written into the
+sender's agent home under the multi-home layout. Absent recipients return a
+`recipient_not_live` error.
 
-1. **Live presence** — is the recipient currently registered? Use their registered `inbox_path`.
-2. **Known sessions** — was the recipient ever registered? Use the last-known `inbox_path` from `known-sessions.json`.
-3. **Sender fallback** — use the sender's own `inbox_path`. This works only in the current single-home case and is a correctness hack for targets the daemon has truly never seen.
-
-If none of these produce a directory, the write fails silently. (Future iteration: error back to the client.)
+Detached helpers can park a message for their own session with `deliver_self`.
+That route uses the requester's authoritative `inbox_path` directly and does
+not register the helper as live presence.
 
 ## Examples
 
@@ -286,7 +286,7 @@ The watcher respects `.read` markers — anything with one is skipped on future 
 - **Session ID collisions mean inbox collisions.** `<agent-id>` is deterministic from Pi's session UUID, so two sessions with the same UUID share the same inbox. This doesn't happen under normal use (Pi assigns fresh UUIDs) but if you synthesize UUIDs manually, watch it.
 - **Mid-turn pings need a `tool_result` to piggyback on.** A turn with no tool calls gets no ping. Usually fine because the next turn either calls a tool or goes idle and triggers full delivery; but long tool-less turns (the agent "thinking" without calling anything) can delay notification.
 - **Channel fanout excludes the sender.** Publishing to a channel you're subscribed to doesn't put a copy in your own inbox. `channels/<name>/history.jsonl` has the canonical record if you want to see what you sent.
-- **`known-sessions.json` is the resolver for dead sends.** If it gets deleted, DMs to sessions that aren't currently alive will fall back to the sender's own inbox — they won't error, they'll just land somewhere unexpected. Don't delete it unless you're resetting the daemon entirely.
+- **Direct DMs are live-only.** Sending to an exited, unknown, or mistyped session returns `recipient_not_live`; it does not park a file. Channel fanout may still use `known-sessions.json` for offline subscribers. Detached self-delivery uses the separate `deliver_self` route.
 - **Subscriptions don't outlive `deregister`.** The daemon removes subscription files on `deregister`. A session that re-registers under a new id starts fresh. If you want persistent subscriptions per *agent* rather than per session, that's a layer kiln-lite doesn't currently provide.
 - **The filename timestamp is second-precision.** Two messages written within the same second get different 16-hex suffixes, so no collision — but if you sort purely by the timestamp prefix you'll see ties.
 - **`.read` markers are only written on delivery.** If a session reads a message file directly without going through the watcher (e.g. `cat` in a shell tool), the watcher will still see it as unread and re-deliver. Use `message read <id-prefix>` — it writes the marker for you.

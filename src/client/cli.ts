@@ -10,6 +10,7 @@
  *
  * Subcommands:
  *   kl-msg send <to> <summary> [--body-stdin | --body <text>] [--priority normal|high]
+ *   kl-msg deliver-self <summary> [--body-stdin | --body <text>] [--priority normal|high]
  *   kl-msg publish <channel> <summary> [--body-stdin | --body <text>] [--priority ...]
  *   kl-msg subscribe <channel>
  *   kl-msg unsubscribe <channel>
@@ -20,11 +21,12 @@
  * Required env:
  *   AGENT_ID    this session's id
  *   AGENT_HOME  this session's home dir
- *   INBOX_DIR   inbox dir name under AGENT_HOME (default: inbox)
+ *   INBOX       exact per-session inbox path (preferred when set)
+ *   INBOX_DIR   inbox dir name under AGENT_HOME (fallback; default: inbox)
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { DaemonClient } from "./index.ts";
 
@@ -38,14 +40,17 @@ function envOrDie(name: string): string {
 }
 
 function makeClient(): DaemonClient {
-    const agent_name = process.env.AGENT_NAME ?? inferAgentName(envOrDie("AGENT_ID"));
+    const session = envOrDie("AGENT_ID");
+    const agent_name = process.env.AGENT_NAME ?? inferAgentName(session);
     const agent_home = envOrDie("AGENT_HOME");
-    const inbox_dir = process.env.INBOX_DIR ?? "inbox";
+    const inbox_path = process.env.INBOX
+        ? dirname(process.env.INBOX)
+        : join(agent_home, process.env.INBOX_DIR ?? "inbox");
     return new DaemonClient({
         requester: {
             agent: agent_name,
-            session: envOrDie("AGENT_ID"),
-            inbox_path: join(agent_home, inbox_dir),
+            session,
+            inbox_path,
         },
     });
 }
@@ -118,6 +123,23 @@ async function main(): Promise<void> {
             const priority = (flags.priority === "high" ? "high" : "normal") as "normal" | "high";
             await client.sendDirect(to, summary, body, priority);
             process.stdout.write(`sent -> ${to}\n`);
+            return;
+        }
+        case "deliver-self": {
+            const { positional, flags } = parseArgs(rest, {
+                body: "string",
+                "body-stdin": "bool",
+                priority: "string",
+            });
+            const summary = positional.join(" ");
+            if (!summary) die("deliver-self requires <summary>");
+            const body = readBody({
+                body: flags.body as string | undefined,
+                stdin: flags["body-stdin"] as boolean | undefined,
+            });
+            const priority = (flags.priority === "high" ? "high" : "normal") as "normal" | "high";
+            await client.deliverSelf(summary, body, priority);
+            process.stdout.write(`delivered -> ${client.requester.session}\n`);
             return;
         }
         case "publish": {
@@ -201,6 +223,7 @@ function printUsage(): void {
             "",
             "Usage:",
             "  kl-msg send <to> <summary> [--body <text> | --body-stdin] [--priority normal|high]",
+            "  kl-msg deliver-self <summary> [--body <text> | --body-stdin] [--priority normal|high]",
             "  kl-msg publish <channel> <summary> [--body <text> | --body-stdin] [--priority ...]",
             "  kl-msg subscribe <channel>",
             "  kl-msg unsubscribe <channel>",
@@ -211,7 +234,8 @@ function printUsage(): void {
             "Env:",
             "  AGENT_ID    this session's id (required)",
             "  AGENT_HOME  this session's home dir (required)",
-            "  INBOX_DIR   inbox dir name (default: inbox)",
+            "  INBOX       exact per-session inbox path; its parent is the inbox root",
+            "  INBOX_DIR   inbox dir name fallback (default: inbox)",
             "  AGENT_NAME  agent name for requester envelope",
             "              (default: first segment of AGENT_ID)",
             "",

@@ -12,8 +12,8 @@ The directory layout is **flat** — one script per file at the top level, no su
 
 ```
 <home>/tools/
-├── message         # bundled
 ├── sessions        # bundled
+├── schedule        # bundled
 ├── fetch           # bundled
 ├── web-search      # bundled
 ├── seek            # bundled
@@ -134,8 +134,8 @@ Installed by `bootstrap.sh` from `<repo>/tools/`:
 
 | Tool | Purpose |
 |------|---------|
-| `message` | DMs, channel pub/sub, and inbox management. Wraps `kl-msg` + file-based `read`/`list`. See [`messaging.md`](./messaging.md). |
-| `sessions` | Local peer lookup — `list` / `show <agent-id>` / `resolve <uuid>`. |
+| `sessions` | Local peer lookup — `list` / `show <agent-id>`. |
+| `schedule` | Session-scoped wakes at a delay/time or when a PID exits. |
 | `fetch` | Web page → readable text. Trafilatura default, headless Chrome fallback for JS pages. |
 | `web-search` | Web search via Tavily or Exa. `--answer` for synthesized answer. |
 | `seek` | Fast file-name search. Uses `fd` if available, falls back to `find` with sensible prunes. |
@@ -148,6 +148,32 @@ Installed by `bootstrap.sh` from `<repo>/tools/`:
 - [`home.md`](./home.md) — where `<home>/tools/` sits in the agent home.
 - [`install.md`](./install.md) — how bundled tools are copied and refreshed.
 - [`skills.md`](./skills.md) — SKILL.md-based skill packaging (tools are executables, skills are instructions).
+
+### Scheduled wakes
+
+`schedule` creates a detached watcher and delivers a note back to the exact
+session that created it:
+
+```bash
+schedule at --delay 10m --note 'Check the build'
+schedule at --time 2026-08-25T17:00:00-04:00 <<'EOF'
+Review the benchmark output in /tmp/bench.log.
+EOF
+schedule watch --pid 12345 --note 'Inspect the completed job'
+schedule list
+schedule cancel wake-1787690000-a1b2c3d4
+```
+
+Pending state lives under
+`$AGENT_HOME/state/scheduled/$AGENT_ID/`. At fire time, the watcher asks the
+kiln-lite daemon to write a canonical message into its own inbox. This works
+while the session is busy or idle, and parks the message if the session has
+exited; resuming that same session later delivers it. The special self-delivery
+route does not register the detached watcher as live session presence.
+
+Wakes are best-effort OS processes. They survive session exit, but not a
+machine restart. Failed delivery remains visible in `schedule list` rather
+than being silently deleted.
 
 ## Examples
 

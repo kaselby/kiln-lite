@@ -8,7 +8,7 @@ The daemon is a small, single-purpose Node process. It owns exactly the state th
 
 It autostarts on the first client call and self-exits 30 seconds after the last session deregisters. No `kl start-daemon`, no pidfile to tend by hand, no config file required to get going. From the extension's perspective, the daemon is invisible: every `DaemonClient` call handles autostart transparently.
 
-Written in TypeScript (shared protocol types with the extension and `kl-msg`), run via `tsx` at runtime, no build step. About 800 LOC total across `src/daemon/`. Scope is deliberately narrow: channel pub/sub, direct-message routing, session presence. Nothing else — no gateway, no scheduler, no platform adapters, no management RPC.
+Written in TypeScript (shared protocol types with the extension and `kl-msg`), run via `tsx` at runtime, no build step. About 800 LOC total across `src/daemon/`. Scope is deliberately narrow: channel pub/sub, direct-message and self-message routing, session presence. Nothing else — no gateway, timer management, platform adapters, or management RPC.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ Two in-memory registries, rebuilt on startup from disk:
 Two on-disk stores, written through on every mutation:
 
 - **`SubscriptionStore`** — one JSON file per session listing that session's channel subscriptions. Removed on `deregister`.
-- **`KnownSessionStore`** — single `known-sessions.json` with every session that has ever registered, plus its last-known `inbox_path`. Used by `send_direct` to resolve inbox paths for recipients that aren't currently alive (just-exited, crashed, or pruned).
+- **`KnownSessionStore`** — single `known-sessions.json` with every session that has ever registered, plus its last-known `inbox_path`. Used by channel fanout to reach offline subscribers.
 
 Two stores instead of one because subscriptions have a per-session lifecycle (created on subscribe, removed on deregister) while known-sessions is a stable index that outlives any one session.
 
@@ -110,7 +110,8 @@ JSON-line over `$XDG_RUNTIME_DIR/kiln-lite.sock` (macOS fallback: `/tmp/kiln-lit
 
 | Type | Fields | Response | Purpose |
 |------|--------|----------|---------|
-| `send_direct` | `to`, `summary`, `body`, `priority`, `requester` | `ack` | Resolve recipient inbox (live presence → known-sessions → sender's inbox_path as fallback) and write the file. |
+| `send_direct` | `to`, `summary`, `body`, `priority`, `requester` | `ack` | Write a DM to a currently-live recipient. Unknown or offline recipients fail. |
+| `deliver_self` | `summary`, `body`, `priority`, `requester` (with `inbox_path`) | `ack` | Write to the requester's own inbox without changing presence. Used by detached helpers such as scheduled wakes. |
 
 **Queries:**
 
@@ -261,7 +262,7 @@ tail -f ~/.kl/daemon/channels/docs-review/history.jsonl | jq .
 - **Socket lives in `$XDG_RUNTIME_DIR`, not `~/.kl/`.** If you want to reset the daemon, remove the pidfile and the socket (daemon cleans both on exit, but an ungraceful crash leaves them). A stale socket with no listener is detected on startup and removed automatically.
 - **Channel fanout excludes the sender.** Publishing to a channel you're subscribed to doesn't put a copy in your own inbox. This is intentional — publisher has the body already.
 - **`known-sessions.json` never prunes.** Every session that ever registered stays in the index forever. Minor footprint; if it becomes a problem, add TTL pruning later.
-- **Dead-recipient sends use the last-known inbox_path.** If a session registered once, died without deregistering, and the reconcile loop hasn't run yet, `send_direct` uses the stored inbox_path. If the user has since deleted that inbox directory, the message write silently fails (best-effort write; no follow-up error path). Rare.
+- **Direct messages require a live recipient.** `send_direct` resolves only through presence and returns `recipient_not_live` otherwise. Detached helpers that need to park a message for their own exited session use `deliver_self`, which carries the authoritative inbox path without creating phantom presence.
 - **Reconcile uses `tmux list-sessions`.** If a session was launched via raw `pi` (no tmux), it won't appear in reconcile's poll and is never pruned automatically — only `deregister` on clean exit removes it. This is why `kl` is the recommended launcher.
 - **No authentication on the socket.** Any local process that can reach the socket can send anything. This is fine for a single-user dev tool; don't expose the socket over a network.
 - **Restart drops in-flight responses.** If the daemon dies between receiving a request and writing the response, the client times out. Retry is the client's problem — today the client doesn't retry automatically.

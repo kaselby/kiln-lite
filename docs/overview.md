@@ -21,7 +21,7 @@ Concretely, installing kiln-lite gives you:
 Out of scope for kiln-lite:
 
 - Gateway bridging to Discord / Slack / other platforms
-- A scheduler for cron or one-shot triggers
+- Recurring cron schedules or machine-restart-persistent timers
 - Cross-machine messaging
 - Cross-session search over conversation history
 - A prescribed memory shape — `context_injection` names files, you decide what's in them

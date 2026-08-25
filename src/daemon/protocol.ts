@@ -29,6 +29,7 @@ export const SUBSCRIBE = "subscribe";
 export const UNSUBSCRIBE = "unsubscribe";
 export const PUBLISH = "publish";
 export const SEND_DIRECT = "send_direct";
+export const DELIVER_SELF = "deliver_self";
 export const LIST_SUBSCRIPTIONS = "list_subscriptions";
 export const LIST_SESSIONS = "list_sessions";
 export const GET_STATUS = "get_status";
@@ -150,6 +151,25 @@ export function sendDirect(
         type: SEND_DIRECT,
         ref: makeRef(),
         data: withRequester({ to, summary, body, priority }, requester),
+    };
+}
+
+/**
+ * Deliver a message to the requester's own inbox without registering it as
+ * live presence. Used by detached helpers (notably scheduled wakes) that may
+ * outlive the interactive session but still carry its authoritative inbox
+ * path in the requester envelope.
+ */
+export function deliverSelf(
+    summary: string,
+    body: string,
+    priority: "normal" | "high",
+    requester: Requester,
+): Message {
+    return {
+        type: DELIVER_SELF,
+        ref: makeRef(),
+        data: withRequester({ summary, body, priority }, requester),
     };
 }
 
