@@ -23,6 +23,7 @@ import { spawn, execFileSync } from "node:child_process";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getReadmePath, getDocsPath, getExamplesPath } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 import { resolveAgentHomeDetailed, loadAgentConfig, resolveKlRoot } from "../config.ts";
 import { applyTemplate } from "../template.ts";
@@ -250,18 +251,39 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		// Persist / refresh the snapshot meta. Best-effort; never blocks startup.
 		updateSnapshotMeta(state, ctx, warn);
 
-		// TUI marker: make a continuation-handoff session visually distinct from
-		// a fresh one. A persistent footer status (survives across renders) is
-		// enough to flag it at a glance. Best-effort — a headless/UI-less context
-		// must never break startup.
+		// TUI markers: make a continuation-handoff session visually distinct from
+		// a fresh one. A fresh-boot continuation opens with an empty transcript, so
+		// without a marker it looks identical to a brand-new session. Two markers:
+		//   * a persistent footer status (compact, always-there `⇄ handoff`), and
+		//   * a widget above the editor naming the handoff file — prominent, renders
+		//     immediately even on an idle-spawned continuation (which never fires a
+		//     turn until the user types, so nothing else would appear), and stays
+		//     put for the session as a standing "this session continues prior work"
+		//     signal. Both are pure-UI (no LLM context) and best-effort — a
+		//     headless/UI-less context must never break startup.
 		if (sessionOrigin?.kind === "handoff") {
+			const handoffPath = sessionOrigin.handoffPath;
 			try {
 				ctx.ui?.setStatus?.(
 					"kiln-handoff",
 					ctx.ui.theme.fg("accent", "⇄ handoff"),
 				);
+				ctx.ui?.setWidget?.("kiln-handoff", (_tui, theme) => ({
+					render: (width: number) => {
+						const lines = [
+							theme.fg("accent", "⇄ Continuation session — picks up from a handoff"),
+						];
+						if (handoffPath) {
+							lines.push(
+								truncateToWidth(theme.fg("muted", `  handoff notes: ${handoffPath}`), width),
+							);
+						}
+						return lines;
+					},
+					invalidate: () => {},
+				}));
 			} catch (err) {
-				warn(`kiln-lite: failed to set handoff status (${(err as Error).message})`);
+				warn(`kiln-lite: failed to set handoff markers (${(err as Error).message})`);
 			}
 		}
 
@@ -442,13 +464,19 @@ export function installDefaultHarness(pi: ExtensionAPI): HarnessHandle {
 		});
 	});
 
-	// --- resources_discover: register $AGENT_HOME/skills/active ---
-	// Only the active/ subtree is autodiscovered; archived/ and wip/ are
-	// deliberately excluded so stale or in-progress skills don't get loaded.
+	// --- resources_discover: register configured skill subtrees ---
+	// agent.yml skills_dirs (default ["active"]) names the subtrees of
+	// $AGENT_HOME/skills that pi autodiscovers. The "active"-only default
+	// keeps archived/ and wip/ deliberately excluded; agents with other
+	// layouts (e.g. ["core", "library"], or ["."] for everything) configure
+	// their own. Multiple resources_discover handlers merge in pi, so custom
+	// harnesses can add further paths on top.
 	pi.on("resources_discover", async (_event, _ctx) => {
 		if (!state) return;
-		const skillsDir = join(state.agentHome, "skills", "active");
-		return { skillPaths: [skillsDir] };
+		const skillPaths = state.config.skills_dirs.map((d) =>
+			d === "." ? join(state!.agentHome, "skills") : join(state!.agentHome, "skills", d),
+		);
+		return { skillPaths };
 	});
 
 	// --- session_shutdown: tear down watcher + daemon, then spawn continuation ---

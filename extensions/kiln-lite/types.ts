@@ -44,6 +44,13 @@ export interface AgentConfig {
 	/** Directory for session summaries (relative to $AGENT_HOME). */
 	sessions_dir: string;
 	/**
+	 * Skill subtrees autodiscovered by pi (relative to $AGENT_HOME/skills).
+	 * Default ["active"] — the historical convention where archived/ and wip/
+	 * subtrees are deliberately excluded. Set to ["."] to discover the whole
+	 * skills/ tree, or list several subtrees (e.g. ["core", "library"]).
+	 */
+	skills_dirs: string[];
+	/**
 	 * Tool calls between `[Session state] ...` suffixes appended to tool
 	 * results. 0 disables the periodic status line. Default 15.
 	 */

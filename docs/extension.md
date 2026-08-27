@@ -141,6 +141,11 @@ cleanup: |
 tools_dir: tools          # default "tools"
 inbox_dir: inbox          # default "inbox"
 sessions_dir: sessions    # default "sessions"
+
+# Skill subtrees (relative to $AGENT_HOME/skills) autodiscovered by pi.
+# Default ["active"]. Use ["."] for the whole tree, or list several.
+skills_dirs:              # default ["active"]
+  - active
 ```
 
 All fields are optional except `name`. Unknown top-level fields produce a warning, not a hard error.

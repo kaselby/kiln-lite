@@ -328,6 +328,12 @@ inbox_dir: inbox
 
 # Directory (relative to $AGENT_HOME) for session id files + summaries.
 sessions_dir: sessions
+
+# Skill subtrees (relative to $AGENT_HOME/skills) autodiscovered by pi.
+# Default ["active"]: only skills/active is loaded. Use ["."] for the whole
+# skills/ tree, or list several subtrees. Empty list: no skill discovery.
+# skills_dirs:
+#   - active
 YML
 fi
 

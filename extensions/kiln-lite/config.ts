@@ -23,6 +23,7 @@ const DEFAULT_CONFIG: AgentConfig = {
 	tools_dir: "tools",
 	inbox_dir: "inbox",
 	sessions_dir: "sessions",
+	skills_dirs: ["active"],
 	session_state_interval: 15,
 };
 
@@ -108,6 +109,7 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 		"tools_dir",
 		"inbox_dir",
 		"sessions_dir",
+		"skills_dirs",
 		"session_state_interval",
 	]);
 	for (const key of Object.keys(obj)) {
@@ -185,6 +187,28 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 	}
 	if (typeof obj.sessions_dir === "string" && obj.sessions_dir.trim()) {
 		config.sessions_dir = obj.sessions_dir.trim();
+	}
+	if (typeof obj.skills_dirs === "string" && obj.skills_dirs.trim()) {
+		// Single-string shorthand: skills_dirs: core
+		config.skills_dirs = [obj.skills_dirs.trim()];
+	} else if (Array.isArray(obj.skills_dirs)) {
+		const dirs: string[] = [];
+		for (const [i, d] of obj.skills_dirs.entries()) {
+			if (typeof d !== "string" || !d.trim()) {
+				warn(`kiln-lite: agent.yml skills_dirs[${i}] is not a non-empty string — skipping`);
+				continue;
+			}
+			dirs.push(d.trim());
+		}
+		if (dirs.length > 0) {
+			config.skills_dirs = dirs;
+		} else if (obj.skills_dirs.length > 0) {
+			warn(`kiln-lite: agent.yml skills_dirs had no valid entries — using default ${JSON.stringify(DEFAULT_CONFIG.skills_dirs)}`);
+		}
+		// Empty list is meaningful: explicitly discover no skills.
+		if (obj.skills_dirs.length === 0) {
+			config.skills_dirs = [];
+		}
 	}
 	if (typeof obj.session_state_interval === "number" && Number.isFinite(obj.session_state_interval)) {
 		const n = Math.floor(obj.session_state_interval);
