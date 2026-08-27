@@ -22,6 +22,14 @@ export interface ContextInjectionEntry {
 	dynamic?: boolean;
 }
 
+export interface PromptFileSource {
+	/** Absolute path or path relative to $AGENT_HOME. */
+	path: string;
+}
+
+/** Prompt text supplied inline or loaded from a file when it is used. */
+export type PromptSource = string | PromptFileSource;
+
 export interface AgentConfig {
 	/** Agent name — first component of <name>-<adj>-<noun> session IDs. */
 	name: string;
@@ -32,11 +40,12 @@ export interface AgentConfig {
 	/** Shell commands run sequentially at session_start. */
 	startup: string[];
 	/**
-	 * Cleanup prompt template. Supports {key} placeholder expansion from
-	 * state.vars (base + harness-provided). If empty/unset, no cleanup turn
-	 * is dispatched — session exits normally.
+	 * Cleanup prompt template, supplied as inline text or `{ path: "..." }`.
+	 * File-backed prompts are read when cleanup begins. Supports {key}
+	 * placeholder expansion from state.vars (base + harness-provided). If empty,
+	 * unset, or unreadable, no cleanup turn is dispatched and the session exits.
 	 */
-	cleanup: string;
+	cleanup: PromptSource;
 	/** Directory for shell tool discovery (relative to $AGENT_HOME). */
 	tools_dir: string;
 	/** Directory for per-agent inboxes (relative to $AGENT_HOME). */

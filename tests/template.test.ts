@@ -27,6 +27,7 @@ function baseConfig(): AgentConfig {
 		tools_dir: "tools",
 		inbox_dir: "inbox",
 		sessions_dir: "sessions",
+		skills_dirs: ["active"],
 		session_state_interval: 15,
 	};
 }
@@ -67,6 +68,21 @@ session_state_interval: 5
 		assert.equal(config.session_state_interval, 5);
 		// Untouched fields stay as base.
 		assert.equal(config.tools_dir, "tools");
+	} finally {
+		cleanup(home);
+	}
+});
+
+test("applyTemplate accepts a file-backed cleanup prompt", () => {
+	const home = makeHome();
+	try {
+		writeTemplate(home, "worker", `
+cleanup:
+  path: prompts/worker-cleanup.md
+`);
+		const config = baseConfig();
+		applyTemplate(config, home, "worker", () => {});
+		assert.deepEqual(config.cleanup, { path: "prompts/worker-cleanup.md" });
 	} finally {
 		cleanup(home);
 	}

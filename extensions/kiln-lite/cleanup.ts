@@ -13,15 +13,16 @@
  * invoked. Ctrl+C (double) and Ctrl+D also call shutdown() directly and
  * bypass extension commands. Users who want cleanup must use /exit.
  *
- * Flow (when config.cleanup is non-empty):
- *   1. Expand {key} placeholders (state.vars + cleanup-specific vars)
- *   2. Embed a unique sentinel in the prompt (so we can identify completion)
- *   3. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
- *   4. A persistent agent_end listener (registered once from index.ts) watches for
+ * Flow (when the configured cleanup source resolves to non-empty text):
+ *   1. Resolve inline text or read the configured file path
+ *   2. Expand {key} placeholders (state.vars + cleanup-specific vars)
+ *   3. Embed a unique sentinel in the prompt (so we can identify completion)
+ *   4. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
+ *   5. A persistent agent_end listener (registered once from index.ts) watches for
  *      the sentinel in agent_end messages; when matched, calls ctx.shutdown().
  *
- * If config.cleanup is empty/unset: skip the cleanup turn entirely, shut down
- * immediately. Simple case.
+ * If the cleanup source is empty, unset, missing, or unreadable: skip the
+ * cleanup turn and shut down normally after surfacing any resolution warning.
  *
  * Escape hatch: a second /exit while cleanup is in flight
  * force-exits — same effect as /fq.
@@ -34,6 +35,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 import type { SessionState } from "./types.ts";
 import { expandPlaceholders } from "./placeholders.ts";
+import { resolvePromptSource } from "./prompt-source.ts";
 
 export interface CleanupDispatcher {
 	/** True if a cleanup turn is currently in flight. */
@@ -73,17 +75,17 @@ function ensureSummaryDir(state: SessionState, warn: (msg: string) => void): voi
 	}
 }
 
-function buildCleanupPrompt(state: SessionState, sentinel: string): string {
+function buildCleanupPrompt(state: SessionState, body: string, sentinel: string): string {
 	// Merge state.vars (base + harness-provided) with cleanup-specific vars.
 	const vars: Record<string, string> = {
 		...state.vars,
 		today: fmtDate(new Date()),
 		summary_path: summaryPath(state),
 	};
-	const body = expandPlaceholders(state.config.cleanup, vars);
+	const expanded = expandPlaceholders(body, vars);
 	// HTML comment keeps the sentinel visible in message content (for our scan) but
 	// unobtrusive for the agent reading the prompt.
-	return `${body}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;
+	return `${expanded}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;
 }
 
 export function createCleanupDispatcher(
@@ -94,7 +96,13 @@ export function createCleanupDispatcher(
 	let pendingSentinel: string | null = null;
 
 	function dispatch(ctx: ExtensionContext): void {
-		if (!state.config.cleanup.trim()) {
+		const body = resolvePromptSource(
+			state.config.cleanup,
+			state.agentHome,
+			"cleanup prompt",
+			warn,
+		);
+		if (body === null || !body.trim()) {
 			ctx.shutdown();
 			return;
 		}
@@ -106,7 +114,7 @@ export function createCleanupDispatcher(
 		pendingSentinel = sentinel;
 		ensureSummaryDir(state, warn);
 
-		const prompt = buildCleanupPrompt(state, sentinel);
+		const prompt = buildCleanupPrompt(state, body, sentinel);
 		try {
 			pi.sendUserMessage(prompt, { deliverAs: "followUp" });
 		} catch (err) {

@@ -38,6 +38,7 @@ export { resolveAgentHomeDetailed, loadAgentConfig } from "../config.ts";
 export { buildEnv, applyEnv } from "../env.ts";
 export { generateAgentId } from "../identity.ts";
 export { composeSystemPrompt, preloadStaticInjection } from "../prompt.ts";
+export { parsePromptSource, resolvePromptSource } from "../prompt-source.ts";
 export { discoverTools, renderToolIndex } from "../tools.ts";
 export { startInboxWatcher, type InboxWatcher, type InboxWatcherOptions } from "../inbox.ts";
 export {
@@ -84,6 +85,8 @@ export {
 export type {
 	AgentConfig,
 	ContextInjectionEntry,
+	PromptFileSource,
+	PromptSource,
 	SessionState,
 } from "../types.ts";
 export { DaemonClient } from "../../../src/client/index.ts";

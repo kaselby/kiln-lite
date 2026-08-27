@@ -17,6 +17,7 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 
 import type { AgentConfig, ContextInjectionEntry } from "./types.ts";
+import { parsePromptSource } from "./prompt-source.ts";
 
 /**
  * Resolve template file path. Tries <name>.yml, then bare <name>.
@@ -90,8 +91,9 @@ export function applyTemplate(
 	if (typeof obj.system_prompt === "string" && obj.system_prompt.trim()) {
 		config.system_prompt = obj.system_prompt.trim();
 	}
-	if (typeof obj.cleanup === "string") {
-		config.cleanup = obj.cleanup;
+	if (obj.cleanup !== undefined) {
+		const cleanup = parsePromptSource(obj.cleanup, `template '${templateName}' cleanup`, warn);
+		if (cleanup !== undefined) config.cleanup = cleanup;
 	}
 	if (typeof obj.tools_dir === "string" && obj.tools_dir.trim()) {
 		config.tools_dir = obj.tools_dir.trim();

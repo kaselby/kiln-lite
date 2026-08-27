@@ -132,10 +132,14 @@ startup:
   - "git -C $AGENT_HOME pull --ff-only"
 
 # Cleanup turn dispatched when the session exits via /exit or exit_session tool.
+# Supply either inline text or a path relative to $AGENT_HOME (absolute paths
+# also work). File-backed prompts are read when cleanup begins.
 # Template vars: {today}, {agent_id}, {session_uuid}, {summary_path}.
-cleanup: |
-  Write a session summary to {summary_path} covering what happened,
-  what you learned, unresolved threads.
+cleanup:
+  path: prompts/cleanup.md
+# Legacy inline form remains supported:
+# cleanup: |
+#   Write a session summary to {summary_path} covering what happened.
 
 # Directory names relative to $AGENT_HOME.
 tools_dir: tools          # default "tools"
@@ -203,7 +207,8 @@ On `agent_end`, the watcher's `markAllSeen()` clears the queue so the next turn 
 
 `cleanup.ts` hooks `/exit` and `/fq`:
 
-- **`/exit`** dispatches the `agent.yml:cleanup` prompt as a follow-up turn. When that turn ends (`agent_end`), the session shuts down.
+- **`/exit`** resolves `agent.yml:cleanup` from inline text or a `{ path: ... }` mapping, expands template variables, and dispatches the result as a follow-up turn. Relative paths resolve from `$AGENT_HOME` and are read when cleanup begins, so edits made during the session take effect. When the turn ends (`agent_end`), the session shuts down.
+- A missing, unreadable, or empty cleanup source emits a warning when applicable and exits without dispatching a cleanup turn.
 - **`/fq`** force-quits without cleanup.
 - During cleanup, a second `/exit` or `/fq` forces immediate shutdown (escape hatch if cleanup hangs).
 
@@ -262,12 +267,11 @@ context_injection:
     dynamic: true
 startup:
   - "date > scratch/session-start.log"
-cleanup: |
-  You're wrapping up. Append a session summary to {summary_path} covering
-  threads worked on, decisions made, anything the next session needs.
+cleanup:
+  path: prompts/cleanup.md
 ```
 
-Now the prompt has `IDENTITY.md` as its base (replacing Pi's default), a static `core.md` block, a live-reloading `volatile.md` block, a live-refreshing Active Projects block sourced from the `project` tool, and the standard tool index.
+Now the prompt has `IDENTITY.md` as its base (replacing Pi's default), a static `core.md` block, a live-reloading `volatile.md` block, a live-refreshing Active Projects block sourced from the `project` tool, and the standard tool index. When the session exits, kiln-lite reads `prompts/cleanup.md`, expands its template variables, and dispatches it as the cleanup turn.
 
 ### Iterating on the extension without `kl`
 
@@ -290,6 +294,7 @@ Bypasses `kl` and tmux — useful when editing the extension source and wanting 
 - **`session_start` failures are mostly soft.** Individual steps (mkdir, daemon register, write id file) are wrapped in try/catch and warn-on-fail. This means a partially-broken session can start. Check the console / `ctx.ui.notify` warnings if things seem off.
 - **Mid-turn inbox pings only fire after `tool_result`.** An agent that never calls a tool between inbox arrivals won't see the suffix. Idle delivery catches it eventually — but if you're expecting live fanout on a tool-less turn, it won't happen.
 - **`resources_discover` fires at session_start AND on `/reload`.** If you add a new skill mid-session, `/reload` picks it up; shell tools don't have an equivalent re-scan, and new tools in `<home>/tools/` won't appear in the listing until next session (though they're still callable via bash).
+- **Cleanup files are resolved at dispatch, not startup.** A relative `cleanup.path` is rooted at `$AGENT_HOME`. Missing, unreadable, or empty files cause a warning where applicable and a normal exit without a cleanup turn.
 - **Cleanup prompt template vars are a flat substitution.** `{today}` / `{agent_id}` / `{session_uuid}` / `{summary_path}`. Anything else is passed through unchanged. No escaping — if a literal `{` appears in the cleanup prompt that shouldn't be substituted, write `{{` … except that isn't supported either. Keep the prompt simple.
 - **Raw `pi` launches don't set `AGENT_ID`.** The extension first tries to recover it via reverse-lookup of the pi-session-uuid against `state/sessions/`, then falls back to UUID-derivation. The recovered name still won't match a tmux session (because there isn't one). Use `kl` for anything you want to `kl attach` / `kl resume` to later.
 
@@ -347,9 +352,11 @@ API:
   `createSessionStateHook`, `buildMessageTool`, `buildWrapupTool`,
   `registerSpawnCommand`, `registerExitCommands`.
 - Stateless utilities: `loadAgentConfig`, `resolveAgentHomeDetailed`,
-  `buildEnv`, `applyEnv`, `composeSystemPrompt`, `preloadStaticInjection`,
-  `discoverTools`, `renderToolIndex`, `generateAgentId`,
-  `loadCommandGates`, `applyCommandGates`, `ensureScaffold`.
+  `parsePromptSource`, `resolvePromptSource`, `buildEnv`, `applyEnv`,
+  `composeSystemPrompt`, `preloadStaticInjection`, `discoverTools`,
+  `renderToolIndex`, `generateAgentId`, `loadCommandGates`,
+  `applyCommandGates`, `ensureScaffold`.
+- Prompt source types: `PromptSource`, `PromptFileSource`.
 - Snapshot API: `readMeta`, `writeMeta`, `readPromptSnapshot`,
   `writePromptSnapshot`, `findAgentIdForUuid`, `uniquifyAgentId`,
   `metaPath`, `promptPath`.

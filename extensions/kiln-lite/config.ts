@@ -14,6 +14,7 @@ import { resolve, join } from "node:path";
 import yaml from "js-yaml";
 
 import type { AgentConfig, ContextInjectionEntry } from "./types.ts";
+import { parsePromptSource } from "./prompt-source.ts";
 
 const DEFAULT_CONFIG: AgentConfig = {
 	name: "pi",
@@ -175,8 +176,9 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 		config.startup = cmds;
 	}
 
-	if (typeof obj.cleanup === "string") {
-		config.cleanup = obj.cleanup;
+	if (obj.cleanup !== undefined) {
+		const cleanup = parsePromptSource(obj.cleanup, "agent.yml cleanup", warn);
+		if (cleanup !== undefined) config.cleanup = cleanup;
 	}
 
 	if (typeof obj.tools_dir === "string" && obj.tools_dir.trim()) {

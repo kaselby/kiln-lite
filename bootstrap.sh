@@ -313,6 +313,8 @@ startup: []
   # - "git -C $AGENT_HOME pull --ff-only"
 
 # Cleanup turn dispatched when the session wraps via /exit or /wrapup.
+# Supply inline text as below, or use a file loaded at cleanup time:
+# cleanup: { path: prompts/cleanup.md }
 # Supports template vars: {today} {agent_id} {session_uuid} {summary_path}
 # Leave empty to skip the cleanup turn.
 # cleanup: |
