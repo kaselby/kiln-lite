@@ -294,6 +294,11 @@ name: agent
 # explicitly provides --model on the command line. Omit to use pi's default.
 # model: claude-sonnet-4-6
 
+# Default thinking level: off, minimal, low, medium, high, xhigh, or max.
+# Passed to pi as --thinking unless the caller sets a level (--thinking, or a
+# --model <id>:<level> suffix). pi clamps it to what the model supports.
+# thinking: high
+
 # Optional: path (relative to $AGENT_HOME) of a file that replaces Pi's
 # built-in system prompt. Omit to use Pi's default.
 # system_prompt: prompts/base.md

@@ -103,6 +103,8 @@ export function loadAgentConfig(agentHome: string, warn: (msg: string) => void):
 		"name",
 		"description",
 		"model",
+		// Read by bin/kl (prepends --thinking), not by the extension.
+		"thinking",
 		"system_prompt",
 		"context_injection",
 		"startup",

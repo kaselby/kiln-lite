@@ -295,6 +295,24 @@ resolve_agent_model() {
     fi
 }
 
+# Thinking levels pi accepts for --thinking (and as a --model :<level> suffix).
+PI_THINKING_LEVELS="off minimal low medium high xhigh max"
+
+is_thinking_level() {
+    case " $PI_THINKING_LEVELS " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# Parse `thinking:` from agent.yml. Returns empty string if unset/commented.
+resolve_agent_thinking() {
+    local agent_home="$1"
+    if [ -f "$agent_home/agent.yml" ]; then
+        local t
+        t="$(awk '/^thinking:[[:space:]]*/{sub(/^thinking:[[:space:]]*/,""); sub(/[[:space:]]+#.*$/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
+        if [ -n "$t" ]; then printf '%s' "$t"; fi
+    fi
+}
+
 # --- tmux helpers ---
 
 require_tool() {
@@ -436,6 +454,38 @@ cmd_run() {
         default_model="$(resolve_agent_model "$agent_home")"
         if [ -n "$default_model" ]; then
             pi_args=("--model" "$default_model" ${pi_args[@]+"${pi_args[@]}"})
+        fi
+    fi
+
+    # If agent.yml specifies a default thinking level and the caller didn't
+    # set one, prepend --thinking. The caller sets one with --thinking or with
+    # a --model <id>:<level> suffix; pi gives --thinking precedence over the
+    # suffix, so injecting here would silently override the caller's choice.
+    # Runs after the model default so a `model: <id>:<level>` in agent.yml
+    # also counts as an explicit level.
+    local has_thinking=0 prev="" model_val
+    for arg in ${pi_args[@]+"${pi_args[@]}"}; do
+        model_val=""
+        case "$arg" in
+            --thinking) has_thinking=1; break ;;
+            --model=*) model_val="${arg#--model=}" ;;
+        esac
+        [ "$prev" = "--model" ] && model_val="$arg"
+        if [ -n "$model_val" ] && [[ "$model_val" == *:* ]] \
+            && is_thinking_level "${model_val##*:}"; then
+            has_thinking=1; break
+        fi
+        prev="$arg"
+    done
+    if [ "$has_thinking" = 0 ]; then
+        local default_thinking
+        default_thinking="$(resolve_agent_thinking "$agent_home")"
+        if [ -n "$default_thinking" ]; then
+            if is_thinking_level "$default_thinking"; then
+                pi_args=("--thinking" "$default_thinking" ${pi_args[@]+"${pi_args[@]}"})
+            else
+                echo "kl: ignoring invalid agent.yml thinking '$default_thinking' (valid: $PI_THINKING_LEVELS)" >&2
+            fi
         fi
     fi
 
