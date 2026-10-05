@@ -26,8 +26,9 @@ git clone <this repo> ~/Git/kiln-lite && cd ~/Git/kiln-lite
 ./install.sh          # npm install, npm link (puts kl on PATH), starter agent
 ```
 
-<!-- TODO(merge): `kl install` (Pi packages into the kl Pi dir). -->
-<!-- TODO(merge): `kl migrate` (old kl layouts). -->
+`kl install <pkg>` installs a Pi package for every kl agent (into the kl Pi
+dir, not base Pi). Coming from an older kiln-lite, run `kl migrate` once to
+convert your agent folders.
 
 kl logs in with your Pi credentials: `~/.kl/pi/auth.json` is a symlink to
 `~/.pi/agent/auth.json`. Log in once with base `pi` (`/login`) first. Details

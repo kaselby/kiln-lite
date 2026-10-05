@@ -163,3 +163,46 @@ test("shortId: shortest unique prefix among known sessions, at least 8; notes us
 	assert.equal(resolveTarget("rev-calm-fox@01a10da30001", { root }).uuid, A);
 	assert.throws(() => resolveTarget("@01a10da3", { root }), /ambiguous: 01a10da30001, 01a10da30002/);
 });
+
+test("resolve: an agent name reaches its one running session, else its most recent; several running is an error", () => {
+	const root = freshRoot();
+	writeEntry(entry(U1, "rev-calm-fox", "2026-09-20T00:00:00Z"), root);
+	writeEntry(
+		entry(U2, "rev-red-owl", "2026-09-25T00:00:00Z", {
+			names: [
+				{ name: "rev-blue-jay", bound: "2026-09-01T00:00:00Z" },
+				{ name: "rev-red-owl", bound: "2026-10-03T00:00:00Z" },
+			],
+		}),
+		root,
+	);
+	writeEntry(entry(U3, "boss-green-lane", "2026-10-04T00:00:00Z", { agent: "boss" }), root);
+
+	// Nothing running: the latest bind of any name wins (U2 rebound 10-03).
+	const r = resolveTarget("rev", { root });
+	assert.equal(r.uuid, U2);
+	assert.equal(r.name, "rev-red-owl");
+	assert.equal(r.lease, null);
+	assert.equal(r.note, "rev is an agent; resolved to its most recent session rev-red-owl");
+	assert.equal(resolveTarget("boss", { root }).uuid, U3, "other agents' sessions are not candidates");
+
+	// Exactly one running: that one, even though it was bound earlier.
+	writeLease(selfLease(U1, "rev-calm-fox", "rev-calm-fox"), root);
+	const one = resolveTarget("rev", { root });
+	assert.equal(one.uuid, U1);
+	assert.ok(one.lease);
+	assert.equal(one.note, "rev is an agent; resolved to its running session rev-calm-fox");
+
+	// Two running: refuse and list them.
+	writeLease(selfLease(U2, "rev-red-owl", "rev-red-owl"), root);
+	assert.throws(() => resolveTarget("rev", { root }), (e: unknown) => {
+		assert.ok(e instanceof ResolveError);
+		assert.match(e.message, /^rev is an agent with 2 running sessions: /);
+		assert.match(e.message, /rev-calm-fox \(01a10d7c\)/);
+		assert.match(e.message, /rev-red-owl \(02b20d7c\)/);
+		return true;
+	});
+	// Session names still resolve as before.
+	assert.equal(resolveTarget("rev-red-owl", { root }).uuid, U2);
+	assert.throws(() => resolveTarget("nobody", { root }), /unknown session/);
+});

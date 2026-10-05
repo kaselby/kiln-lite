@@ -28,8 +28,10 @@ scratch/
 
 kl loads `extensions/*.ts|*.js` and `extensions/<dir>/index.ts|js`, sorted by
 name, each with its own `pi -e`. It passes `skills/` with `--skill`. If
-`harness/pre-launch` exists and is executable, `kl run` runs it first (with
-`AGENT_HOME` set) and aborts the launch if it exits non-zero.
+`hooks/pre-launch` exists and is executable, kl runs it before starting pi,
+both for a new session and for `kl resume`/`kl attach` (with `AGENT_HOME`,
+`AGENT_NAME` = the agent and `KL_NAME` = the session name set), and aborts the
+launch if it exits non-zero. It has a 30 s timeout.
 
 Nothing else lives in the folder at run time. Transcripts, inboxes and the
 session registry live under `~/.kl` (see [install.md](install.md)).

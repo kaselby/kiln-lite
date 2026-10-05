@@ -5,7 +5,9 @@
  *   2. else the registry entry that bound the name most recently
  *      (the result says when other matches were skipped)
  *   3. `name@<uuid-prefix>` / `@<uuid-prefix>`: exact
- *   4. else: loud error
+ *   4. an agent name: that agent's one live session, else its most recently
+ *      bound one (with a note); several live → error listing them
+ *   5. else: loud error
  */
 
 import { liveLeases, type Lease } from "./lease.ts";
@@ -122,6 +124,29 @@ export function resolveTarget(target: string, opts: { root?: string } = {}): Res
 							.map((h) => short(h.e.uuid))
 							.join(", ")}`
 					: undefined,
+		};
+	}
+
+	// 4. an agent name
+	const ofAgent = entries.filter((e) => e.agent === t);
+	if (ofAgent.length > 0) {
+		const running = ofAgent.filter((e) => live.has(e.uuid));
+		if (running.length > 1) {
+			const list = running.map((e) => `${live.get(e.uuid)!.name} (${short(e.uuid)})`).join(", ");
+			throw new ResolveError(`${t} is an agent with ${running.length} running sessions: ${list}; name one`);
+		}
+		const lastBound = (e: RegistryEntry): string => e.names.reduce((m, n) => (n.bound > m ? n.bound : m), "");
+		const e = running[0] ?? [...ofAgent].sort((a, b) => (lastBound(a) < lastBound(b) ? 1 : lastBound(a) > lastBound(b) ? -1 : 0))[0];
+		const lease = live.get(e.uuid) ?? null;
+		const name = lease?.name ?? e.name;
+		return {
+			uuid: e.uuid,
+			entry: e,
+			lease,
+			name,
+			note: lease
+				? `${t} is an agent; resolved to its running session ${name}`
+				: `${t} is an agent; resolved to its most recent session ${name}`,
 		};
 	}
 

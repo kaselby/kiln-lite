@@ -109,6 +109,10 @@ one that used it most recently; the tool's reply then says other sessions
 were skipped. Reach a specific one with `name@<id-prefix>` (at least 4 hex
 characters of its session UUID; `kl sessions` shows the ids).
 
+`to` can also be an agent name (`"boss"`): its session if exactly one is
+running, else its most recent one; the reply says which. If several of its
+sessions are running, the send fails and lists them; pick one by name.
+
 ## Message file format
 
 ```markdown

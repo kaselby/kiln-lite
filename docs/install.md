@@ -18,8 +18,30 @@ Running it again is safe.
 kl loads its extension with `pi -e` on every launch. It is not installed into
 Pi, so plain `pi` stays as it was.
 
-<!-- TODO(merge): kl install -->
-<!-- TODO(merge): kl migrate -->
+## Pi packages: `kl install`
+
+```bash
+kl install npm:@scope/pkg     # any `pi install` source and flags
+```
+
+This is `pi install` against the kl Pi dir (below): the package loads for
+every kl agent, and base `pi` doesn't see it. A package installed with plain
+`pi install` lands in `~/.pi/agent` and kl doesn't load it.
+
+## Upgrading
+
+```bash
+kl migrate --dry-run          # show what would change
+kl migrate                    # every agent in ~/.kl/agents
+kl migrate ~/old/agent-home   # or specific folders
+```
+
+It rewrites each `agent.yml` in place (the original is kept as
+`agent.yml.bak`): `context_injection` becomes `sections`; `startup`,
+`tools_dir`, `sessions_dir` and `inbox_dir` are removed; `system_prompt` is
+removed if the file it names is missing; `{summary_path}` in `cleanup`
+becomes plain wording. `harness/pre-launch` moves to `hooks/pre-launch`. It
+prints one line per key.
 
 ## The kl Pi dir: `~/.kl/pi`
 

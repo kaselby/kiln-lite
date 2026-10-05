@@ -17,7 +17,9 @@ Anything that takes a `<session>` accepts:
   4 hex characters).
 - `@01a10db1`: by UUID prefix alone.
 
-An agent name alone (`scout`) is not a session.
+- `scout` (an agent name): that agent's running session if exactly one is
+  running, else its most recently used session; kl says which it picked. If
+  several are running, it's an error that lists them.
 
 ## `kl`
 
@@ -31,6 +33,8 @@ kl inbox <session>
 kl agents
 kl init <name> [--full]       (kl new is an alias)
 kl doctor [<name>]
+kl install <pkg> [pi install flags]
+kl migrate [--dry-run] [<agent-home>...]
 ```
 
 - **run** starts a new session of `<agent>` in a tmux session named after it
@@ -51,8 +55,12 @@ kl doctor [<name>]
 - **init** scaffolds an agent; see [agents.md](agents.md).
 - **doctor** checks node, pi, tmux, kl-msg, the daemon and each agent folder.
 
-<!-- TODO(merge): kl install -->
-<!-- TODO(merge): kl migrate -->
+- **install** runs `pi install` with `PI_CODING_AGENT_DIR` set to the kl Pi
+  dir (`~/.kl/pi`), so the package loads for every kl agent and base `pi`
+  doesn't see it.
+- **migrate** converts old agent folders in place (default: every agent in
+  `$KL_AGENTS_DIR`), keeping `agent.yml.bak`. It prints what each key became;
+  `--dry-run` only prints. See [install.md](install.md#upgrading).
 
 Env:
 
@@ -66,9 +74,12 @@ Env:
 
 ## `kl-msg`
 
-The messaging CLI, for shell scripts running inside a session. It needs the
-session's `SESSION_UUID` and `AGENT_ID`. Agents normally use the `message`
-tool instead.
+The messaging CLI. Inside a session (where `SESSION_UUID` and `AGENT_ID` are
+set) it sends as that session; agents normally use the `message` tool
+instead. From your own shell, with no `SESSION_UUID`, `send` and `publish`
+go out as you (`from: $USER`) and the recipient gets no agent-mail
+disclaimer. `subscribe`, `unsubscribe`, `list-subscriptions` and
+`deliver-self` need a session.
 
 ```
 kl-msg send <to> <summary> [--body <text> | --body-stdin] [--priority normal|high]

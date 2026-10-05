@@ -41,7 +41,11 @@ whether the model sees a tool directly or finds it through `tool_search`
 (kl's Pi settings enable `tool_search` by default). See Pi's
 `docs/extensions.md`.
 
-<!-- TODO(merge): Pi extensions installed for all of Pi (~/.pi/agent/extensions) and how kl includes them. -->
+Extensions you put in base Pi's `~/.pi/agent/extensions/` load into kl
+agents too, each with its own `-e`, after kl's core and before the agent's
+own. To keep them out of an agent, set `pi_extensions: false` in its
+agent.yml (or in `~/.kl/config.yml` for all agents). Pi packages are separate:
+install them for kl with `kl install` (see [install.md](install.md)).
 
 kl no longer puts shell scripts from a `tools/` folder on PATH or lists them
 in the prompt.

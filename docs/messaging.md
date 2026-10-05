@@ -8,7 +8,8 @@ shell). Every message is a markdown file in the recipient's inbox,
 
 - **Direct:** `to` is a session name, resolved as in [cli.md](cli.md): the
   running session with that name, else the most recent one, or
-  `name@<id-prefix>`. An unknown name is an error, and nothing is written.
+  `name@<id-prefix>`, or an agent name (its one running session, else its
+  most recent). An unknown name is an error, and nothing is written.
 - **Running recipient:** the reply is `sent to <name>`.
 - **Recipient not running:** the message is still written ("parked"), and the
   reply is `parked: <name> is not running (last seen <time>); kl resume <name>
