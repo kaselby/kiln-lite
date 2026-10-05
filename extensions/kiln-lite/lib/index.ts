@@ -23,6 +23,5 @@ export { startInboxWatcher, type InboxWatcher, type InboxWatcherOptions } from "
 export { buildMessageTool } from "../message-tool.ts";
 export { registerSpawnCommand } from "../spawn.ts";
 export { createSessionStateHook, buildSessionStateLine, type SessionStateHook } from "../session-state.ts";
-export { readMeta, writeMeta, findAgentIdForUuid, uniquifyAgentId, snapshotDir, snapshotsRoot, metaPath, type SnapshotMeta } from "../snapshot.ts";
 export type { AgentConfig, SectionEntry, TimestampConfig, PromptFileSource, PromptSource, SessionState } from "../types.ts";
 export { DaemonClient } from "../../../src/client/index.ts";
