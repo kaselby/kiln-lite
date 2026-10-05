@@ -31,6 +31,8 @@ import { createSessionStateHook, type SessionStateHook } from "../session-state.
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
 import { claimSession, releaseSession, setLeaseState, NAME_ENTRY, type BoundSession } from "../session.ts";
 import { installLifecycle } from "../lifecycle.ts";
+import { installSubagent } from "../subagent.ts";
+import { registerScheduleTool } from "../schedule.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
@@ -58,6 +60,12 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
 	registerSpawnCommand(pi);
 	const lifecycle = installLifecycle(pi);
+	let cwd = process.cwd();
+	installSubagent(pi, {
+		getSelf: () => (state ? { uuid: state.sessionUuid, name: state.agentId, inboxDir: state.env.KL_INBOX, cwd } : null),
+		lifecycleBusy: () => lifecycle.busy(),
+	});
+	registerScheduleTool(pi, { getDaemon: () => daemon, getUuid: () => state?.sessionUuid ?? null });
 
 	pi.on("session_start", async (event, ctx) => {
 		const warn = (msg: string) => {
@@ -65,6 +73,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			if (ctx.hasUI) ctx.ui.notify(msg, "warning");
 		};
 
+		cwd = ctx.cwd;
 		const { path: agentHome } = resolveAgentHomeDetailed();
 		try {
 			mkdirSync(agentHome, { recursive: true });
