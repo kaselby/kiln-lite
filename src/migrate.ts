@@ -75,6 +75,29 @@ function dumpKey(key: string, value: unknown): string[] {
 	return yaml.dump({ [key]: value }, { lineWidth: -1 }).replace(/\n$/, "").split("\n");
 }
 
+/**
+ * Comments from older kl templates that describe behaviour kl no longer has.
+ * Exact-text rewrites, so a user's own comments are never touched.
+ */
+const STALE_COMMENTS: Array<[RegExp, string]> = [
+	[
+		/^# Optional: path \(relative to \$AGENT_HOME\) of a file that replaces Pi's\n# built-in system prompt\. Omit to use Pi's default\.$/m,
+		"# Identity prompt: opens the system prompt, before the kl baseline.\n# Default: SYSTEM.md in this folder if present. Relative to this file.",
+	],
+	[/^# Cleanup turn dispatched when the session wraps via \/exit or \/wrapup\.$/m, "# Cleanup turn on /exit and the exit_session tool (also before a continue reset)."],
+	[/^# Supports template vars: \{today\} \{agent_id\} \{session_uuid\} \{summary_path\}$/m, "# Plain text: kl expands no {placeholders}."],
+];
+
+/** Rewrite stale template comments, and {summary_path} inside comment lines. */
+export function refreshComments(text: string): string {
+	let out = text;
+	for (const [re, repl] of STALE_COMMENTS) out = out.replace(re, repl);
+	return out
+		.split("\n")
+		.map((l) => (/^\s*#/.test(l) ? l.replace(/\{summary_path\}/g, SUMMARY_WORDING) : l))
+		.join("\n");
+}
+
 /** Rewrite {summary_path}; return the new text and any other placeholders. */
 export function migrateCleanupText(text: string): { text: string; others: string[] } {
 	const out = text.replace(/\{summary_path\}/g, SUMMARY_WORDING);
@@ -158,7 +181,7 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 		else {
 			edits.set("system_prompt", null);
 			res.report.push(`system_prompt → removed`);
-			res.warnings.push(`system_prompt dropped: ${p} does not exist (Pi's default prompt applies)`);
+			res.warnings.push(`system_prompt dropped: ${p} does not exist (SYSTEM.md in the agent folder is used if present)`);
 		}
 	}
 
@@ -189,7 +212,8 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 		}
 	}
 
-	if (edits.size > 0 || appendSections) {
+	const commentsStale = refreshComments(original) !== original;
+	if (edits.size > 0 || appendSections || commentsStale) {
 		const blocks = keyBlocks(lines);
 		// Apply bottom-up so earlier ranges stay valid.
 		const ordered = [...edits.entries()]
@@ -206,7 +230,8 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 				for (let i = keyLine - 1; i >= start; i--) if (/template vars|\{summary_path\}/.test(lines[i])) lines.splice(i, 1);
 			}
 		}
-		let out = lines.join("\n").replace(/\n{3,}/g, "\n\n");
+		let out = refreshComments(lines.join("\n")).replace(/\n{3,}/g, "\n\n");
+		if (commentsStale) res.report.push("comments from the old template → reworded");
 		if (appendSections) out = `${out.replace(/\n*$/, "\n")}\n# Files rendered into the system prompt at session start (kl migrate).\n${appendSections.join("\n")}\n`;
 		// Must still parse, and every edit must have taken.
 		const check = yaml.load(out) as Record<string, unknown>;
