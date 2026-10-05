@@ -1,16 +1,18 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { handleDeliverSelf, handleSendDirect } from "../src/daemon/handlers.ts";
 import { DaemonState, type SessionRecord } from "../src/daemon/state.ts";
 import * as proto from "../src/daemon/protocol.ts";
+import { selfLease, writeLease } from "../src/sessions/lease.ts";
+import { writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
 
 interface StubDaemon {
 	state: DaemonState;
-	config: { channelsDir: string };
+	config: { channelsDir: string; klRoot: string };
 	cancelShutdown: () => void;
 	maybeScheduleShutdown: () => void;
 }
@@ -37,12 +39,6 @@ function record(session: string): SessionRecord {
 	};
 }
 
-// Live: in presence + known. Offline: known only (registered before, gone).
-function registerLive(session: string): void {
-	const rec = record(session);
-	daemon.state.presence.register(rec);
-	daemon.state.knownSessions.upsert(rec);
-}
 function registerOffline(session: string): void {
 	daemon.state.knownSessions.upsert(record(session));
 }
@@ -51,16 +47,12 @@ function requester(session: string) {
 	return { agent: session.split("-")[0], session, inbox_path: inboxRootFor(session) };
 }
 
-function dmMsg(to: string, from: string): proto.Message {
-	return proto.sendDirect(to, `from ${from}`, "body", "normal", requester(from));
-}
-
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "kl-dm-"));
 	const state = new DaemonState(join(dir, "daemon"));
 	daemon = {
 		state,
-		config: { channelsDir: join(dir, "daemon", "channels") },
+		config: { channelsDir: join(dir, "daemon", "channels"), klRoot: dir },
 		cancelShutdown: () => {},
 		maybeScheduleShutdown: () => {},
 	};
@@ -70,37 +62,84 @@ afterEach(() => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-describe("handleSendDirect — live-only delivery", () => {
-	it("delivers to a live recipient's own inbox", async () => {
-		registerLive("a-x-1");
-		registerLive("b-x-2");
-		const res = await handleSendDirect(dmMsg("b-x-2", "a-x-1"), daemon as never);
+const UA = "0aaa0d7c-d216-74b9-910c-aea077fe8fd5";
+const UB = "0bbb0d7c-d216-74b9-910c-aea077fe8fd5";
+const UC = "0ccc0d7c-d216-74b9-910c-aea077fe8fd5";
+
+function regEntry(uuid: string, name: string, bound: string): RegistryEntry {
+	return {
+		uuid,
+		agent: "rev",
+		name,
+		names: [{ name, bound }],
+		home: "/h/rev",
+		transcript: join(dir, `${uuid}.jsonl`),
+		cwd: "/w",
+		created: bound,
+		wake: "park",
+		launch: {},
+	};
+}
+
+function sendByName(to: string): proto.Message {
+	return proto.sendDirect(to, "hi", "body", "normal", {
+		agent: "rev",
+		session: UA,
+		name: "rev-calm-fox",
+		inbox_path: join(dir, "run", "inbox"),
+	});
+}
+
+function inboxFiles(uuid: string): string[] {
+	const d = join(dir, "run", "inbox", uuid);
+	return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")) : [];
+}
+
+describe("handleSendDirect: name resolution, parking", () => {
+	it("delivers to a live session by name, from: is the sender's name", async () => {
+		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
+		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
+		const res = await handleSendDirect(sendByName("rev-red-owl"), daemon as never);
 		assert.equal(res.type, proto.ACK);
-		// Landed in b's inbox under b's recipient subdir — not a's tree.
-		const bInbox = join(inboxRootFor("b-x-2"), "b-x-2");
-		assert.ok(existsSync(bInbox), "message should land in b's inbox");
-		assert.equal(readdirSync(bInbox).filter((f) => f.endsWith(".md")).length, 1);
-		assert.ok(!existsSync(inboxRootFor("a-x-1")), "nothing should land in sender's tree");
+		assert.equal(res.data.message, "sent to rev-red-owl");
+		const files = inboxFiles(UB);
+		assert.equal(files.length, 1);
+		const text = readFileSync(join(dir, "run", "inbox", UB, files[0]), "utf8");
+		assert.match(text, /^from: rev-calm-fox$/m);
+		assert.match(text, new RegExp(`^from_session: ${UA}$`, "m"));
+		assert.match(text, /^to: rev-red-owl$/m);
 	});
 
-	it("fails for a known-but-offline recipient (no parked write)", async () => {
-		registerLive("a-x-1");
-		registerOffline("b-x-2");
-		const res = await handleSendDirect(dmMsg("b-x-2", "a-x-1"), daemon as never);
-		assert.equal(res.type, proto.ERROR);
-		assert.equal(res.data.code, "recipient_not_live");
-		// No write anywhere — not into b's inbox, not into the sender's tree.
-		assert.ok(!existsSync(inboxRootFor("b-x-2")), "no parked write for offline recipient");
-		assert.ok(!existsSync(inboxRootFor("a-x-1")), "no misdelivery into sender's tree");
+	it("parks for a registered session with no live lease, and says how to wake it", async () => {
+		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
+		writeFileSync(join(dir, `${UB}.jsonl`), "{}\n");
+		const res = await handleSendDirect(sendByName("rev-red-owl"), daemon as never);
+		assert.equal(res.type, proto.ACK);
+		assert.match(
+			String(res.data.message),
+			/^parked: rev-red-owl is not running \(last seen \d{4}-\d\d-\d\d \d\d:\d\d\); kl resume rev-red-owl to wake$/,
+		);
+		assert.equal(inboxFiles(UB).length, 1, "parked mail is written");
 	});
 
-	it("fails for an unknown recipient instead of writing into the sender's inbox", async () => {
-		registerLive("a-x-1");
-		const res = await handleSendDirect(dmMsg("ghost-x-9", "a-x-1"), daemon as never);
+	it("errors loudly for an unknown name and writes nothing", async () => {
+		const res = await handleSendDirect(sendByName("ghost-x-9"), daemon as never);
 		assert.equal(res.type, proto.ERROR);
-		assert.equal(res.data.code, "recipient_not_live");
-		// The old fallback wrote <sender_inbox>/<recipient>/… — assert it didn't.
-		assert.ok(!existsSync(inboxRootFor("a-x-1")), "no black-hole write into sender's tree");
+		assert.equal(res.data.code, "unknown_recipient");
+		assert.match(String(res.data.message), /unknown session 'ghost-x-9'/);
+		assert.ok(!existsSync(join(dir, "run", "inbox")));
+	});
+
+	it("a reused name goes to the most recent binding with a note; name@prefix reaches the other", async () => {
+		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-01T10:00:00Z"), dir);
+		writeEntry(regEntry(UC, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
+		const res = await handleSendDirect(sendByName("rev-red-owl"), daemon as never);
+		assert.equal(res.data.session, UC);
+		assert.match(String(res.data.message), /most recent of 2 sessions named rev-red-owl/);
+		assert.equal(inboxFiles(UC).length, 1);
+		const res2 = await handleSendDirect(sendByName("rev-red-owl@0bbb"), daemon as never);
+		assert.equal(res2.data.session, UB);
+		assert.equal(inboxFiles(UB).length, 1);
 	});
 });
 

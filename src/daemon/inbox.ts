@@ -8,11 +8,12 @@
  *
  * File layout:
  *
- *   <recipient_inbox_root>/<recipient_id>/<YYYYMMDDTHHMMSSZ>-<rand>.md
+ *   <kl root>/run/inbox/<recipient uuid>/<YYYYMMDDTHHMMSSZ>-<rand>.md
  *
  *   ---
- *   from: <sender_session_id>
- *   to:   <recipient_session_id>
+ *   from: <sender name>
+ *   from_session: <sender uuid>     (direct messages)
+ *   to:   <recipient name, or uuid>
  *   summary: "..."
  *   timestamp: YYYY-MM-DDTHH:MM:SSZ
  *   priority: normal|high
@@ -23,8 +24,10 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+
+import { writeAtomic } from "../sessions/fsutil.ts";
 
 function compactTimestamp(date: Date = new Date()): string {
     // 20260422T170800Z — matches mkid() in skills/messaging/scripts/message
@@ -48,8 +51,14 @@ export interface WriteInboxOptions {
     /** Root directory that holds per-recipient inbox dirs. Typically
      *  `<recipient's agent_home>/inbox`. */
     inboxRoot: string;
+    /** Recipient inbox dir name (the session UUID). */
     recipient: string;
+    /** Shown on `to:`; defaults to `recipient`. */
+    recipientName?: string;
+    /** Shown on `from:` (the sender's name). */
     sender: string;
+    /** Sender's UUID, on `from_session:` when set. */
+    senderSession?: string;
     summary: string;
     body: string;
     priority?: "normal" | "high";
@@ -69,7 +78,8 @@ export function writeInboxMessage(opts: WriteInboxOptions): string {
     const frontmatter = [
         "---",
         `from: ${opts.sender}`,
-        `to: ${opts.recipient}`,
+        ...(opts.senderSession ? [`from_session: ${opts.senderSession}`] : []),
+        `to: ${opts.recipientName ?? opts.recipient}`,
         `summary: "${escapeYamlScalar(opts.summary)}"`,
         `timestamp: ${isoTimestamp(now)}`,
         `priority: ${priority}`,
@@ -78,7 +88,8 @@ export function writeInboxMessage(opts: WriteInboxOptions): string {
     frontmatter.push("---", "");
 
     const content = frontmatter.join("\n") + "\n" + opts.body + "\n";
-    writeFileSync(filePath, content);
+    // tmp + rename: the recipient's watcher never sees a partial file.
+    writeAtomic(filePath, content);
     return filePath;
 }
 

@@ -17,6 +17,9 @@ import { isAbsolute, resolve } from "node:path";
 import * as proto from "./protocol.ts";
 import type { SessionRecord } from "./state.ts";
 import { appendChannelHistory, writeInboxMessage } from "./inbox.ts";
+import { inboxRoot } from "../sessions/paths.ts";
+import { lastSeen } from "../sessions/registry.ts";
+import { resolveTarget, ResolveError, type Resolved } from "../sessions/resolve.ts";
 import type { Daemon } from "./index.ts";
 
 // ---------------------------------------------------------------------------
@@ -192,6 +195,23 @@ export async function handlePublish(
     return proto.ack(msg.ref!, { recipient_count: delivered });
 }
 
+/** "last seen" for a parked reply: local "YYYY-MM-DD HH:MM", or "never" if the transcript is gone. */
+function formatLastSeen(d: Date | null): string {
+    if (!d) return "never";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Direct message by name. Name → UUID happens here,
+ * once, so a reused name can't pick up old mail:
+ *   - live (lease) → write to run/inbox/<uuid>/, ack "sent"
+ *   - registry entry, nothing live → write anyway (parked), ack says so
+ *     and how to wake it
+ *   - unknown/ambiguous → error, nothing written
+ * The resolver's note (skipped matches) is appended to the ack text, which
+ * the message tool shows to the model.
+ */
 export async function handleSendDirect(
     msg: proto.Message,
     daemon: Daemon,
@@ -205,35 +225,39 @@ export async function handleSendDirect(
     if (!req) return proto.error(msg.ref!, "send_direct requires requester identity");
     ensureSession(daemon, req);
 
-    // Direct messages go only to LIVE sessions. We resolve the recipient's
-    // inbox from the presence registry alone — no known-sessions fallback, no
-    // deriving from the sender's own home. An offline or never-registered
-    // recipient is an honest failure the sender sees, not a write parked
-    // somewhere nobody is watching. (The old fallback chain ended at the
-    // SENDER's inbox root, which was correct only under the retired
-    // single-home layout — under multi-home it silently misdelivered a
-    // peer's mail into the sender's own tree.)
-    const liveRecord = daemon.state.presence.get(to);
-    const inbox_root = liveRecord?.inbox_path;
-
-    if (!inbox_root) {
-        return proto.error(
-            msg.ref!,
-            `'${to}' is not a live session — direct messages can only be sent to ` +
-                `currently-running sessions. (Use 'sessions list' to see who's live.)`,
-            "recipient_not_live",
-        );
+    let target: Resolved;
+    try {
+        target = resolveTarget(to, { root: daemon.config.klRoot });
+    } catch (e) {
+        if (e instanceof ResolveError) return proto.error(msg.ref!, e.message, "unknown_recipient");
+        throw e;
     }
 
     writeInboxMessage({
-        inboxRoot: inbox_root,
-        recipient: to,
-        sender: req.session,
+        inboxRoot: inboxRoot(daemon.config.klRoot),
+        recipient: target.uuid,
+        sender: req.name || req.session,
+        senderSession: req.session,
+        recipientName: target.name,
         summary,
         body,
         priority,
     });
-    return proto.ack(msg.ref!, { message: `sent to ${to}` });
+
+    let text: string;
+    if (target.lease) {
+        text = `sent to ${target.name}`;
+    } else {
+        const seen = formatLastSeen(target.entry ? lastSeen(target.entry) : null);
+        text = `parked: ${target.name} is not running (last seen ${seen}); kl resume ${target.name} to wake`;
+    }
+    if (target.note) text += `\n${target.note}`;
+    return proto.ack(msg.ref!, {
+        message: text,
+        session: target.uuid,
+        name: target.name,
+        live: !!target.lease,
+    });
 }
 
 /**

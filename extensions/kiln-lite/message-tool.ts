@@ -34,7 +34,7 @@ const MessageParams = Type.Object({
 		{ description: "The action: send, subscribe, or unsubscribe." },
 	),
 	to: Type.Optional(
-		Type.String({ description: "Recipient agent ID (for action=send, point-to-point)." }),
+		Type.String({ description: "Recipient session name, e.g. reviewer-calm-fox, or name@<id-prefix> (for action=send, point-to-point). A session that is not running gets the message parked until it is resumed." }),
 	),
 	channel: Type.Optional(
 		Type.String({
@@ -116,7 +116,7 @@ async function dispatchSend(
 		return err("send requires both 'summary' and 'body'.");
 	}
 	if (!to && !channel) {
-		return err("send requires either 'to' (agent ID) or 'channel' (for broadcast).");
+		return err("send requires either 'to' (session name) or 'channel' (for broadcast).");
 	}
 	if (to && channel) {
 		return err("send takes either 'to' OR 'channel', not both.");
@@ -124,8 +124,7 @@ async function dispatchSend(
 
 	try {
 		if (to) {
-			await daemon.sendDirect(to, summary, body, priority);
-			return ok(`Message sent to ${to}.`);
+			return ok(await daemon.sendDirect(to, summary, body, priority));
 		}
 		// channel branch
 		const count = await daemon.publish(channel!, summary, body, priority);

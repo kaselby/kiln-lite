@@ -119,8 +119,7 @@ async function main(): Promise<void> {
                 stdin: flags["body-stdin"] as boolean | undefined,
             });
             const priority = (flags.priority === "high" ? "high" : "normal") as "normal" | "high";
-            await client.sendDirect(to, summary, body, priority);
-            process.stdout.write(`sent -> ${to}\n`);
+            process.stdout.write(`${await client.sendDirect(to, summary, body, priority)}\n`);
             return;
         }
         case "deliver-self": {

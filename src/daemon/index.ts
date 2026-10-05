@@ -36,11 +36,11 @@ import {
     writeSync,
 } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
-import { homedir } from "node:os";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { handlers } from "./handlers.ts";
+import { inboxRoot, klRoot } from "../sessions/paths.ts";
 import { cleanInboxes } from "./inbox-cleanup.ts";
 import * as proto from "./protocol.ts";
 import { reconcile } from "./reconcile.ts";
@@ -60,11 +60,12 @@ function defaultSocketPath(): string {
 
 /** `<kl root>/daemon`, kl root = $KL_ROOT or ~/.kl (same rule as extensions/kiln-lite/config.ts resolveKlRoot). */
 function defaultStateDir(): string {
-    const root = process.env.KL_ROOT?.trim();
-    return join(root ? resolvePath(root) : join(homedir(), ".kl"), "daemon");
+    return join(klRoot(), "daemon");
 }
 
 export interface DaemonConfig {
+    /** kl root: run/{sessions,leases,inbox} live under it (src/sessions/paths.ts). */
+    klRoot: string;
     socketPath: string;
     stateDir: string;
     pidfilePath: string;
@@ -77,6 +78,7 @@ export interface DaemonConfig {
 function loadConfig(overrides: Partial<DaemonConfig> = {}): DaemonConfig {
     const stateDir = overrides.stateDir ?? defaultStateDir();
     return {
+        klRoot: overrides.klRoot ?? klRoot(),
         socketPath: overrides.socketPath ?? defaultSocketPath(),
         stateDir,
         pidfilePath: overrides.pidfilePath ?? join(stateDir, "daemon.pid"),
@@ -169,12 +171,11 @@ export class Daemon {
         // Runs once at startup; the daemon is the shared owner of this across
         // sessions. Non-fatal — a failure here shouldn't block the daemon.
         try {
-            const inboxRoots: string[] = [];
-            for (const [, entry] of Object.entries(this.state.knownSessions.load())) {
-                if (entry.inbox_path) inboxRoots.push(entry.inbox_path);
-            }
+            // Only the kl root's own inbox tree: never paths learned from
+            // clients, so a misconfigured session can't point the sweep
+            // at someone else's files.
             const swept = cleanInboxes({
-                inboxRoots,
+                inboxRoots: [inboxRoot(this.config.klRoot)],
                 maxAgeMs: INBOX_CLEANUP_MAX_AGE_MS,
                 log: (m) => this.log.log(m),
             });

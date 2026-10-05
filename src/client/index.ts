@@ -188,10 +188,13 @@ export class DaemonClient {
         summary: string,
         body: string,
         priority: "normal" | "high" = "normal",
-    ): Promise<void> {
-        this.expect(
+    ): Promise<string> {
+        const res = this.expect(
             await this.call(proto.sendDirect(to, summary, body, priority, this.requester)),
         );
+        // The daemon's reply text: "sent to X" or "parked: ...", plus any
+        // resolution note. Callers show it as-is.
+        return typeof res.data.message === "string" ? (res.data.message as string) : `sent to ${to}`;
     }
 
     /** Deliver to this requester's inbox without registering live presence. */
