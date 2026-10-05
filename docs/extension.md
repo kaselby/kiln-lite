@@ -143,7 +143,6 @@ cleanup:
 
 # Directory names relative to $AGENT_HOME.
 tools_dir: tools          # default "tools"
-inbox_dir: inbox          # default "inbox"
 sessions_dir: sessions    # default "sessions"
 
 # Skill subtrees (relative to $AGENT_HOME/skills) autodiscovered by pi.

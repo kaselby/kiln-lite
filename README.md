@@ -10,9 +10,9 @@ way for two sessions to talk to each other.
 kiln-lite is a Pi *package* (an extension plus a couple of CLIs) that layers
 the missing infrastructure on top, without replacing anything Pi already does:
 
-- **Stable identity.** Every session gets a deterministic agent ID like
-  `scout-bright-raven` that survives `/resume`, so an agent has a name you can
-  address and reattach to.
+- **Names.** Every session gets a name like `scout-bright-raven`, drawn at
+  launch and kept across `kl resume`, so you can address it, reattach to it,
+  and leave it mail while it isn't running.
 - **A config-driven home.** Each agent lives in its own directory
   (`~/.kl/agents/<name>/`) holding its config, system prompt, memory, tools,
   and skills. One `agent.yml` controls how the session is assembled.
@@ -134,7 +134,6 @@ Each `kl new` produces the standard home shape:
 ├── scratch/          # ephemeral working notes (never injected into context)
 ├── tools/            # shell tools — bundled ones copied here, add your own
 ├── skills/           # SKILL.md skill packages — messaging bundled
-├── inbox/            # per-session inboxes live at inbox/<agent-id>/
 ├── sessions/         # session summaries (written by the cleanup turn)
 └── venv/             # Python venv for the bundled tools
 ```
@@ -179,7 +178,6 @@ cleanup: |
 
 # Directory names, relative to the home (defaults shown).
 tools_dir: tools
-inbox_dir: inbox
 sessions_dir: sessions
 ```
 
@@ -340,9 +338,10 @@ Full reference: [`docs/skills.md`](./docs/skills.md).
 ## Sessions that talk to each other
 
 Every live session — whether it's the same agent launched twice or two
-different agents — gets its own unique ID (`<name>-<adj>-<noun>`) and its own
-file-based inbox at `inbox/<agent-id>/`. Any session can message any other
-live session by that ID. Routing goes through the daemon, which autostarts on
+different agents — gets its own name (`<name>-<adj>-<noun>`) and its own
+file-based inbox at `~/.kl/run/inbox/<session uuid>/`. Any session can message
+any other by name; mail for a session that isn't running waits ("parked")
+until `kl resume <name>`. Routing goes through the daemon, which autostarts on
 first use.
 
 Sessions send messages with the built-in **`message`** tool:
@@ -404,12 +403,13 @@ starter agent.
 kl                          # launch the default starter agent
 kl run scout                 # launch the 'scout' agent
 kl run scout [pi-args...]    # extra args pass through to pi (e.g. --model)
-kl resume scout-silver-gate  # resume a past session by agent ID
-kl attach scout-silver-gate  # reattach to a live session
-kl list                     # list live kl sessions
+kl run scout -d --parent X   # detached: prints the new session's name
+kl resume scout-silver-gate  # attach, starting it again if it isn't running
+kl attach scout-silver-gate  # same as resume
+kl sessions                 # recent sessions as parent/child trees; * = running
+kl inbox scout-silver-gate   # a session's inbox
 kl agents                   # list installed agents on disk
 kl new scout                 # scaffold a new agent home
-kl history [name]           # recent sessions, across all agents or one
 kl doctor [name]            # system + per-agent diagnostic
 ```
 
@@ -417,10 +417,13 @@ kl doctor [name]            # system + per-agent diagnostic
 > is an error, not an agent launch. Use `kl run <name>`.
 
 At launch `kl` resolves the home (positional name → `~/.kl/agents/<name>`, else
-`$AGENT_HOME` override, else the starter), generates the agent ID up front,
-exports `AGENT_ID` / `AGENT_HOME` / `_KL=1`, and starts Pi inside tmux. Because
-the ID is fixed before Pi starts, the tmux session name, the extension's ID,
-and the inbox directory all agree from spawn.
+`$AGENT_HOME` override, else the starter), draws a name (`scout-silver-gate`:
+unique among running sessions, avoiding names used in the last 3 weeks) and
+starts Pi in a tmux session of that name. At session_start the extension
+records the session in `~/.kl/run/sessions/<uuid>.yml` and holds a lease in
+`~/.kl/run/leases/` while it runs. Names are handles; the Pi session UUID is
+the identity. A reused name means the running session, else the most recent
+one; `name@<id-prefix>` picks a specific one.
 
 **Iterating on the extension itself** (no install, no tmux):
 

@@ -4,11 +4,11 @@ How sessions exchange messages — inbox file format, direct sends, channel pub/
 
 ## Overview
 
-Each Pi session running kiln-lite has an inbox directory at `<home>/inbox/<agent-id>/` where incoming messages land as `.md` files with YAML frontmatter. The daemon routes between inboxes; the extension watches the recipient's inbox and delivers.
+Each Pi session running kiln-lite has an inbox directory at `~/.kl/run/inbox/<session uuid>/` (`$KL_INBOX`) where incoming messages land as `.md` files with YAML frontmatter. The daemon routes between inboxes; the extension watches the recipient's inbox and delivers.
 
 Two routing modes:
 
-- **Direct** — address a currently-live session by agent-id. The daemon resolves the recipient through live presence and writes the file; offline or unknown recipients return an error.
+- **Direct** — address a session by name (or `name@<id-prefix>`). The daemon resolves the name to a session UUID once, with `src/sessions/resolve.ts` (running session first, then the most recent session to use the name), and writes `run/inbox/<uuid>/`. A known session that isn't running gets the file anyway ("parked: <name> is not running (last seen …); kl resume <name> to wake"), delivered when it is resumed. An unknown name is an error and nothing is written. The reply text, including any "skipped other sessions with this name" note, is what the message tool returns.
 - **Channel** — publish to a named channel. The daemon fans out: for every subscriber ≠ sender, write a file to their inbox.
 
 Delivery is asynchronous. The recipient's extension watches the inbox:
@@ -46,7 +46,7 @@ message publish #foo ...
 - **`DaemonClient`** (`src/client/index.ts`) — autostarting Unix-socket RPC client.
 - **Daemon handlers** (`src/daemon/handlers.ts`) — one per request type. `handlePublish` fans out, `handleSendDirect` resolves + writes.
 - **`writeInboxMessage`** (`src/daemon/inbox.ts`) — writes the `.md` file with frontmatter.
-- **Extension inbox watcher** (`extensions/kiln-lite/inbox.ts`) — fs.watch on `<home>/inbox/<agent-id>/`; delivery logic.
+- **Extension inbox watcher** (`extensions/kiln-lite/inbox.ts`) — fs.watch on `$KL_INBOX`; delivery logic.
 - **`message` skill** (`tools/message`) — bash frontend the agent uses. Daemon-bound subcommands delegate to `kl-msg`; file-bound (`read`, `list`) stay pure bash.
 
 ### Send flow — direct
@@ -90,12 +90,13 @@ On `agent_end`, the watcher's `markAllSeen()` clears the unread set so the ping 
 
 ### Message file format
 
-`.md` files under `<home>/inbox/<agent-id>/`:
+`.md` files under `~/.kl/run/inbox/<session uuid>/`, written atomically (tmp + rename):
 
 ```markdown
 ---
-from: <sender-agent-id>
-to: <recipient-agent-id>
+from: <sender name>
+from_session: <sender uuid>        # direct messages
+to: <recipient name>
 summary: "Short one-line summary"
 timestamp: 2026-04-22T21:15:12Z
 priority: normal
@@ -134,7 +135,7 @@ File-based (no daemon):
   list [--unread|--all]      # list received messages
 ```
 
-Requires env: `$AGENT_HOME`, `$AGENT_ID`, `$INBOX`. All three are exported by the kiln-lite extension at `session_start`.
+Requires env: `$AGENT_HOME`, `$AGENT_ID`, `$SESSION_UUID`, `$KL_INBOX`. All three are exported by the kiln-lite extension at `session_start`.
 
 Peer discovery lives in a separate tool (see [below](#session-discovery)) — `message` is for messaging, `sessions` is for finding who's out there to message.
 

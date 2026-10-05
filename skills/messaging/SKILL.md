@@ -5,8 +5,9 @@ description: Inter-session messaging via kiln-lite's daemon + file-based inboxes
 
 # Messaging
 
-Every kiln-lite session has a unique agent ID and a file-based inbox at
-`$AGENT_HOME/inbox/<agent-id>/`. Sessions communicate by dropping markdown
+Every kiln-lite session has a name (`<agent>-<adj>-<noun>`, e.g.
+`reviewer-calm-fox`) and a file-based inbox at `$KL_INBOX`
+(`~/.kl/run/inbox/<session uuid>/`). Sessions communicate by dropping markdown
 files into each other's inboxes — directly (DM) or through a channel
 (broadcast to subscribers).
 
@@ -32,7 +33,7 @@ not a shell script. Single tool, three actions behind an `action`
 discriminator.
 
 ```
-message(action="send", to="<session-id>", summary="<one-liner>", body="<text>")
+message(action="send", to="<session name>", summary="<one-liner>", body="<text>")
 message(action="send", channel="<channel>", summary="<one-liner>", body="<text>")
 message(action="subscribe", channel="<channel>")
 message(action="unsubscribe", channel="<channel>")
@@ -55,7 +56,7 @@ marks the file as consumed (touches the `.read` sibling) so it won't be
 re-pinged.
 
 ```
-Read("/path/to/$AGENT_HOME/inbox/<your-id>/<timestamp>-<hex>.md")
+Read("$KL_INBOX/<timestamp>-<hex>.md")      # the notification gives the full path
 ```
 
 The mid-turn notification block gives you the full path — just feed it to
@@ -67,38 +68,54 @@ Use bash `ls` to see what's there. `.md` files without a matching `.read`
 sibling are unread:
 
 ```bash
-ls -t "$INBOX"                          # newest first (all)
-ls "$INBOX"/*.md 2>/dev/null             # every message (read or unread)
+ls -t "$KL_INBOX"                          # newest first (all)
+ls "$KL_INBOX"/*.md 2>/dev/null             # every message (read or unread)
 # unread = .md with no .read sibling; one-liner:
-for f in "$INBOX"/*.md; do [ -e "${f%.md}.read" ] || echo "$f"; done
+for f in "$KL_INBOX"/*.md; do [ -e "${f%.md}.read" ] || echo "$f"; done
+kl inbox <session name>                    # any session's inbox, "new" = unread
 ```
 
 ### Peer discovery + daemon status
 
 ```bash
-sessions                        # list active sessions (daemon-first, tmux fallback)
-sessions show <agent-id>        # detail view for a specific peer
+kl sessions                     # recent sessions as parent/child trees; * = running
 kl-msg status                   # daemon pid, uptime, counts
 kl-msg list-subscriptions       # your current channel subs
 ```
 
-`sessions` is the canonical tool for peer discovery. `kl-msg` is the
+`kl sessions` is the canonical tool for peer discovery. `kl-msg` is the
 low-level CLI — useful for scripting and introspection; the `message`
 tool is the normal agent-facing surface.
 
 ## Addressing
 
-Agent IDs are shaped `<name>-<adjective>-<noun>` — e.g. `agent-bright-raven`.
-Deterministic from the Pi session UUID, so `/resume` recovers the same ID.
-You can also address any session you've been messaged by (the `from:` line
-in their message frontmatter is the literal address).
+Address a session by its name, `<agent>-<adjective>-<noun>`, e.g.
+`reviewer-calm-fox`. The name is drawn when the session starts and is
+unique among running sessions; a resumed session keeps its name unless
+another running session holds it. The `from:` line of a message you
+received is the sender's name, so you can reply to it directly.
+
+The daemon turns the name into a session once, when you send:
+
+- **Running** → delivered; the tool says `sent to <name>`.
+- **Known but not running** → the message is written anyway and waits
+  ("parked"). The tool says `parked: <name> is not running (last seen
+  <time>); kl resume <name> to wake`. It is delivered when that session
+  is resumed. Nothing wakes it automatically.
+- **Unknown** → the send fails and nothing is written.
+
+A name used by several sessions over time means the running one, else the
+one that used it most recently; the tool's reply then says other sessions
+were skipped. Reach a specific one with `name@<id-prefix>` (at least 4 hex
+characters of its session UUID; `kl sessions` shows the ids).
 
 ## Message file format
 
 ```markdown
 ---
-from: agent-bright-raven
-to: agent-still-wren
+from: reviewer-calm-fox          # sender's name
+from_session: 01a10d7c-...       # sender's session UUID (DMs)
+to: reviewer-red-owl
 summary: Ready for your review
 timestamp: 2026-04-22T10:15:00Z
 priority: normal
@@ -115,7 +132,9 @@ sorted listings are chronological; hex suffix prevents collisions.
 
 Automatic — no action needed. What happens:
 
-- **Peer idle**: the message is delivered as a user turn on their side.
+- **Peer idle**: the message is delivered as a user turn on their side,
+  headed by a note that it comes from another agent, not the user, and
+  carries no obligation to comply.
 - **Peer busy**: a `[Notification | AGENT MESSAGE from <sender> | source:
   kiln-lite/<dm-or-channel> | sent HH:MM:SS]` block is appended to their
   next tool result, followed by the full message file path. They `Read`
@@ -148,10 +167,10 @@ tools, scripts you invoke via bash):
 | Var             | Meaning                                         |
 |-----------------|-------------------------------------------------|
 | `AGENT_HOME`    | Resolved agent home (default `~/.kl/agent/`)    |
-| `AGENT_ID`      | Your session's ID                               |
+| `AGENT_ID`      | Your session's name (e.g. `reviewer-calm-fox`)  |
 | `AGENT_NAME`    | The name component (e.g. `scout`)                |
 | `SESSION_UUID`  | Pi session UUID                                 |
-| `INBOX`         | `$AGENT_HOME/inbox/$AGENT_ID/`                  |
+| `KL_INBOX`      | `~/.kl/run/inbox/$SESSION_UUID/`                |
 
 ## Gotchas
 

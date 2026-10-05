@@ -66,8 +66,6 @@ export interface AgentConfig {
 
 	/** Cleanup prompt (inline or `{ path }`) for /exit and exit_session. Empty = no cleanup turn. */
 	cleanup: PromptSource;
-	/** Inbox dir, relative to the agent home (the messaging slice moves inboxes to ~/.kl/run). */
-	inbox_dir: string;
 	/** Tool calls between `[Session state]` suffixes; 0 disables. */
 	session_state_interval: number;
 }

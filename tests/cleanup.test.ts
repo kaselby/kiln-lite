@@ -27,7 +27,6 @@ function makeState(home: string, cleanup: PromptSource): SessionState {
 			startup: [],
 			cleanup,
 			tools_dir: "tools",
-			inbox_dir: "inbox",
 			skills_dirs: ["active"],
 			session_state_interval: 15,
 		},
