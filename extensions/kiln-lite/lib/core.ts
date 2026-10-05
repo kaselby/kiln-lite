@@ -156,7 +156,15 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		void daemon.register().catch((err) => warn(`kiln-lite: daemon register failed: ${(err as Error).message}`));
 
 		// Inbox watcher starts last so it can't miss messages landing during startup.
-		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn });
+		// transcriptEntries: ids already in the transcript count as delivered
+		// (the transcript is the delivery ledger; .read markers are a cache).
+		let transcriptEntries: readonly unknown[] = [];
+		try {
+			transcriptEntries = ctx.sessionManager.getEntries();
+		} catch (err) {
+			warn(`kiln-lite: could not read transcript entries for inbox ledger: ${(err as Error).message}`);
+		}
+		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn, transcriptEntries });
 
 		sessionState = createSessionStateHook({
 			getDaemon: () => daemon,
@@ -237,6 +245,11 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix, timeSuffix]);
 		if (suffix === null) return;
 		return { content: appendTextToContent(event.content, suffix), details: event.details, isError: event.isError };
+	});
+
+	// --- message_end: an inbox batch counts as delivered once it lands ---
+	pi.on("message_end", async (event) => {
+		watcher?.handleMessageEnd(event.message);
 	});
 
 	// --- agent_end: drain the inbox into user turns ---

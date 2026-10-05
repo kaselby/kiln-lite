@@ -16,7 +16,7 @@
 
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import * as proto from "../daemon/protocol.ts";
 import { autostartDaemon } from "./autostart.ts";
@@ -27,8 +27,10 @@ function defaultSocketPath(): string {
     return `/tmp/kiln-lite-${process.getuid?.() ?? "nouid"}.sock`;
 }
 
+/** `<kl root>/daemon`, kl root = $KL_ROOT or ~/.kl (same rule as extensions/kiln-lite/config.ts resolveKlRoot). */
 function defaultStateDir(): string {
-    return join(homedir(), ".kl", "daemon");
+    const root = process.env.KL_ROOT?.trim();
+    return join(root ? resolve(root) : join(homedir(), ".kl"), "daemon");
 }
 
 export interface DaemonClientOptions {
