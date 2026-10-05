@@ -25,8 +25,29 @@ export interface Resolved {
 
 export class ResolveError extends Error {}
 
-export function shortId(uuid: string): string {
-	return uuid.replace(/-/g, "").slice(0, 8);
+const dashless = (u: string): string => u.replace(/-/g, "").toLowerCase();
+
+/**
+ * The shortest prefix of `uuid` (dashes dropped) that no other uuid in
+ * `among` shares, and at least 8 characters, git-style. Pi's v7 UUIDs start
+ * with a timestamp, so sessions started within ~65 s share their first 8.
+ */
+export function shortId(uuid: string, among: Iterable<string>): string {
+	const me = dashless(uuid);
+	let len = 8;
+	for (const other of among) {
+		const o = dashless(other);
+		if (o === me) continue;
+		let i = 0;
+		while (i < me.length && me[i] === o[i]) i++;
+		len = Math.max(len, i + 1);
+	}
+	return me.slice(0, Math.min(len, me.length));
+}
+
+/** Every uuid kl knows: registry entries plus live leases. The population for shortId. */
+export function knownUuids(root = klRoot()): string[] {
+	return [...new Set([...listEntries(root).map((e) => e.uuid), ...liveLeases(root).keys()])];
 }
 
 /** git-style prefix match against the uuid, ignoring dashes. */
@@ -41,14 +62,15 @@ export function resolveTarget(target: string, opts: { root?: string } = {}): Res
 	const entries = listEntries(root);
 	const live = liveLeases(root);
 	const byUuid = new Map(entries.map((e) => [e.uuid, e]));
+	const all = [...new Set([...entries.map((e) => e.uuid), ...live.keys()])];
+	const short = (u: string): string => shortId(u, all);
 
 	const at = t.indexOf("@");
 	if (at !== -1) {
 		const name = t.slice(0, at);
 		const prefix = t.slice(at + 1);
 		if (prefix.replace(/-/g, "").length < 4) throw new ResolveError(`'${t}': id prefix needs at least 4 characters`);
-		const uuids = new Set<string>([...entries.map((e) => e.uuid), ...live.keys()]);
-		let matches = [...uuids].filter((u) => prefixMatches(u, prefix));
+		let matches = all.filter((u) => prefixMatches(u, prefix));
 		if (name) {
 			matches = matches.filter((u) => {
 				const e = byUuid.get(u);
@@ -57,12 +79,12 @@ export function resolveTarget(target: string, opts: { root?: string } = {}): Res
 		}
 		if (matches.length === 0) throw new ResolveError(`no session matches '${t}'`);
 		if (matches.length > 1) {
-			throw new ResolveError(`'${t}' is ambiguous: ${matches.map((u) => shortId(u)).join(", ")}; use a longer prefix`);
+			throw new ResolveError(`'${t}' is ambiguous: ${matches.map((u) => short(u)).join(", ")}; use a longer prefix`);
 		}
 		const uuid = matches[0];
 		const entry = byUuid.get(uuid) ?? null;
 		const lease = live.get(uuid) ?? null;
-		return { uuid, entry, lease, name: lease?.name ?? entry?.name ?? (name || shortId(uuid)) };
+		return { uuid, entry, lease, name: lease?.name ?? entry?.name ?? (name || short(uuid)) };
 	}
 
 	// 1. live lease holding the name
@@ -95,9 +117,9 @@ export function resolveTarget(target: string, opts: { root?: string } = {}): Res
 			name: live.get(e.uuid)?.name ?? t,
 			note:
 				hits.length > 1
-					? `resolved to the most recent of ${hits.length} sessions named ${t} (${shortId(e.uuid)}); use ${t}@<id> for another: ${hits
+					? `resolved to the most recent of ${hits.length} sessions named ${t} (${short(e.uuid)}); use ${t}@<id> for another: ${hits
 							.slice(1)
-							.map((h) => shortId(h.e.uuid))
+							.map((h) => short(h.e.uuid))
 							.join(", ")}`
 					: undefined,
 		};

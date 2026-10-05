@@ -21,7 +21,7 @@ import { launchNew, wake } from "./launch.ts";
 import { liveLeases } from "./lease.ts";
 import { inboxDir, klRoot, UUID_RE } from "./paths.ts";
 import { lastSeen, listEntries, readEntry, type RegistryEntry } from "./registry.ts";
-import { resolveTarget, ResolveError, shortId } from "./resolve.ts";
+import { knownUuids, resolveTarget, ResolveError, shortId } from "./resolve.ts";
 import { tmuxBaseArgs } from "./tmux.ts";
 
 function die(msg: string): never {
@@ -139,7 +139,7 @@ function cmdResume(verb: string, args: string[]): void {
 		try {
 			const w = wake(r.uuid, { piArgs, log: info });
 			name = w.name;
-			info(w.started ? `woke ${name} (${shortId(r.uuid)})` : `${name} was already running`);
+			info(w.started ? `woke ${name} (${shortId(r.uuid, knownUuids())})` : `${name} was already running`);
 		} catch (e) {
 			die((e as Error).message);
 		}
@@ -164,6 +164,9 @@ function cmdSessions(args: string[]): void {
 		return;
 	}
 	const live = liveLeases();
+	const all = [...new Set([...entries.map((e) => e.uuid), ...live.keys()])];
+	const ids = new Map(entries.map((e) => [e.uuid, shortId(e.uuid, all)]));
+	const idWidth = Math.max(8, ...[...ids.values()].map((id) => id.length));
 	const seen = new Map<string, Date | null>(entries.map((e) => [e.uuid, lastSeen(e)]));
 	const recency = (e: RegistryEntry): number => (seen.get(e.uuid) ?? new Date(e.created)).getTime() || 0;
 	const byUuid = new Map(entries.map((e) => [e.uuid, e]));
@@ -181,7 +184,7 @@ function cmdSessions(args: string[]): void {
 		depth > 50 ? recency(e) : Math.max(recency(e), ...(children.get(e.uuid) ?? []).map((c) => treeRecency(c, depth + 1)));
 	roots.sort((a, b) => treeRecency(b) - treeRecency(a));
 
-	console.log(`  ${"NAME".padEnd(28)} ${"STATE".padEnd(6)} ${"LAST SEEN".padEnd(16)} ID        CWD`);
+	console.log(`  ${"NAME".padEnd(28)} ${"STATE".padEnd(6)} ${"LAST SEEN".padEnd(16)} ${"ID".padEnd(idWidth)}  CWD`);
 	const printed = new Set<string>();
 	const print = (e: RegistryEntry, depth: number): void => {
 		if (printed.has(e.uuid)) return;
@@ -190,7 +193,7 @@ function cmdSessions(args: string[]): void {
 		const mark = l ? "*" : " ";
 		const label = `${"  ".repeat(depth)}${depth ? "└ " : ""}${l?.name ?? e.name}`;
 		const state = l ? l.state : "-";
-		console.log(`${mark} ${label.padEnd(28)} ${state.padEnd(6)} ${fmtTime(seen.get(e.uuid) ?? null).padEnd(16)} ${shortId(e.uuid)}  ${e.cwd}`);
+		console.log(`${mark} ${label.padEnd(28)} ${state.padEnd(6)} ${fmtTime(seen.get(e.uuid) ?? null).padEnd(16)} ${ids.get(e.uuid)!.padEnd(idWidth)}  ${e.cwd}`);
 		const kids = (children.get(e.uuid) ?? []).sort((a, b) => recency(b) - recency(a));
 		for (const c of kids) print(c, depth + 1);
 	};
@@ -226,7 +229,7 @@ function cmdInbox(args: string[]): void {
 	}
 	if (r.note) info(r.note);
 	const dir = inboxDir(r.uuid);
-	console.log(`${r.name} (${shortId(r.uuid)}${r.lease ? ", running" : ", not running"}): ${dir}`);
+	console.log(`${r.name} (${shortId(r.uuid, knownUuids())}${r.lease ? ", running" : ", not running"}): ${dir}`);
 	let files: string[] = [];
 	try {
 		files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();

@@ -10,7 +10,7 @@ import { leaseIsLive, liveLease, readLease, releaseLease, selfLease, writeLease 
 import { ADJECTIVES, NOUNS, drawName, nameState } from "../src/sessions/names.ts";
 import { namesLockPath } from "../src/sessions/paths.ts";
 import { bindName, formatEntry, parseEntry, readEntry, writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
-import { ResolveError, resolveTarget } from "../src/sessions/resolve.ts";
+import { ResolveError, resolveTarget, shortId } from "../src/sessions/resolve.ts";
 
 function freshRoot(): string {
 	const root = mkdtempSync(join(tmpdir(), "kl-sessions-"));
@@ -145,4 +145,21 @@ test("resolve: live wins, else most recent bound with a note, name@prefix exact,
 	assert.ok(live.lease);
 	assert.match(live.note ?? "", /live session/);
 	assert.equal(resolveTarget("rev-red-owl", { root }).note, undefined, "single match: no note");
+});
+
+test("shortId: shortest unique prefix among known sessions, at least 8; notes use it", () => {
+	const A = "01a10da3-0001-7aaa-8000-000000000001";
+	const B = "01a10da3-0002-7bbb-8000-000000000002";
+	const C = "0f0f0f0f-0003-7ccc-8000-000000000003";
+	assert.equal(shortId(C, [A, B, C]), "0f0f0f0f");
+	assert.equal(shortId(A, [A, B, C]), "01a10da30001", "shares 01a10da3000 with B");
+	assert.equal(shortId(A, [A]), "01a10da3");
+	const root = freshRoot();
+	writeEntry(entry(A, "rev-calm-fox", "2026-10-01T10:00:00Z"), root);
+	writeEntry(entry(B, "rev-calm-fox", "2026-10-02T10:00:00Z"), root);
+	const r = resolveTarget("rev-calm-fox", { root });
+	assert.equal(r.uuid, B);
+	assert.match(r.note ?? "", /\(01a10da30002\); use rev-calm-fox@<id> for another: 01a10da30001$/);
+	assert.equal(resolveTarget("rev-calm-fox@01a10da30001", { root }).uuid, A);
+	assert.throws(() => resolveTarget("@01a10da3", { root }), /ambiguous: 01a10da30001, 01a10da30002/);
 });
