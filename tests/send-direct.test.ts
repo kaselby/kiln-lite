@@ -4,7 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, existsSync, rmSync, writeFileSy
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { handleDeliverSelf, handleSendDirect } from "../src/daemon/handlers.ts";
+import { handleDeliverSelf, handlePublish, handleSendDirect } from "../src/daemon/handlers.ts";
 import { DaemonState, type SessionRecord } from "../src/daemon/state.ts";
 import * as proto from "../src/daemon/protocol.ts";
 import { selfLease, writeLease } from "../src/sessions/lease.ts";
@@ -211,5 +211,19 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		});
 		assert.equal((await handleDeliverSelf(conflicting, daemon as never)).type, proto.ERROR);
 		assert.ok(!existsSync(join(dir, "different-home")));
+	});
+});
+
+describe("handlePublish: channel history", () => {
+	it("history.jsonl records from: as the sender's name, plus from_session for a kl session", async () => {
+		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
+		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", "normal", who), daemon as never);
+		await pub({ agent: "rev", session: UA, name: "rev-calm-fox", inbox_path: join(dir, "run", "inbox") });
+		await pub({ agent: "human", session: "human-sam", name: "sam" });
+		const lines = readFileSync(join(dir, "daemon", "channels", "lobby", "history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+		assert.equal(lines[0].from, "rev-calm-fox");
+		assert.equal(lines[0].from_session, UA);
+		assert.equal(lines[1].from, "sam");
+		assert.equal(lines[1].from_session, undefined);
 	});
 });

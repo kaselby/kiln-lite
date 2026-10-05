@@ -187,7 +187,8 @@ export async function handlePublish(
     appendChannelHistory({
         channelsDir: daemon.config.channelsDir,
         channel,
-        sender: req.session,
+        sender: req.name || req.session,
+        senderSession: agentSession(daemon, req),
         summary,
         body,
         priority,

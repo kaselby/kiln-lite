@@ -97,6 +97,8 @@ export interface AppendHistoryOptions {
     channelsDir: string;
     channel: string;
     sender: string;
+    /** Sender's session UUID, when it is a registered kl session. */
+    senderSession?: string;
     summary: string;
     body: string;
     priority?: "normal" | "high";
@@ -114,6 +116,7 @@ export function appendChannelHistory(opts: AppendHistoryOptions): void {
     const entry = {
         ts: isoTimestamp(),
         from: opts.sender,
+        ...(opts.senderSession ? { from_session: opts.senderSession } : {}),
         summary: opts.summary,
         body: opts.body,
         priority,
