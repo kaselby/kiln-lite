@@ -61,14 +61,14 @@ export interface AgentConfig {
 	project_context: boolean;
 	timestamps: TimestampConfig | false;
 
-	// --- Keys read by modules outside this slice (messaging / persistence). ---
+	// --- Keys read by modules outside this slice (messaging / lifecycle). ---
 	// Recognized so they don't warn; not part of the minimal schema.
 
-	/** Persistence: cleanup prompt (inline or `{ path }`). Empty = no cleanup turn. */
+	/** Cleanup prompt (inline or `{ path }`) for /exit and exit_session. Empty = no cleanup turn. */
 	cleanup: PromptSource;
 	/** Inbox dir, relative to the agent home (the messaging slice moves inboxes to ~/.kl/run). */
 	inbox_dir: string;
-	/** Session-summary dir, relative to the agent home (persistence). */
+	/** Session-summary dir, relative to the agent home ({summary_path} in the cleanup prompt). */
 	sessions_dir: string;
 	/** Tool calls between `[Session state]` suffixes; 0 disables. */
 	session_state_interval: number;
@@ -88,10 +88,10 @@ export interface SessionState {
 	/** Env vars exported to spawned processes. */
 	env: Record<string, string>;
 	/**
-	 * How this process was launched (fork via /spawn, `kl resume`, or a
-	 * continuation handoff). Drives a one-time orientation reminder.
+	 * How this process was launched (fork via /spawn, or `kl resume`).
+	 * Drives a one-time orientation reminder.
 	 */
-	sessionOrigin?: { kind: "fork" | "resume" | "handoff"; parentAgentId?: string; handoffPath?: string };
-	/** `{key}` vars for the cleanup prompt (persistence). */
+	sessionOrigin?: { kind: "fork" | "resume"; parentAgentId?: string };
+	/** `{key}` vars for the cleanup prompt. */
 	vars: Record<string, string>;
 }

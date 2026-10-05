@@ -1,15 +1,14 @@
 /**
  * kl core harness.
  *
- * Everything a kl agent needs whether or not it is persistent: config,
- * session id + env, prompt composition, timestamps, messaging
- * (daemon, inbox, message tool), /spawn, plan tool, command gates.
+ * Everything a kl agent needs: config, session id + env, prompt composition
+ *, timestamps, messaging (daemon, inbox, message tool), /spawn,
+ * plan tool, command gates, and the lifecycle (cleanup turn, /exit, /fq,
+ * exit_session, in-session reset; ../lifecycle.ts).
  *
- * Persistence (cleanup turn, exit_session ritual, continuation, memory
- * conventions) lives in ../persistence.ts, a separate Pi extension entry
- * that kl loads only for agents that use it. Core must not import it. The
- * one coupling — skip the inbox drain while a cleanup turn is finishing —
- * goes over Pi's shared event bus (CLEANUP_EVENT), not an import.
+ * There is no persistence code: a "persistent" agent is one whose
+ * folder `kl init --full` scaffolded with a cleanup prompt and memory
+ * sections. The cleanup turn runs only when `cleanup:` is configured.
  */
 
 import { mkdirSync } from "node:fs";
@@ -34,14 +33,12 @@ import { createSessionStateHook, type SessionStateHook } from "../session-state.
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
 import { loadCommandGates, applyCommandGates, type CompiledGate } from "../gates.ts";
 import { readMeta, writeMeta, type SnapshotMeta } from "../snapshot.ts";
+import { installLifecycle } from "../lifecycle.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
 import { resolveAgentId } from "./resolve-agent-id.ts";
 import { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
-
-/** Event-bus channel persistence uses to say a cleanup turn is in flight ({ inFlight: boolean }). */
-export const CLEANUP_EVENT = "kl:cleanup";
 
 export interface CoreHandle {
 	getState: () => SessionState | null;
@@ -56,14 +53,9 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
 	let gates: CompiledGate[] = [];
-	let cleanupInFlight = false;
 	let originReminderSent = false;
 	const timestamps = createTimestampInjector();
 	let periodicTime: PeriodicTimestamp | null = null;
-
-	pi.events.on(CLEANUP_EVENT, (data) => {
-		cleanupInFlight = !!(data as { inFlight?: boolean } | undefined)?.inFlight;
-	});
 
 	// Tools register at load time; their closures read live state lazily.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
@@ -73,6 +65,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
+	const lifecycle = installLifecycle(pi);
 
 	pi.on("session_start", async (event, ctx) => {
 		const warn = (msg: string) => {
@@ -100,11 +93,10 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		applyEnv(env);
 
 		// One-time orientation for forks (/spawn) and resumes (`kl resume`).
-		// Continuation handoffs are persistence's business.
 		let sessionOrigin: SessionState["sessionOrigin"];
 		const freshBoot = event.reason === "startup";
 		const existingMeta = readMeta(agentHome, agentId, () => {});
-		if (event.reason === "resume" || (freshBoot && existingMeta !== null && !process.env.KL_HANDOFF)) {
+		if (event.reason === "resume" || (freshBoot && existingMeta !== null)) {
 			sessionOrigin = { kind: "resume" };
 		} else if (event.reason === "fork" || freshBoot) {
 			const header = ctx.sessionManager.getHeader?.();
@@ -124,6 +116,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			vars: { agent_id: agentId, agent_home: agentHome },
 		};
 		updateSnapshotMeta(state, ctx, warn);
+		lifecycle.start(state, warn);
 
 		// Prompt parts: read once, cached for the session. Warnings surface now,
 		// at startup, where the user can see them.
@@ -206,7 +199,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	// --- before_agent_start: one-time fork/resume orientation ---
 	pi.on("before_agent_start", async () => {
 		if (originReminderSent || !state?.sessionOrigin) return;
-		if (state.sessionOrigin.kind === "handoff") return;
 		originReminderSent = true;
 		return {
 			message: {
@@ -239,12 +231,14 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		return { content: appendTextToContent(event.content, suffix), details: event.details, isError: event.isError };
 	});
 
-	// --- agent_end: drain the inbox into user turns ---
-	// Skipped while a cleanup turn is in flight: shutdown is imminent and the
-	// queued turns would never run (the silent-sweep bug, commit ca82822).
-	pi.on("agent_end", async () => {
-		if (!state || !watcher || cleanupInFlight) return;
-		watcher.dispatchIdle();
+	// --- agent_end: cleanup-turn completion, then drain the inbox into user turns ---
+	// The drain is skipped when shutdown is imminent (cleanup in flight or just
+	// finished): the queued turns would never run (the silent-sweep bug,
+	// commit ca82822). After a reset it runs; the messages land post-reset.
+	pi.on("agent_end", async (event, ctx) => {
+		if (!state) return;
+		if (lifecycle.handleAgentEnd(ctx, event.messages)) return;
+		watcher?.dispatchIdle();
 	});
 
 	pi.on("session_shutdown", async () => {
@@ -261,6 +255,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			daemon = null;
 		}
 		gates = [];
+		lifecycle.stop();
 		state = null;
 		promptParts = null;
 	});

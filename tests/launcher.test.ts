@@ -9,11 +9,9 @@ import {
 	agentExtensions,
 	buildPiArgs,
 	ensureKlPiDir,
-	needsPersistence,
 	plan,
 	userSetsThinking,
 	CORE_ENTRY,
-	PERSISTENCE_ENTRY,
 	CORE_SKILLS,
 	REPO_ROOT,
 } from "../src/launcher.ts";
@@ -70,16 +68,6 @@ test("agentExtensions: *.ts/*.js files and <sub>/index.*, sorted; skips others",
 	assert.deepEqual(agentExtensions(home), [join(ext, "a.ts"), join(ext, "b-dir", "index.ts"), join(ext, "c.js")]);
 });
 
-// --- needsPersistence ---
-
-test("needsPersistence: only with a non-empty cleanup", () => {
-	const c = defaultConfig("/x");
-	assert.equal(needsPersistence(c), false);
-	assert.equal(needsPersistence({ ...c, cleanup: "   " }), false);
-	assert.equal(needsPersistence({ ...c, cleanup: "wrap up" }), true);
-	assert.equal(needsPersistence({ ...c, cleanup: { path: "prompts/cleanup.md" } }), true);
-});
-
 // --- userSetsThinking ---
 
 test("userSetsThinking: --thinking, --model id:level, --model=id:level", () => {
@@ -112,7 +100,7 @@ test("buildPiArgs: compact agent → core only, model/thinking defaults, -a, use
 	]);
 });
 
-test("buildPiArgs: full agent → core, persistence, agent extensions, --skill", () => {
+test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions, --skill (no persistence entry)", () => {
 	const home = tmp("kl-agent-");
 	mkdirSync(join(home, "extensions"));
 	mkdirSync(join(home, "skills"));
@@ -121,8 +109,6 @@ test("buildPiArgs: full agent → core, persistence, agent extensions, --skill",
 	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: [] }), [
 		"-e",
 		CORE_ENTRY,
-		"-e",
-		PERSISTENCE_ENTRY,
 		"-e",
 		join(home, "extensions", "mine.ts"),
 		"--skill",
@@ -161,8 +147,6 @@ test("buildPiArgs: resume skips model/thinking defaults but keeps extensions", (
 	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: ["--session", "/s.jsonl"], resume: true }), [
 		"-e",
 		CORE_ENTRY,
-		"-e",
-		PERSISTENCE_ENTRY,
 		"--skill",
 		CORE_SKILLS,
 		"-a",

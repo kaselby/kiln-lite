@@ -1,9 +1,8 @@
 /**
  * kiln-lite core entry point.
  *
- * `kl` loads this with `pi -e` for every agent. Persistent-agent behaviour
- * (cleanup turn, exit_session, continuation) is a separate entry,
- * ./persistence.ts, loaded only for agents that use it.
+ * `kl` loads this with `pi -e` for every agent. It is the only kl entry
+ * point: the lifecycle (cleanup turn, exit_session, reset) is core too.
  *
  * Agents extend kl with ordinary Pi extensions in <agent>/extensions/*.ts
  * (kl passes each with -e); there is no harness override.

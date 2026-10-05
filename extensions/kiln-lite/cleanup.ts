@@ -13,13 +13,16 @@
  * invoked. Ctrl+C (double) and Ctrl+D also call shutdown() directly and
  * bypass extension commands. Users who want cleanup must use /exit.
  *
+ * The cleanup turn is core: every agent gets it, and it runs only if
+ * the agent configures a `cleanup:` prompt. Agents without one exit plainly.
+ *
  * Flow (when the configured cleanup source resolves to non-empty text):
  *   1. Resolve inline text or read the configured file path
  *   2. Expand {key} placeholders (state.vars + cleanup-specific vars)
  *   3. Embed a unique sentinel in the prompt (so we can identify completion)
  *   4. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
- *   5. A persistent agent_end listener (registered once from index.ts) watches for
- *      the sentinel in agent_end messages; when matched, calls ctx.shutdown().
+ *   5. Core's agent_end handler watches for the sentinel in agent_end messages;
+ *      when matched, calls `finish` (shut down, or reset for exit_session continue).
  *
  * If the cleanup source is empty, unset, missing, or unreadable: skip the
  * cleanup turn and shut down normally after surfacing any resolution warning.
@@ -44,6 +47,8 @@ export interface CleanupDispatcher {
 	dispatch(ctx: ExtensionContext): void;
 	/** Bypass any in-flight cleanup and shut down immediately. */
 	forceExit(ctx: ExtensionContext): void;
+	/** Skip the cleanup turn and finish now (shut down, or reset if one is armed). */
+	skip(ctx: ExtensionContext): void;
 	/**
 	 * Called from the single persistent agent_end handler.
 	 * If this agent_end corresponds to the in-flight cleanup, shuts down and
@@ -88,10 +93,17 @@ function buildCleanupPrompt(state: SessionState, body: string, sentinel: string)
 	return `${expanded}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;
 }
 
+/**
+ * `finish` runs when the exit path completes: right away when there is no
+ * cleanup prompt, or after the cleanup turn's agent_end. Default: shut down.
+ * The lifecycle module passes one that resets the context instead when
+ * exit_session asked to continue.
+ */
 export function createCleanupDispatcher(
 	pi: ExtensionAPI,
 	state: SessionState,
 	warn: (msg: string) => void,
+	finish: (ctx: ExtensionContext) => void = (ctx) => ctx.shutdown(),
 ): CleanupDispatcher {
 	let pendingSentinel: string | null = null;
 
@@ -103,7 +115,7 @@ export function createCleanupDispatcher(
 			warn,
 		);
 		if (body === null || !body.trim()) {
-			ctx.shutdown();
+			finish(ctx);
 			return;
 		}
 		if (pendingSentinel) {
@@ -134,14 +146,20 @@ export function createCleanupDispatcher(
 		const haystack = JSON.stringify(messages);
 		if (!haystack.includes(pendingSentinel)) return false;
 		pendingSentinel = null;
-		ctx.shutdown();
+		finish(ctx);
 		return true;
+	}
+
+	function skip(ctx: ExtensionContext): void {
+		pendingSentinel = null;
+		finish(ctx);
 	}
 
 	return {
 		inProgress: () => pendingSentinel !== null,
 		dispatch,
 		forceExit,
+		skip,
 		handleAgentEnd,
 	};
 }

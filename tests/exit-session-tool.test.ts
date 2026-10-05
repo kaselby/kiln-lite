@@ -1,18 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
-import { resolveHandoff } from "../extensions/kiln-lite/exit-session.ts";
-import { handoffTmuxClient } from "../extensions/kiln-lite/exit-session.ts";
-import {
-	buildContinuationArgs,
-	modelReference,
-	handoffFileName,
-	persistHandoff,
-	CONTINUATION_STARTUP_PING,
-} from "../extensions/kiln-lite/exit-session.ts";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+import { resolveHandoff } from "../extensions/kiln-lite/exit-session-tool.ts";
+import { installLifecycle, resetEntry, RESET_SOURCE } from "../extensions/kiln-lite/lifecycle.ts";
+import { defaultConfig } from "../extensions/kiln-lite/config.ts";
+import type { PromptSource, SessionState } from "../extensions/kiln-lite/types.ts";
 
 function makeTmpDir(): string {
 	const dir = join(tmpdir(), `exit-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
@@ -98,211 +95,133 @@ test("resolveHandoff returns raw text for relative-looking paths", () => {
 	assert.equal(resolveHandoff("./some/file.md"), "./some/file.md");
 });
 
-// --- handoffTmuxClient ---
+// --- lifecycle: exit_session, cleanup turn, in-session reset ---
 
-/** Records every tmux invocation; returns a scripted stdout for list-clients. */
-function fakeTmux(clientList: string) {
-	const calls: string[][] = [];
-	const run = (args: string[]): string => {
-		calls.push(args);
-		return args[0] === "list-clients" ? clientList : "";
-	};
-	return { run, calls };
+type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
+
+/** Minimal fake Pi: records tools, commands, handlers and sent user messages. */
+function fakePi() {
+	const tools = new Map<string, { execute: (...a: unknown[]) => Promise<unknown> }>();
+	const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+	const handlers = new Map<string, Handler[]>();
+	const sent: string[] = [];
+	const pi = {
+		registerTool: (t: { name: string; execute: (...a: unknown[]) => Promise<unknown> }) => tools.set(t.name, t),
+		registerCommand: (name: string, c: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
+			commands.set(name, c),
+		on: (name: string, h: Handler) => handlers.set(name, [...(handlers.get(name) ?? []), h]),
+		sendUserMessage: (text: string) => sent.push(text),
+	} as unknown as ExtensionAPI;
+	return { pi, tools, commands, handlers, sent };
 }
 
-test("handoffTmuxClient is a no-op when not inside tmux", () => {
-	const { run, calls } = fakeTmux("/dev/ttys001");
-	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: false });
-	assert.equal(moved, 0);
-	assert.equal(calls.length, 0); // never even queried tmux
-});
+function fakeCtx() {
+	let shutdowns = 0;
+	const ctx = { shutdown: () => shutdowns++, hasUI: false } as unknown as ExtensionContext;
+	return { ctx, shutdowns: () => shutdowns };
+}
 
-test("handoffTmuxClient is a no-op when no client is attached (autonomous run)", () => {
-	const { run, calls } = fakeTmux(""); // list-clients returns nothing
-	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
-	assert.equal(moved, 0);
-	assert.equal(calls.length, 1); // queried once, no switch-client
-	assert.equal(calls[0][0], "list-clients");
-});
-
-test("handoffTmuxClient switches the attached client to the continuation", () => {
-	const { run, calls } = fakeTmux("/dev/ttys019");
-	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
-	assert.equal(moved, 1);
-	assert.deepEqual(calls[1], ["switch-client", "-c", "/dev/ttys019", "-t", "new-c-d"]);
-});
-
-test("handoffTmuxClient switches every attached client", () => {
-	const { run, calls } = fakeTmux("/dev/ttys019\n/dev/ttys020");
-	const moved = handoffTmuxClient("old-a-b", "new-c-d", { tmux: run, inTmux: true });
-	assert.equal(moved, 2);
-	assert.deepEqual(calls[1], ["switch-client", "-c", "/dev/ttys019", "-t", "new-c-d"]);
-	assert.deepEqual(calls[2], ["switch-client", "-c", "/dev/ttys020", "-t", "new-c-d"]);
-});
-
-test("handoffTmuxClient is a no-op when the prior session id is unknown", () => {
-	const { run, calls } = fakeTmux("/dev/ttys019");
-	const moved = handoffTmuxClient(undefined, "new-c-d", { tmux: run, inTmux: true });
-	assert.equal(moved, 0);
-	assert.equal(calls.length, 0);
-});
-
-test("handoffTmuxClient swallows tmux failures and warns (never breaks exit)", () => {
-	const warnings: string[] = [];
-	const run = (): string => {
-		throw new Error("no server running");
+function lifecycleState(home: string, cleanup: PromptSource): SessionState {
+	return {
+		agentHome: home,
+		agentId: "scout-test-agent",
+		sessionUuid: "uuid",
+		config: { ...defaultConfig(home), name: "scout", cleanup },
+		env: {},
+		vars: { agent_id: "scout-test-agent", agent_home: home },
 	};
-	const moved = handoffTmuxClient("old-a-b", "new-c-d", {
-		tmux: run,
-		inTmux: true,
-		warn: (m) => warnings.push(m),
+}
+
+async function settle(f: ReturnType<typeof fakePi>, ctx: ExtensionContext) {
+	return (f.handlers.get("agent_before_settle") ?? [])[0]?.({ type: "agent_before_settle" }, ctx);
+}
+
+async function callExit(f: ReturnType<typeof fakePi>, ctx: ExtensionContext, params: Record<string, unknown>) {
+	return f.tools.get("exit_session")!.execute("id", params, undefined, undefined, ctx);
+}
+
+test("resetEntry: compaction that keeps nothing, handoff as summary, tagged kl-reset", () => {
+	assert.deepEqual(resetEntry("carry on with X"), {
+		type: "compaction",
+		summary: "carry on with X",
+		firstKeptEntryId: null,
+		details: { source: RESET_SOURCE },
 	});
-	assert.equal(moved, 0);
-	assert.equal(warnings.length, 1);
-	assert.match(warnings[0], /handoff failed/);
+	assert.match(resetEntry("  ").summary, /without a handoff/);
 });
 
-// --- modelReference ---
-
-test("modelReference preserves the live provider and model id", () => {
-	assert.equal(
-		modelReference({ provider: "openai-codex", id: "gpt-5.6-sol" }),
-		"openai-codex/gpt-5.6-sol",
-	);
-});
-
-test("modelReference returns undefined when no live model is available", () => {
-	assert.equal(modelReference(undefined), undefined);
-});
-
-// --- buildContinuationArgs ---
-
-test("buildContinuationArgs passes the handoff PATH via --handoff, not a turn-1 prompt", () => {
-	const args = buildContinuationArgs({ handoffPath: "/home/scout/handoffs/scout-x.md" });
-	assert.deepEqual(args, ["--detach", "--handoff", "/home/scout/handoffs/scout-x.md"]);
-	// Never --prompt-file (the old turn-1 mechanism) and no trailing positional.
-	assert.ok(!args.includes("--prompt-file"));
-	// Never --append-system-prompt: the handoff is no longer baked into the prompt.
-	assert.ok(!args.includes("--append-system-prompt"));
-});
-
-test("buildContinuationArgs omits the handoff flag when no path is given", () => {
-	assert.deepEqual(buildContinuationArgs({}), ["--detach"]);
-});
-
-test("buildContinuationArgs default (autonomous unset) sends no startup ping", () => {
-	const args = buildContinuationArgs({ handoffPath: "/h/p.md" });
-	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
-	assert.equal(args.at(-1), "/h/p.md"); // ends at the handoff path, no extra positional
-});
-
-test("buildContinuationArgs autonomous:false sends no startup ping", () => {
-	const args = buildContinuationArgs({ handoffPath: "/h/p.md", autonomous: false });
-	assert.ok(!args.includes(CONTINUATION_STARTUP_PING));
-});
-
-test("buildContinuationArgs autonomous:true appends the startup ping as the final positional", () => {
-	const args = buildContinuationArgs({ handoffPath: "/h/p.md", autonomous: true });
-	assert.deepEqual(args, [
-		"--detach",
-		"--handoff",
-		"/h/p.md",
-		CONTINUATION_STARTUP_PING,
-	]);
-	// The ping is the trailing arg → pi treats it as the turn-1 message.
-	assert.equal(args.at(-1), CONTINUATION_STARTUP_PING);
-});
-
-test("buildContinuationArgs threads --template through before the handoff", () => {
-	const args = buildContinuationArgs({
-		handoffPath: "/h/p.md",
-		template: "worker",
-		autonomous: true,
-	});
-	assert.deepEqual(args, [
-		"--detach",
-		"--template",
-		"worker",
-		"--handoff",
-		"/h/p.md",
-		CONTINUATION_STARTUP_PING,
-	]);
-});
-
-test("buildContinuationArgs autonomous-only (no handoff path) still sends the ping", () => {
-	assert.deepEqual(buildContinuationArgs({ autonomous: true }), [
-		"--detach",
-		CONTINUATION_STARTUP_PING,
-	]);
-});
-
-test("buildContinuationArgs threads the provider-qualified model reference", () => {
-	const args = buildContinuationArgs({ model: "openai-codex/gpt-5.6-sol" });
-	assert.deepEqual(args, ["--detach", "--model", "openai-codex/gpt-5.6-sol"]);
-});
-
-test("buildContinuationArgs omits --model when no model is given", () => {
-	const args = buildContinuationArgs({ handoffPath: "/h/p.md" });
-	assert.ok(!args.includes("--model"));
-});
-
-test("buildContinuationArgs orders --template, --model, --handoff, then the ping", () => {
-	const args = buildContinuationArgs({
-		handoffPath: "/h/p.md",
-		template: "worker",
-		model: "openai-codex/gpt-5.6-sol",
-		autonomous: true,
-	});
-	assert.deepEqual(args, [
-		"--detach",
-		"--template",
-		"worker",
-		"--model",
-		"openai-codex/gpt-5.6-sol",
-		"--handoff",
-		"/h/p.md",
-		CONTINUATION_STARTUP_PING,
-	]);
-});
-
-// --- handoffFileName / persistHandoff ---
-
-test("handoffFileName is filesystem-safe: agentName-timestamp-shortuuid.md", () => {
-	const when = new Date("2026-06-26T14:58:03.123Z");
-	const name = handoffFileName("scout", when, "a1b2c3d4-e5f6-7890-abcd-ef0123456789");
-	assert.equal(name, "scout-2026-06-26T14-58-03-123Z-a1b2c3d4.md");
-	// No colons or dots that would be awkward across filesystems (except the .md ext).
-	assert.ok(!name.slice(0, -3).includes(":"));
-	assert.ok(!name.slice(0, -3).includes("."));
-});
-
-test("handoffFileName uses distinct names across calls (uuid component)", () => {
-	const when = new Date("2026-06-26T14:58:03.123Z");
-	assert.notEqual(handoffFileName("scout", when), handoffFileName("scout", when));
-});
-
-test("persistHandoff writes content under <agentHome>/handoffs/ and returns its path", () => {
+test("lifecycle: no cleanup prompt → exit_session shuts down plainly", async () => {
 	const home = makeTmpDir();
-	try {
-		const content = "line one\nline two with `backticks` and $vars\n".repeat(2000); // ~80KB, well over tmux's ~16KB cap
-		const path = persistHandoff(home, "scout", content, {
-			when: new Date("2026-06-26T14:58:03.123Z"),
-			uuid: "a1b2c3d4-0000-0000-0000-000000000000",
-		});
-		assert.equal(path, join(home, "handoffs", "scout-2026-06-26T14-58-03-123Z-a1b2c3d4.md"));
-		assert.equal(readFileSync(path, "utf8"), content);
-		// The PATH we pass to pi is short even though the content is huge — that's
-		// the whole point: it never trips tmux's command-length cap.
-		assert.ok(path.length < 1000);
-	} finally {
-		rmSync(home, { recursive: true, force: true });
-	}
+	const f = fakePi();
+	const lc = installLifecycle(f.pi);
+	lc.start(lifecycleState(home, ""), () => {});
+	const { ctx, shutdowns } = fakeCtx();
+	await callExit(f, ctx, {});
+	assert.equal(shutdowns(), 1);
+	assert.equal(f.sent.length, 0);
+	assert.equal(lc.handleAgentEnd(ctx, []), true, "drain skipped: shutting down");
+	assert.equal(await settle(f, ctx), undefined, "no reset");
+	rmSync(home, { recursive: true });
 });
 
-test("CONTINUATION_STARTUP_PING is a neutral kick-off, not a fresh directive", () => {
-	// Guards the design intent: the ping points at the handoff file (via the
-	// first-turn reminder) and tells the continuation to resume, rather than
-	// handing it a new task.
-	assert.match(CONTINUATION_STARTUP_PING, /handoff file/);
-	assert.match(CONTINUATION_STARTUP_PING, /continue the work/);
+test("lifecycle: continue + skip_cleanup → no shutdown; next settle appends the reset", async () => {
+	const home = makeTmpDir();
+	const f = fakePi();
+	const lc = installLifecycle(f.pi);
+	lc.start(lifecycleState(home, "wrap up"), () => {});
+	const { ctx, shutdowns } = fakeCtx();
+	await callExit(f, ctx, { continue: true, skip_cleanup: true, handoff: "HANDOFF-1" });
+	assert.equal(shutdowns(), 0);
+	assert.equal(f.sent.length, 0, "cleanup skipped");
+	assert.equal(lc.handleAgentEnd(ctx, []), false, "drain allowed after a reset");
+	assert.deepEqual(await settle(f, ctx), { entries: [resetEntry("HANDOFF-1")], continue: false });
+	assert.equal(await settle(f, ctx), undefined, "reset is one-shot");
+	rmSync(home, { recursive: true });
+});
+
+test("lifecycle: continue with a cleanup prompt → cleanup turn first, then reset (autonomous continues)", async () => {
+	const home = makeTmpDir();
+	const f = fakePi();
+	const lc = installLifecycle(f.pi);
+	lc.start(lifecycleState(home, "wrap up"), () => {});
+	const { ctx, shutdowns } = fakeCtx();
+	await callExit(f, ctx, { continue: true, autonomous: true, handoff: "H2" });
+	assert.equal(f.sent.length, 1);
+	assert.match(f.sent[0], /^wrap up/);
+	assert.equal(await settle(f, ctx), undefined, "no reset before the cleanup turn ends");
+	// A run that ends without the cleanup sentinel: exit pending, drain skipped.
+	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: "other" }]), true);
+	// The cleanup turn's run ends.
+	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: f.sent[0] }]), false);
+	assert.equal(shutdowns(), 0);
+	assert.deepEqual(await settle(f, ctx), { entries: [resetEntry("H2")], continue: true });
+	rmSync(home, { recursive: true });
+});
+
+test("lifecycle: cleanup prompt without continue → cleanup turn, then shutdown", async () => {
+	const home = makeTmpDir();
+	const f = fakePi();
+	const lc = installLifecycle(f.pi);
+	lc.start(lifecycleState(home, "wrap up"), () => {});
+	const { ctx, shutdowns } = fakeCtx();
+	await f.commands.get("exit")!.handler("", ctx);
+	assert.equal(f.sent.length, 1);
+	assert.equal(shutdowns(), 0);
+	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: f.sent[0] }]), true);
+	assert.equal(shutdowns(), 1);
+	assert.equal(await settle(f, ctx), undefined);
+	rmSync(home, { recursive: true });
+});
+
+test("lifecycle: /fq during a continue's cleanup turn shuts down and drops the reset", async () => {
+	const home = makeTmpDir();
+	const f = fakePi();
+	const lc = installLifecycle(f.pi);
+	lc.start(lifecycleState(home, "wrap up"), () => {});
+	const { ctx, shutdowns } = fakeCtx();
+	await callExit(f, ctx, { continue: true, handoff: "H3" });
+	await f.commands.get("fq")!.handler("", ctx);
+	assert.equal(shutdowns(), 1);
+	assert.equal(await settle(f, ctx), undefined);
+	rmSync(home, { recursive: true });
 });

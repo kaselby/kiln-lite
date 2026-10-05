@@ -379,7 +379,7 @@ agent:
 |------|--------------|
 | `plan` | Externalize a task breakdown (goal + ordered tasks). Periodically re-surfaced as a reminder so the agent stays on track. |
 | `message` | Inter-agent messaging (DMs, channels) — see above. |
-| `exit_session` | Exit autonomously, with optional self-continuation: spawn a fresh session inheriting the home, handing off context. |
+| `exit_session` | Exit autonomously, or with `continue` + `handoff` reset the context in place (same session, fresh context holding the handoff). |
 
 Slash commands:
 
@@ -466,7 +466,7 @@ kiln-lite/
 │   ├── tools.ts                 # tool discovery + index rendering
 │   ├── inbox.ts                 # inbox watcher + delivery
 │   ├── cleanup.ts               # /exit /fq dispatch
-│   ├── exit-session.ts          # exit logic — cleanup, continuation, shutdown
+│   ├── lifecycle.ts             # cleanup turn, /exit, /fq, exit_session, in-session reset
 │   ├── plan-tool.ts             # plan tool + periodic reminders
 │   ├── message-tool.ts          # message tool
 │   ├── spawn.ts                 # peer / continuation spawning

@@ -36,13 +36,6 @@
 #                             session (e.g. your own $AGENT_ID when spawning a
 #                             peer). Stored in the new session's meta.json and
 #                             shown by `sessions --full`. Optional.
-#                           --handoff FILE: mark this session as a continuation
-#                             handoff and point it at FILE (an orientation
-#                             handoff written by the exiting session). Exported
-#                             as KL_HANDOFF; the extension injects a one-time
-#                             pointer to FILE on the first turn instead of
-#                             baking its contents into the system prompt.
-#                             Optional.
 #                           --prompt-file FILE: read initial prompt from FILE and
 #                             pass it to pi as --prompt. Use this instead of
 #                             `kl --prompt "..."` for any prompt that contains
@@ -63,8 +56,10 @@
 #   kl init <name> [--full] Create an agent at $KL_AGENTS_DIR/<name>. Compact
 #                           (default): agent.yml + SYSTEM.md. --full adds
 #                           memory/ scratch/ extensions/ skills/ prompts/, a
-#                           cleanup prompt (loads the persistence entry), and
-#                           git init. (`kl new` is an alias.)
+#                           cleanup prompt, a memory section, and git init.
+#                           That scaffolding is the only difference between
+#                           a "persistent" and a simple agent. (`kl new` is an
+#                           alias.)
 #   kl list                 List active kl tmux sessions.
 #   kl agents               List installed agents under $KL_AGENTS_DIR.
 #   kl history [<name>]     Show recent sessions. Without <name>, walks all
@@ -379,7 +374,6 @@ cmd_run() {
     local pi_args=()
     local prompt_file=""
     local parent=""
-    local handoff=""
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help) usage ;;
@@ -399,14 +393,6 @@ cmd_run() {
                 ;;
             --parent=*)
                 parent="${1#--parent=}"
-                ;;
-            --handoff)
-                shift
-                [ $# -ge 1 ] || die "--handoff requires a file-path argument"
-                handoff="$1"
-                ;;
-            --handoff=*)
-                handoff="${1#--handoff=}"
                 ;;
             --) shift; pi_args+=("$@"); break ;;
             *) pi_args+=("$1") ;;
@@ -478,9 +464,6 @@ cmd_run() {
     fi
     if [ -n "$parent" ]; then
         tmux_env_args+=(-e "KL_PARENT=$parent")
-    fi
-    if [ -n "$handoff" ]; then
-        tmux_env_args+=(-e "KL_HANDOFF=$handoff")
     fi
 
     tmux new-session -d -s "$agent_id" \
@@ -673,16 +656,20 @@ MD
     if [ "$full" = 1 ]; then
         mkdir -p "$target"/{memory,scratch,extensions,skills,prompts}
         cat > "$target/prompts/cleanup.md" <<'MD'
-<!-- Cleanup turn for /exit and exit_session. Placeholder: the persistence slice reworks this. -->
+<!-- Cleanup turn: runs on /exit and exit_session (also before a continue reset). -->
 You're wrapping up. Write a short summary of this session (what you did,
 what's still open) to {summary_path}, update anything in memory/ that should
 outlast it, then stop.
 MD
         cat >> "$target/agent.yml" <<'YML'
 
-# Persistent agent: a cleanup turn makes kl load the persistence entry.
+# Cleanup turn on /exit and exit_session; memory injected every session.
 cleanup: { path: prompts/cleanup.md }
+sections:
+  - {name: memory, path: memory/MEMORY.md}
 YML
+        # Empty until the agent writes to it; sections skip empty output.
+        : > "$target/memory/MEMORY.md"
         printf 'inbox/\nstate/\nsessions/\n' > "$target/.gitignore"
         if command -v git >/dev/null 2>&1; then
             git -C "$target" init -q && echo "kl: git init $target" >&2

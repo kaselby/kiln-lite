@@ -25,7 +25,6 @@ import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CORE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "index.ts");
-export const PERSISTENCE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "persistence.ts");
 /** kl's bundled skills (messaging), loaded for every agent instead of being copied in. */
 export const CORE_SKILLS = join(REPO_ROOT, "skills");
 
@@ -104,13 +103,6 @@ export function agentExtensions(agentHome: string): string[] {
 	return out;
 }
 
-/** Persistence entry is loaded only when the agent's config uses it. */
-export function needsPersistence(config: AgentConfig): boolean {
-	const c = config.cleanup;
-	if (typeof c === "string") return c.trim().length > 0;
-	return !!c && typeof c.path === "string" && c.path.trim().length > 0;
-}
-
 function hasFlag(args: string[], ...flags: string[]): boolean {
 	return args.some((a) => flags.includes(a) || flags.some((f) => f.startsWith("--") && a.startsWith(`${f}=`)));
 }
@@ -140,19 +132,17 @@ export interface BuildPiArgsOptions {
 	/** Resume: skip model/thinking defaults (the transcript carries them). */
 	resume?: boolean;
 	coreEntry?: string;
-	persistenceEntry?: string;
 	coreSkills?: string;
 }
 
 /**
- * pi argv: core -e, persistence -e (if used), agent extensions, --skill
+ * pi argv: core -e (the only kl entry), agent extensions, --skill
  * (kl's bundled skills, then the agent's),
  * model/thinking defaults the user didn't override, -a, then user args.
  */
 export function buildPiArgs(opts: BuildPiArgsOptions): string[] {
 	const { agentHome, config, userArgs } = opts;
 	const args: string[] = ["-e", opts.coreEntry ?? CORE_ENTRY];
-	if (needsPersistence(config)) args.push("-e", opts.persistenceEntry ?? PERSISTENCE_ENTRY);
 	for (const ext of agentExtensions(agentHome)) args.push("-e", ext);
 	if (existsSync(opts.coreSkills ?? CORE_SKILLS)) args.push("--skill", opts.coreSkills ?? CORE_SKILLS);
 	const skills = join(agentHome, "skills");

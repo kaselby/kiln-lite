@@ -9,7 +9,7 @@ What kiln-lite is, what it does, and how it fits around Pi.
 Concretely, installing kiln-lite gives you:
 
 - a **Pi extension** that assembles a system prompt from `agent.yml`, runs startup commands, watches the inbox, and handles the cleanup/exit turn;
-- **built-in tools**: `plan` (externalized task breakdown with periodic reminders), `exit_session` (autonomous exit with self-continuation and handoff), and `message` (inter-agent messaging);
+- **built-in tools**: `plan` (externalized task breakdown with periodic reminders), `exit_session` (exit, or reset the context in place with a handoff), and `message` (inter-agent messaging);
 - a **Node daemon** that routes messages between sessions (direct messages and channel pub/sub) and autostarts on first use;
 - a **multi-agent home layout** under `~/.kl/agents/<name>/` — each agent gets its own memory, tools, skills, sessions, inboxes;
 - a `kl` **launcher** that wraps Pi in a named tmux session so every agent has a stable address (`kl new`, `kl run <name>`, `kl agents`);
@@ -72,7 +72,7 @@ kiln-lite/
 │   ├── tools.ts                # tool discovery + index rendering
 │   ├── inbox.ts                # fs.watch inbox delivery
 │   ├── cleanup.ts              # /exit /fq dispatch
-│   ├── exit-session.ts         # exit logic — cleanup, continuation, shutdown
+│   ├── lifecycle.ts            # cleanup turn, /exit, /fq, exit_session, in-session reset
 │   ├── exit-session-tool.ts    # exit_session tool registration
 │   ├── plan.ts                 # plan state management
 │   ├── plan-tool.ts            # plan tool registration + periodic reminders
@@ -114,7 +114,7 @@ kiln-lite/
 
 ## Lifecycle in one paragraph
 
-`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), migrates any legacy single-agent layout, then scaffolds a starter agent at `~/.kl/agents/agent/` (or refreshes its bundled skills and tools if it already exists). Add more agents with `kl new <name>`. `kl` (or `kl run <name>`) spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session exits via `/exit` (or the `exit_session` tool), the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive). If the exit requested self-continuation, a new session is spawned; its handoff is persisted to a file under `handoffs/` and the continuation is pointed at that file by a one-time first-turn reminder (it reads the file to orient itself) rather than having the handoff baked into its system prompt.
+`./install.sh` runs `npm install`, `npm link` (putting `kl` and `kl-msg` on your PATH), migrates any legacy single-agent layout, then scaffolds a starter agent at `~/.kl/agents/agent/` (or refreshes its bundled skills and tools if it already exists). Add more agents with `kl new <name>`. `kl` (or `kl run <name>`) spawns a Pi session inside a tmux window, exporting `AGENT_ID` / `AGENT_HOME` / `_KL=1`. The extension fires on `session_start`: loads `agent.yml`, resolves identity, exports env vars, discovers tools, composes the first system prompt, starts the inbox watcher, and fires off a fire-and-forget `register` to the daemon (which autostarts if it isn't already up). From there the session runs — you work with Pi normally. When the session exits via `/exit` (or the `exit_session` tool), the configured cleanup prompt runs as a final turn; on `session_shutdown` the extension deregisters from the daemon (which self-exits 30 seconds later if no other sessions are alive). If `exit_session` asked to continue, the session doesn't exit: kl appends a compaction entry holding the handoff and keeping no earlier entries, and the same session carries on with a fresh context.
 
 ## Where to go next
 

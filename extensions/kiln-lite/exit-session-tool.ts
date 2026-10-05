@@ -1,95 +1,88 @@
 /**
- * Builtin `exit_session` tool — unified session exit with optional cleanup
- * and self-continuation.
+ * Builtin `exit_session` tool: exit, or reset and continue in place.
  *
- * Replaces the old `wrapup` tool with a richer interface:
+ *   - **skip_cleanup** (default false): skip the cleanup turn. Agents with no
+ *     `cleanup:` prompt have no cleanup turn anyway.
+ *   - **continue** (default false): instead of exiting, reset the context
+ *    . After the cleanup turn (if any), kl appends a compaction entry
+ *     whose summary is the handoff and which keeps no earlier entries. Same
+ *     session id, transcript, inbox and children; the model sees only the
+ *     system prompt, the handoff summary, and what comes after.
+ *   - **handoff**: the summary the reset leaves behind. Raw text, or a path
+ *     (absolute or ~/...) whose contents are read. Used only with continue.
+ *   - **autonomous** (default false): after the reset, start a new turn on the
+ *     handoff right away. When false the session goes idle after the reset
+ *     and waits for the next message. Used only with continue.
  *
- *   - **skip_cleanup** (default false): when true, skip the cleanup flow
- *     (session summary, memory updates) and exit immediately.
- *   - **continue** (default false): spawn a new session after this one shuts
- *     down. The continuation inherits the agent home and template.
- *   - **handoff**: context for the continuation — raw text, or a file path
- *     whose contents are read. Persisted to a file the continuation is pointed
- *     at by a one-time first-turn reminder (it reads the file to orient) —
- *     NOT baked into the continuation's system prompt. Ignored unless
- *     continue is true.
- *   - **autonomous** (default false): when true, the continuation is started
- *     unattended with a fixed turn-1 ping so its loop kicks off on its own.
- *     When false, it spawns idle with the handoff as context and waits for the
- *     human handed the terminal. Ignored unless continue is true.
- *
- * The tool-call equivalent of the `/exit` slash command, plus continuation
- * support that slash commands don't expose.
- *
- * **Usage policy:** Only call when the agent is working autonomously (detached
- * session, no user present) and has finished its work, or when the user
- * explicitly asks the agent to exit. Do NOT call mid-conversation during
- * normal interactive use.
+ * The tool-call equivalent of `/exit`, plus the reset.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import { Type } from "@sinclair/typebox";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+// Type-only: defineTool is an identity function, and a value import would make
+// this module unloadable in the CJS test runner (pi-coding-agent is ESM-only).
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { CleanupDispatcher } from "./cleanup.ts";
-import { modelReference, resolveHandoff, type ContinuationConfig } from "./exit-session.ts";
 
-export type { ContinuationConfig } from "./exit-session.ts";
+export interface ResetRequest {
+	/** Handoff text; becomes the compaction summary. */
+	handoff: string;
+	/** Start a new turn after the reset (BoundaryResult.continue). */
+	autonomous: boolean;
+}
 
 const ExitSessionParams = Type.Object({
 	skip_cleanup: Type.Optional(
 		Type.Boolean({
-			description: "Skip the cleanup flow (session summary, memory updates) and exit immediately. Default false.",
+			description: "Skip the cleanup turn (if the agent has one) and exit or reset immediately. Default false.",
 		}),
 	),
 	continue: Type.Optional(
 		Type.Boolean({
 			description:
-				"Spawn a continuation session after this one exits. " +
-				"The new session inherits the agent home and template. Default false.",
+				"Don't exit: reset the context and keep going in this same session. Everything before the " +
+				"reset leaves your context; only the handoff remains. Default false.",
 		}),
 	),
 	handoff: Type.Optional(
 		Type.String({
 			description:
-				"Context to pass to the continuation session. Persisted to a handoff file that the " +
-				"continuation is pointed at by a one-time first-turn reminder (it reads the file to " +
-				"orient itself) — not baked into its system prompt. " +
-				"Can be raw text or a file path (absolute, or ~/…) whose contents will be read. " +
-				"Only used when continue is true.",
+				"What your post-reset self needs to know: what you were doing, where you left off, what's next. " +
+				"Raw text, or a file path (absolute, or ~/…) whose contents are read. Only used when continue is true.",
 		}),
 	),
 	autonomous: Type.Optional(
 		Type.Boolean({
 			description:
-				"When true, start the continuation unattended: a fixed turn-1 ping is sent so its " +
-				"agent loop begins on its own. When false (default), the continuation spawns idle " +
-				"with the handoff as context and waits for the human handed the terminal. " +
-				"Only used when continue is true.",
+				"When true, start working on the handoff right after the reset. When false (default), go idle " +
+				"after the reset and wait for the next message. Only used when continue is true.",
 		}),
 	),
 });
 
 const EXIT_SESSION_DESCRIPTION =
-	"Exit the current session. By default runs the cleanup flow (session summary, memory updates) " +
-	"before exiting. Set skip_cleanup to skip cleanup and exit immediately. " +
-	"Set continue to spawn a continuation session that inherits the agent home and template, " +
-	"with an optional handoff message as its initial prompt. " +
-	"Only use when working autonomously and done, or when the user explicitly requests it. " +
+	"Exit the current session, or reset your context and continue. By default runs the agent's cleanup " +
+	"turn (if it has one) first. Set skip_cleanup to skip it. Set continue (with a handoff) to reset " +
+	"instead of exiting: same session, fresh context holding only the handoff. " +
+	"Only use when working autonomously and done or out of context room, or when the user explicitly asks. " +
 	"Do NOT call this during normal interactive conversation.";
 
 const EXIT_SESSION_PROMPT_SNIPPET =
-	"- **exit_session** — Exit the session. Options: skip_cleanup (skip summary/memory), " +
-	"continue (spawn a continuation with handoff text or file). " +
-	"Only use when working autonomously and done, or when the user explicitly requests it.";
+	"- **exit_session** — Exit the session, or with continue + handoff reset your context in place. " +
+	"Only use when working autonomously, or when the user explicitly requests it.";
 
 export interface ExitSessionToolDeps {
 	getDispatcher: () => CleanupDispatcher | null;
-	setContinuation: (config: ContinuationConfig) => void;
-	getTemplate: () => string | undefined;
+	/** Arm a reset; the exit path (cleanup turn or not) then resets instead of shutting down. */
+	requestReset: (req: ResetRequest) => void;
 }
 
-export function buildExitSessionTool(deps: ExitSessionToolDeps) {
-	return defineTool({
+export function buildExitSessionTool(deps: ExitSessionToolDeps): ToolDefinition<typeof ExitSessionParams> {
+	return {
 		name: "exit_session",
 		label: "Exit Session",
 		description: EXIT_SESSION_DESCRIPTION,
@@ -101,33 +94,28 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps) {
 			if (!dispatcher) {
 				throw new Error("Cleanup dispatcher not initialized — session not fully started.");
 			}
-
 			if (dispatcher.inProgress()) {
 				throw new Error("Exit already in progress.");
 			}
 
-			// Store continuation config for session_shutdown to pick up.
-			if (params.continue) {
-				const handoffText = params.handoff ? resolveHandoff(params.handoff) : "";
-				deps.setContinuation({
-					handoff: handoffText,
-					template: deps.getTemplate(),
-					model: modelReference(ctx.model),
+			const willContinue = params.continue ?? false;
+			if (willContinue) {
+				deps.requestReset({
+					handoff: params.handoff ? resolveHandoff(params.handoff) : "",
 					autonomous: params.autonomous ?? false,
 				});
 			}
 
-			const willContinue = params.continue ?? false;
-			const suffix = willContinue ? " A continuation session will be spawned." : "";
-
 			if (params.skip_cleanup) {
 				console.log(`kiln-lite: exit_session (skip_cleanup, continue=${willContinue})`);
-				dispatcher.forceExit(ctx);
+				dispatcher.skip(ctx);
 				return {
 					content: [
 						{
 							type: "text",
-							text: `Session exiting immediately (cleanup skipped).${suffix} STOP — do not take any further action.`,
+							text: willContinue
+								? "Context reset armed (cleanup skipped). End your response now; the reset happens when this turn settles."
+								: "Session exiting immediately (cleanup skipped). STOP — do not take any further action.",
 						},
 					],
 					details: {},
@@ -136,17 +124,37 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps) {
 
 			console.log(`kiln-lite: exit_session (cleanup, continue=${willContinue})`);
 			dispatcher.dispatch(ctx);
+			const what = willContinue ? "Context reset" : "Session exit";
 			return {
 				content: [
 					{
 						type: "text",
 						text:
-							`Cleanup initiated.${suffix} STOP — do not take any further action in this turn. ` +
-							"End your response now. The cleanup prompt will arrive as the next message.",
+							`${what} initiated. STOP — do not take any further action in this turn. End your response now. ` +
+							"If this agent has a cleanup prompt it will arrive as the next message.",
 					},
 				],
 				details: {},
 			};
 		},
-	});
+	};
+}
+
+/**
+ * Resolve a handoff value to text. If it looks like a file path (absolute or
+ * ~/...) and the file exists, read its contents. Otherwise return as-is.
+ */
+export function resolveHandoff(raw: string): string {
+	let path = raw.trim();
+	if (path.startsWith("~/")) {
+		path = join(homedir(), path.slice(2));
+	}
+	if (path.startsWith("/") && existsSync(path)) {
+		try {
+			return readFileSync(path, "utf8");
+		} catch {
+			// Read failed — fall through to raw text
+		}
+	}
+	return raw;
 }

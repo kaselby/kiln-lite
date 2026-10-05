@@ -14,7 +14,7 @@ The kiln-lite extension is a Pi *extension* in the Pi sense: a TypeScript module
 - Register `<home>/skills/` as a Pi skills path.
 - Start an inbox watcher that delivers mid-turn `[INBOX: N unread]` pings and full idle-turn messages.
 - Register and deregister with the kiln-lite daemon so channel fanout and DM routing work.
-- Handle the cleanup turn (`/exit` / `/fq`) and self-continuation.
+- Handle the cleanup turn (`/exit` / `/fq`) and the in-session reset (exit_session continue).
 - Run `agent.yml:startup` commands.
 
 Every one of these is a thin layer over Pi's APIs. The extension doesn't duplicate anything Pi already does — it fills in the gaps between a raw Pi session and a persistent, addressable agent.
@@ -87,8 +87,8 @@ The state lives in a closure inside the extension's default export and is mutate
 | `tools.ts` | `discoverTools` (scan YAML headers) + `renderToolIndex` (pretty-print for prompt). |
 | `inbox.ts` | `startInboxWatcher` — fs.watch over inbox dir; idle delivery, mid-turn suffixes, `.read` markers. |
 | `cleanup.ts` | `createCleanupDispatcher` + `registerExitCommands` (/exit /fq). |
-| `exit-session.ts` | Exit logic — cleanup turn dispatch, continuation spawning, shutdown. |
-| `exit-session-tool.ts` | Registers the `exit_session` tool for autonomous exit + self-continuation. |
+| `lifecycle.ts` | Cleanup turn wiring, /exit and /fq, exit_session, and the in-session reset (compaction at `agent_before_settle`). |
+| `exit-session-tool.ts` | The `exit_session` tool: exit, or reset in place with a handoff. |
 | `plan.ts` | Plan state persistence, formatting, and periodic reminder logic. Pure module — no pi SDK deps. |
 | `plan-tool.ts` | Registers the `plan` tool; wires reminder suffix into `tool_result`. |
 | `message-tool.ts` | Registers the `message` tool for inter-agent messaging. |
@@ -212,7 +212,7 @@ On `agent_end`, the watcher's `markAllSeen()` clears the queue so the next turn 
 - **`/fq`** force-quits without cleanup.
 - During cleanup, a second `/exit` or `/fq` forces immediate shutdown (escape hatch if cleanup hangs).
 
-The **`exit_session` tool** (`exit-session-tool.ts`) provides the same capabilities for autonomous use, plus self-continuation: `skip_cleanup` to exit without the cleanup flow, and `continue` + `handoff` to spawn a new session after shutdown (inheriting agent home and template).
+The **`exit_session` tool** (`exit-session-tool.ts`) provides the same capabilities for autonomous use, plus an in-session reset (`lifecycle.ts`): `skip_cleanup` to skip the cleanup turn, and `continue` + `handoff` to reset instead of exiting. After the cleanup turn (if any), the next `agent_before_settle` appends a Pi compaction entry with `summary` = the handoff and `firstKeptEntryId: null`, so the model's context restarts from the system prompt plus the handoff. Same session id, transcript, inbox and children. `autonomous: true` starts a turn on the handoff right away; otherwise the session idles. All of this is core: every agent gets it, and the cleanup turn runs only when `cleanup:` is configured.
 
 `agent_end` is where the dispatcher decides: did we just finish the cleanup turn? If yes, exit; if no, normal return to user input.
 

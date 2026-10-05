@@ -3,7 +3,7 @@
  * kl's building blocks. Additions allowed; renames are breaking.
  */
 
-export { installCore, inferSessionUuid, CLEANUP_EVENT, type CoreHandle } from "./core.ts";
+export { installCore, inferSessionUuid, type CoreHandle } from "./core.ts";
 export { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
 export { resolveAgentId, type ResolveAgentIdOptions, type ResolvedAgentId } from "./resolve-agent-id.ts";
 
