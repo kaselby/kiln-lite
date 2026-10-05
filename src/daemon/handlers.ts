@@ -307,7 +307,7 @@ export async function handleDeliverSelf(
         inboxRoot: req.inbox_path,
         recipient: req.session,
         sender: req.name || req.session,
-        senderSession: req.session,
+        // No senderSession: a self-wake is not agent mail (no disclaimer).
         recipientName: req.name || undefined,
         summary,
         body,

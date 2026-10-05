@@ -169,7 +169,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		assert.doesNotMatch(readFileSync(join(inbox, files[0]), "utf8"), /^from_session:/m, "a self-wake is not agent mail");
 	});
 
-	it("headers carry the session name, not the uuid (uuid in from_session)", async () => {
+	it("headers carry the session name, not the uuid", async () => {
 		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
 			agent: "rev",
 			session: UA,
@@ -181,7 +181,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		assert.equal(files.length, 1);
 		const text = readFileSync(join(dir, "run", "inbox", UA, files[0]), "utf8");
 		assert.match(text, /^from: rev-calm-fox$/m);
-		assert.match(text, new RegExp(`^from_session: ${UA}$`, "m"));
+		assert.doesNotMatch(text, /^from_session:/m);
 		assert.match(text, /^to: rev-calm-fox$/m);
 	});
 
