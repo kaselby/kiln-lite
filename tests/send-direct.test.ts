@@ -215,6 +215,17 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 });
 
 describe("handlePublish: channel history", () => {
+	it("channel mail carries to: <session name>, like a DM", async () => {
+		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
+		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
+		daemon.state.presence.register({ ...record(UB), inbox_path: join(dir, "run", "inbox") });
+		daemon.state.channels.subscribe("lobby", UB);
+		await handlePublish(proto.publish("lobby", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
+		const text = readFileSync(join(dir, "run", "inbox", UB, inboxFiles(UB)[0]), "utf8");
+		assert.match(text, /^to: rev-red-owl$/m);
+		assert.doesNotMatch(text, new RegExp(`^to: ${UB}$`, "m"));
+	});
+
 	it("history.jsonl records from: as the sender's name, plus from_session for a kl session", async () => {
 		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
 		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", "normal", who), daemon as never);

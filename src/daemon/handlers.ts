@@ -18,9 +18,15 @@ import * as proto from "./protocol.ts";
 import type { SessionRecord } from "./state.ts";
 import { appendChannelHistory, writeInboxMessage } from "./inbox.ts";
 import { inboxRoot, UUID_RE } from "../sessions/paths.ts";
-import { entryExists, lastSeen } from "../sessions/registry.ts";
+import { entryExists, lastSeen, readEntry } from "../sessions/registry.ts";
+import { liveLease } from "../sessions/lease.ts";
 import { resolveTarget, ResolveError, type Resolved } from "../sessions/resolve.ts";
 import type { Daemon } from "./index.ts";
+
+/** Current name for a session UUID (live lease, then registry), or undefined if unknown. */
+function sessionName(uuid: string, root: string): string | undefined {
+    return liveLease(uuid, root)?.name ?? readEntry(uuid, root)?.name ?? undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Envelope helpers
@@ -176,6 +182,8 @@ export async function handlePublish(
             recipient: sub_id,
             sender: req.name || req.session,
             senderSession: agentSession(daemon, req),
+            // Same `to:` as a DM: the session name (live lease first, then registry).
+            recipientName: sessionName(sub_id, daemon.config.klRoot),
             summary,
             body,
             priority,
