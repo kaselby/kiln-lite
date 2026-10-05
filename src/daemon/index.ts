@@ -37,7 +37,7 @@ import {
 } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { handlers } from "./handlers.ts";
@@ -58,8 +58,10 @@ function defaultSocketPath(): string {
     return `/tmp/kiln-lite-${process.getuid?.() ?? "nouid"}.sock`;
 }
 
+/** `<kl root>/daemon`, kl root = $KL_ROOT or ~/.kl (same rule as extensions/kiln-lite/config.ts resolveKlRoot). */
 function defaultStateDir(): string {
-    return join(homedir(), ".kl", "daemon");
+    const root = process.env.KL_ROOT?.trim();
+    return join(root ? resolvePath(root) : join(homedir(), ".kl"), "daemon");
 }
 
 export interface DaemonConfig {
@@ -463,7 +465,7 @@ function printUsage(): void {
             "Options:",
             "  --socket PATH      Unix socket path (default: $XDG_RUNTIME_DIR/kiln-lite.sock",
             "                                       or /tmp/kiln-lite-<uid>.sock)",
-            "  --state-dir DIR    State directory (default: ~/.kl/daemon)",
+            "  --state-dir DIR    State directory (default: $KL_ROOT/daemon, KL_ROOT defaults to ~/.kl)",
             "  --foreground       Log to stdout as well as daemon.log",
             "  -h, --help         Show this help",
             "",

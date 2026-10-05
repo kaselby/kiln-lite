@@ -11,14 +11,39 @@
  *
  *   Two dispatch modes, mapped to two output sinks:
  *
- *     dispatchIdle()   — drains the queue via pi.sendUserMessage(body). Each
- *                        message becomes a real user turn; frontmatter + body
- *                        go in as-is. Marker written on success. Triggered
- *                        at startup (initial drain) and at agent_end.
+ *     dispatchIdle()   — drains the queue via ONE pi.sendUserMessage: all
+ *                        pending messages joined into a single user turn,
+ *                        each block headed by a `kl-msg-id: <id>` line (id =
+ *                        filename minus .md) followed by the file as-is.
+ *                        Triggered at startup (initial drain), on arrival
+ *                        while idle, and at agent_end.
+ *
+ *                        Why one send: on Pi 1.0.3, back-to-back
+ *                        sendUserMessage calls while idle race — the first
+ *                        starts a run, the rest reject with "Agent is already
+ *                        processing a prompt" into runner.emitError (the
+ *                        call itself returns void, so we never see it).
+ *                        After a send, an in-flight flag defers further
+ *                        drains until that message lands, or until
+ *                        `inFlightTimeoutMs` passes with the agent idle, in
+ *                        which case the batch is requeued and re-sent.
+ *
+ *   Delivery ledger:
+ *     A message counts as delivered only when it has LANDED: the watcher's
+ *     handleMessageEnd() sees a role=user message_end whose text carries its
+ *     `kl-msg-id:` line. Only then is the `.read` marker written (deferred
+ *     one macrotask, so it lands after Pi persists the message — Pi appends
+ *     to the session file right after the message_end extension handlers).
+ *     At startup, every id found in a user message anywhere in the
+ *     transcript (`transcriptEntries`, i.e. sessionManager.getEntries()) is
+ *     treated as delivered too, and its marker healed. The transcript is the
+ *     ledger; the `.read` marker is the cache.
  *
  *     midTurnSuffix()  — builds [Notification | …] blocks for pending
  *                        messages (matching kiln's format) and returns the
- *                        joined suffix string. Markers are touched inline.
+ *                        joined suffix string. Markers are touched inline
+ *                        (unchanged: a ping counts as handled; the agent is
+ *                        expected to Read the file).
  *                        Triggered from the tool_result handler, which
  *                        appends the suffix to the LLM-visible tool result.
  *
@@ -62,17 +87,23 @@ export interface InboxWatcher {
 	 */
 	handleReadOfPath(filePath: string): void;
 	/**
-	 * Drain the queue as user-message turns. For each pending .md, read the
-	 * body and call `pi.sendUserMessage(body)`; on success touch the marker
-	 * and mark seen. On read/send failure, leave the name in the queue so a
-	 * later trigger (next tool_result → midTurnSuffix, or a later
-	 * dispatchIdle) can re-surface it.
+	 * Drain the queue as ONE user turn (all pending .md files, each tagged
+	 * with a `kl-msg-id:` line). Nothing is marked here — markers are written
+	 * when the turn lands (handleMessageEnd). Defers while a previous batch
+	 * is in flight. On read/send failure, names stay queued for a later
+	 * trigger (next tool_result → midTurnSuffix, or a later dispatchIdle).
 	 *
 	 * Called at startup (initial drain — session_start is idle) and at
 	 * agent_end (agent is transitioning to idle). Safe to call when the
 	 * queue is empty — no-op.
 	 */
 	dispatchIdle(): void;
+	/**
+	 * Wire to Pi's `message_end` event. For a role=user message carrying
+	 * `kl-msg-id:` lines, marks those inbox messages delivered (marker +
+	 * seen) and clears the in-flight flag. Everything else is ignored.
+	 */
+	handleMessageEnd(message: unknown): void;
 }
 
 export interface InboxWatcherOptions {
@@ -84,10 +115,68 @@ export interface InboxWatcherOptions {
 	 */
 	isIdle: () => boolean;
 	warn: (msg: string) => void;
+	/**
+	 * The session's full entry list (ctx.sessionManager.getEntries()) at
+	 * startup. Ids in user messages here count as already delivered, so a
+	 * crash between landing and marker-writing can't double-deliver.
+	 */
+	transcriptEntries?: readonly unknown[];
+	/** How long a sent batch may stay unlanded before it is re-sent. Default 15000. */
+	inFlightTimeoutMs?: number;
+	/** Scheduler for post-landing marker writes. Default setImmediate. Tests override. */
+	defer?: (fn: () => void) => void;
+}
+
+/** Line that tags each message block in a drained user turn. */
+export const MSG_ID_PREFIX = "kl-msg-id: ";
+const ID_LINE_RE = /^kl-msg-id: (\S+)$/gm;
+
+/** Inbox message id for a `.md` filename: the filename minus `.md`. */
+export function messageIdFor(mdFilename: string): string {
+	return mdFilename.replace(/\.md$/, "");
+}
+
+/** All `kl-msg-id:` ids in a text, in order. Ids containing "/" are dropped. */
+export function extractMessageIds(text: string): string[] {
+	const ids: string[] = [];
+	for (const m of text.matchAll(ID_LINE_RE)) {
+		if (!m[1].includes("/")) ids.push(m[1]);
+	}
+	return ids;
+}
+
+/** Plain text of a Pi message's content (string, or array of text parts). */
+export function messageText(message: unknown): string {
+	const content = (message as { content?: unknown } | null)?.content;
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		return content
+			.map((p) => (p && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : ""))
+			.join("\n");
+	}
+	return "";
+}
+
+/** Ids carried by role=user message entries anywhere in a transcript. */
+export function deliveredIdsFromEntries(entries: readonly unknown[]): Set<string> {
+	const ids = new Set<string>();
+	for (const e of entries) {
+		const entry = e as { type?: unknown; message?: { role?: unknown } } | null;
+		if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+		for (const id of extractMessageIds(messageText(entry.message))) ids.add(id);
+	}
+	return ids;
+}
+
+/** One user turn for a drain: each message as `kl-msg-id: <id>` + its file, blank-line separated. */
+export function formatDrainBody(items: ReadonlyArray<{ id: string; text: string }>): string {
+	return items.map(({ id, text }) => `${MSG_ID_PREFIX}${id}\n${text.trim()}`).join("\n\n");
 }
 
 export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	const { inboxDir, pi, isIdle, warn } = opts;
+	const inFlightTimeoutMs = opts.inFlightTimeoutMs ?? 15000;
+	const defer = opts.defer ?? ((fn: () => void) => void setImmediate(fn));
 	const resolvedInboxDir = resolve(inboxDir);
 
 	try {
@@ -109,10 +198,25 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 		// Inbox missing — ok, we just created it above.
 	}
 
+	// Transcript ledger: anything already in a user message is delivered,
+	// whatever the markers say. Heal missing markers while we're here.
+	if (opts.transcriptEntries) {
+		for (const id of deliveredIdsFromEntries(opts.transcriptEntries)) {
+			const name = `${id}.md`;
+			if (seen.has(name)) continue;
+			seen.add(name);
+			if (existsSync(join(inboxDir, name))) touchMarker(inboxDir, name, warn);
+		}
+	}
+
 	// pendingIds: the queue. .md filenames observed by fs.watch (or the
 	// initial drain) that haven't been surfaced yet. Deduped on insert.
 	// Drained by dispatchIdle (as user turns) or midTurnSuffix (as pings).
 	let pendingIds: string[] = [];
+
+	// The batch handed to Pi but not yet seen landing (message_end). While
+	// set, further drains defer; its names are out of pendingIds.
+	let inFlight: { names: string[]; since: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
 
 	/**
 	 * Queue a filename — no dispatch decision. Skips if already seen, already
@@ -126,50 +230,104 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			return;
 		}
 		if (!existsSync(join(inboxDir, filename))) return;
+		if (inFlight?.names.includes(filename)) return;
 		if (!pendingIds.includes(filename)) pendingIds.push(filename);
 	};
 
+
+	const clearInFlight = (): void => {
+		if (inFlight?.timer) clearTimeout(inFlight.timer);
+		inFlight = null;
+	};
+
+	/** Put an unlanded batch back at the head of the queue. */
+	const requeueInFlight = (why: string): void => {
+		if (!inFlight) return;
+		const back = inFlight.names.filter((n) => !seen.has(n) && !pendingIds.includes(n));
+		if (back.length > 0) warn(`kiln-lite: inbox batch did not land (${why}); re-queueing ${back.join(", ")}`);
+		pendingIds = [...back, ...pendingIds];
+		clearInFlight();
+	};
+
+	const onInFlightTimeout = (): void => {
+		if (!inFlight) return;
+		if (!isIdle()) {
+			// Busy: the batch is most likely queued as a followUp behind the
+			// current run. Check again later rather than double-sending.
+			inFlight.timer = setTimeout(onInFlightTimeout, inFlightTimeoutMs);
+			inFlight.timer.unref?.();
+			return;
+		}
+		requeueInFlight(`not landed after ${inFlightTimeoutMs}ms`);
+		dispatchIdle();
+	};
+
 	/**
-	 * Drain `pendingIds` as user-message turns. For each, read the body and
-	 * call pi.sendUserMessage; on success touch marker + mark seen. On
-	 * read/send failure, the name stays in the queue — a later dispatch
-	 * (tool_result → midTurnSuffix, or a later dispatchIdle) re-surfaces it.
+	 * Drain `pendingIds` as ONE user turn. Does not mark anything delivered:
+	 * that happens in handleMessageEnd when the turn lands. On read failure a
+	 * name stays queued; on a synchronous send failure the whole batch does.
 	 *
-	 * Does not consult `isIdle()` — callers are responsible for choosing the
-	 * right dispatch mode. (See fs.watch callback + agent_end handler.)
+	 * Does not consult `isIdle()` — callers choose the dispatch mode. (See
+	 * the fs.watch callback + agent_end handler.)
 	 */
 	const dispatchIdle = (): void => {
+		if (inFlight) {
+			if (Date.now() - inFlight.since < inFlightTimeoutMs) return;
+			requeueInFlight(`not landed after ${inFlightTimeoutMs}ms`);
+		}
 		if (pendingIds.length === 0) return;
 		const remaining: string[] = [];
+		const items: Array<{ id: string; text: string }> = [];
+		const names: string[] = [];
 		for (const filename of pendingIds) {
-			const full = join(inboxDir, filename);
-			let body: string;
 			try {
-				body = readFileSync(full, "utf8");
+				items.push({ id: messageIdFor(filename), text: readFileSync(join(inboxDir, filename), "utf8") });
+				names.push(filename);
 			} catch (err) {
 				warn(`kiln-lite: failed to read inbox message ${filename}: ${(err as Error).message}`);
 				remaining.push(filename);
-				continue;
 			}
-			try {
-				// deliverAs: "followUp" handles the case where the runtime
-				// still considers itself "processing" at our dispatch point —
-				// notably at agent_end, which fires as the turn transitions
-				// out but before the streaming-done state is settled. In that
-				// window a bare sendUserMessage throws "Agent is already
-				// processing." followUp makes the call succeed regardless:
-				// idle → immediate delivery, streaming → queued after the
-				// current turn. Same pattern cleanup.ts uses.
-				pi.sendUserMessage(body, { deliverAs: "followUp" });
-			} catch (err) {
-				warn(`kiln-lite: sendUserMessage failed for ${filename}: ${(err as Error).message}`);
-				remaining.push(filename);
-				continue;
-			}
-			touchMarker(inboxDir, filename, warn);
-			seen.add(filename);
+		}
+		if (items.length === 0) return;
+		try {
+			// followUp: at agent_end Pi may still count as streaming; followUp
+			// queues behind the run instead of throwing. While truly idle it
+			// delivers immediately. (It does NOT make back-to-back idle sends
+			// safe — hence one send per drain.)
+			pi.sendUserMessage(formatDrainBody(items), { deliverAs: "followUp" });
+		} catch (err) {
+			warn(`kiln-lite: sendUserMessage failed for ${names.join(", ")}: ${(err as Error).message}`);
+			return;
 		}
 		pendingIds = remaining;
+		const timer = setTimeout(onInFlightTimeout, inFlightTimeoutMs);
+		timer.unref?.();
+		inFlight = { names, since: Date.now(), timer };
+	};
+
+	const handleMessageEnd = (message: unknown): void => {
+		if ((message as { role?: unknown } | null)?.role !== "user") return;
+		const ids = extractMessageIds(messageText(message));
+		if (ids.length === 0) return;
+		const landed: string[] = [];
+		for (const id of ids) {
+			const name = `${id}.md`;
+			const idx = pendingIds.indexOf(name);
+			if (idx !== -1) pendingIds.splice(idx, 1);
+			if (seen.has(name)) continue;
+			seen.add(name);
+			landed.push(name);
+		}
+		if (inFlight && inFlight.names.some((n) => ids.includes(messageIdFor(n)))) clearInFlight();
+		// Pi persists the message right after message_end handlers return;
+		// write markers after that so a marker never precedes its entry.
+		if (landed.length > 0) {
+			defer(() => {
+				for (const name of landed) {
+					if (existsSync(join(inboxDir, name))) touchMarker(inboxDir, name, warn);
+				}
+			});
+		}
 	};
 
 	// Initial drain of existing files. session_start is idle by definition
@@ -234,10 +392,11 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 				}
 				watcher = null;
 			}
+			clearInFlight();
 			persistCursor();
 		},
 		unreadCount(): number {
-			return pendingIds.length;
+			return pendingIds.length + (inFlight ? inFlight.names.length : 0);
 		},
 		midTurnSuffix(): string {
 			// Build per-message [Notification | …] blocks for every pending
@@ -280,6 +439,7 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			dispatchIdle();
 			persistCursor();
 		},
+		handleMessageEnd,
 	};
 }
 
