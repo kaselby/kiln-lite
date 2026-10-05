@@ -12,7 +12,6 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -30,12 +29,12 @@ import { buildMessageTool } from "../message-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
-import { readMeta, writeMeta, type SnapshotMeta } from "../snapshot.ts";
+import { claimSession, releaseSession, setLeaseState, NAME_ENTRY, type BoundSession } from "../session.ts";
 import { installLifecycle } from "../lifecycle.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
-import { resolveAgentId } from "./resolve-agent-id.ts";
+import { inboxDir as sessionInboxDir, inboxRoot } from "../../../src/sessions/paths.ts";
 import { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
 
 export interface CoreHandle {
@@ -46,6 +45,7 @@ export interface CoreHandle {
 
 export function installCore(pi: ExtensionAPI): CoreHandle {
 	let state: SessionState | null = null;
+	let bound: BoundSession | null = null;
 	let promptParts: PromptParts | null = null;
 	let watcher: InboxWatcher | null = null;
 	let daemon: DaemonClient | null = null;
@@ -73,29 +73,53 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		}
 
 		const config = loadConfig({ agentHome, warn });
-		const sessionUuid = inferSessionUuid(ctx);
-		const { agentId } = resolveAgentId({
-			agentHome,
-			envAgentId: process.env.AGENT_ID,
-			sessionUuid,
-			namePrefix: config.name,
+		// Registry entry, lease, name. Refuses a second process on a
+		// transcript whose lease is live.
+		const priorName = bound?.name;
+		let thinking: string | undefined;
+		try {
+			thinking = pi.getThinkingLevel();
+		} catch {
+			thinking = undefined;
+		}
+		const claim = claimSession({
+			reason: event.reason,
+			agent: config.name,
+			home: agentHome,
+			ctx,
+			thinking,
+			currentName: event.reason === "reload" ? priorName : undefined,
 			warn,
 		});
-		const env = buildEnv({ agentHome, agentId, sessionUuid, config });
+		if (!claim.ok) {
+			warn(`kiln-lite: ${claim.reason}`);
+			bound = null;
+			ctx.shutdown();
+			return;
+		}
+		bound = claim.session;
+		if (bound.rebound) {
+			try {
+				pi.appendEntry(NAME_ENTRY, { name: bound.name, agent: config.name, home: agentHome });
+			} catch (err) {
+				warn(`kiln-lite: could not append ${NAME_ENTRY} entry: ${(err as Error).message}`);
+			}
+		}
+		const agentId = bound.name;
+		const sessionUuid = bound.uuid;
+		const inboxDir = sessionInboxDir(sessionUuid);
+		const env = buildEnv({ agentHome, agentId, sessionUuid, config, inboxDir });
 		applyEnv(env);
 
-		// One-time orientation for forks (/spawn) and resumes (`kl resume`).
+		// One-time orientation for forks (/spawn) and resumes. A resume is a
+		// start on a transcript that already had a registry entry.
 		let sessionOrigin: SessionState["sessionOrigin"];
-		const freshBoot = event.reason === "startup";
-		const existingMeta = readMeta(agentHome, agentId, () => {});
-		if (event.reason === "resume" || (freshBoot && existingMeta !== null)) {
+		const resumed = bound.entry.created !== bound.entry.names[bound.entry.names.length - 1]?.bound;
+		if (event.reason === "resume" || (event.reason === "startup" && resumed)) {
 			sessionOrigin = { kind: "resume" };
-		} else if (event.reason === "fork" || freshBoot) {
+		} else if (event.reason === "fork" || event.reason === "startup") {
 			const header = ctx.sessionManager.getHeader?.();
-			if (header?.parentSession) {
-				const parentAgentId = freshBoot ? process.env.KL_PARENT || undefined : undefined;
-				sessionOrigin = { kind: "fork", parentAgentId };
-			}
+			if (header?.parentSession) sessionOrigin = { kind: "fork" };
 		}
 
 		state = {
@@ -106,7 +130,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			env,
 			sessionOrigin,
 		};
-		updateSnapshotMeta(state, ctx, warn);
 		lifecycle.start(state, warn);
 
 		// Prompt parts: read once, cached for the session. Warnings surface now,
@@ -126,7 +149,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 						everyMs: config.timestamps.every_minutes * 60 * 1000,
 					});
 
-		const inboxDir = join(agentHome, config.inbox_dir, agentId);
 		try {
 			mkdirSync(inboxDir, { recursive: true });
 		} catch (err) {
@@ -135,7 +157,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 		// Daemon registration is best-effort: a missing daemon must not block startup.
 		daemon = new DaemonClient({
-			requester: { agent: config.name, session: agentId, inbox_path: join(agentHome, config.inbox_dir) },
+			requester: { agent: config.name, session: sessionUuid, name: agentId, inbox_path: inboxRoot() },
 		});
 		void daemon.register().catch((err) => warn(`kiln-lite: daemon register failed: ${(err as Error).message}`));
 
@@ -171,7 +193,13 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		applyPrompt(
 			event.systemPromptOptions,
 			promptParts,
-			{ agentName: state.config.name, sessionId: state.agentId, model, home: state.agentHome },
+			{
+				agentName: state.config.name,
+				sessionId: state.agentId,
+				model,
+				home: state.agentHome,
+				inbox: state.env.KL_INBOX,
+			},
 			active,
 		);
 		return;
@@ -233,7 +261,17 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		watcher?.dispatchIdle();
 	});
 
+	// Lease mirrors busy/idle so `kl sessions` (and later a reaper) can tell.
+	pi.on("agent_start", async () => {
+		if (bound) setLeaseState(bound, "busy");
+	});
+	pi.on("agent_settled", async () => {
+		if (bound) setLeaseState(bound, "idle");
+	});
+
 	pi.on("session_shutdown", async () => {
+		releaseSession(bound);
+		bound = null;
 		if (watcher) {
 			watcher.stop();
 			watcher = null;
@@ -267,39 +305,4 @@ function buildOriginReminder(origin: NonNullable<SessionState["sessionOrigin"]>,
 		`<system-reminder>This session was resumed via \`kl resume\` in a fresh process; ` +
 		`time may have passed since the last message. You continue as the same agent (${agentId}).</system-reminder>`
 	);
-}
-
-/** Session UUID from the transcript file name (<ts>_<uuid>.jsonl). Transcript-only. */
-export function inferSessionUuid(ctx: { sessionManager: { getSessionFile(): string | undefined } }): string {
-	const file = ctx.sessionManager.getSessionFile();
-	if (file) {
-		const m = file.match(/([0-9a-fA-F-]{20,})\.jsonl$/);
-		if (m) return m[1];
-	}
-	return `ephemeral-${Math.random().toString(36).slice(2, 14)}`;
-}
-
-/**
- * Refresh state/sessions/<id>/meta.json, which `kl resume` / `kl history`
- * read. Interim: the registry slice replaces this with ~/.kl/run.
- */
-function updateSnapshotMeta(
-	state: SessionState,
-	ctx: { sessionManager: { getSessionFile(): string | undefined }; cwd: string; model?: { id?: string } },
-	warn: (msg: string) => void,
-): void {
-	const nowIso = new Date().toISOString();
-	const existing = readMeta(state.agentHome, state.agentId, warn);
-	const meta: SnapshotMeta = {
-		...(existing ?? {}),
-		agent_id: state.agentId,
-		pi_session_uuid: state.sessionUuid,
-		pi_session_jsonl: ctx.sessionManager.getSessionFile() ?? existing?.pi_session_jsonl,
-		cwd: ctx.cwd ?? existing?.cwd,
-		model: ctx.model?.id ?? existing?.model,
-		parent: process.env.KL_PARENT || existing?.parent,
-		created_at: existing?.created_at ?? nowIso,
-		last_seen: nowIso,
-	};
-	writeMeta(state.agentHome, meta, warn);
 }
