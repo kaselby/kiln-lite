@@ -33,6 +33,8 @@ export interface Lifecycle {
 	 * (queued turns would never run).
 	 */
 	handleAgentEnd(ctx: ExtensionContext, messages: unknown[]): boolean;
+	/** A cleanup turn, exit or reset is pending or running. */
+	busy(): boolean;
 	stop(): void;
 }
 
@@ -91,12 +93,13 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 	);
 	registerExitCommands(pi, facade);
 
-	pi.on("agent_before_settle", async (_event, ctx) => {
+	pi.on("agent_before_settle", async (event, ctx) => {
 		if (!ready) return;
 		const req = ready;
 		ready = null;
 		if (ctx.hasUI) ctx.ui.notify("kiln-lite: context reset; the handoff carries on", "info");
-		return { entries: [resetEntry(req.handoff)], continue: req.autonomous };
+		// Pi hands each handler the drafts so far and takes `entries` as the new full list.
+		return { entries: [...event.entries, resetEntry(req.handoff)], continue: req.autonomous };
 	});
 
 	return {
@@ -113,6 +116,9 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 			facade.handleAgentEnd(ctx, messages);
 			if (shuttingDown) return true;
 			return wasInFlight && facade.inProgress();
+		},
+		busy() {
+			return armed !== null || ready !== null || shuttingDown || facade.inProgress();
 		},
 		stop() {
 			dispatcher = null;

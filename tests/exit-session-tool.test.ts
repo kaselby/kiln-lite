@@ -132,7 +132,7 @@ function lifecycleState(home: string, cleanup: PromptSource): SessionState {
 }
 
 async function settle(f: ReturnType<typeof fakePi>, ctx: ExtensionContext) {
-	return (f.handlers.get("agent_before_settle") ?? [])[0]?.({ type: "agent_before_settle" }, ctx);
+	return (f.handlers.get("agent_before_settle") ?? [])[0]?.({ type: "agent_before_settle", entries: [], continue: false, outcome: "completed" }, ctx);
 }
 
 async function callExit(f: ReturnType<typeof fakePi>, ctx: ExtensionContext, params: Record<string, unknown>) {

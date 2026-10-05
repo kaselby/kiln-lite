@@ -31,7 +31,7 @@ export interface AutostartOptions {
     tsxBin?: string;
 }
 
-function resolveTsxBin(): string {
+export function resolveTsxBin(): string {
     // Walk up from this file looking for a node_modules/.bin/tsx. That
     // covers `npm link`-style installs where we sit inside the package.
     let dir = here;
