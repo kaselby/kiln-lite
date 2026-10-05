@@ -657,11 +657,18 @@ function formatMessageSource(msg: ParsedMessage): string {
 		parts.push(`priority: ${msg.priority}`);
 	}
 
-	if (msg.timestamp) {
-		const timePart = msg.timestamp.includes("T") ? msg.timestamp.split("T")[1] : msg.timestamp;
-		const shortTime = (timePart || "").replace(/Z$/, "").slice(0, 8);
-		if (shortTime) parts.push(`sent ${shortTime}`);
-	}
+	const sent = msg.timestamp ? sentClock(msg.timestamp) : "";
+	if (sent) parts.push(`sent ${sent}`);
 
 	return parts.join(" | ");
+}
+
+/**
+ * A message file's `timestamp:` (UTC ISO, written by the daemon) as local
+ * HH:MM, the clock the [time: …] lines use. Unparseable → "".
+ */
+export function sentClock(timestamp: string): string {
+	const d = new Date(timestamp.trim());
+	if (Number.isNaN(d.getTime())) return "";
+	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }

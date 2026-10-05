@@ -261,3 +261,18 @@ test("daemon client state dir follows KL_ROOT", () => {
 		else process.env.KL_ROOT = prev;
 	}
 });
+
+test("sentClock: the daemon's UTC timestamp as local HH:MM", async () => {
+	const { sentClock } = await import("../extensions/kiln-lite/inbox.ts");
+	const prev = process.env.TZ;
+	try {
+		process.env.TZ = "America/Toronto";
+		assert.equal(sentClock("2026-10-05T20:23:17Z"), "16:23");
+		process.env.TZ = "UTC";
+		assert.equal(sentClock("2026-10-05T20:23:17Z"), "20:23");
+		assert.equal(sentClock("not a time"), "");
+	} finally {
+		if (prev === undefined) delete process.env.TZ;
+		else process.env.TZ = prev;
+	}
+});
