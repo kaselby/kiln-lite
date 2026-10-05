@@ -10,6 +10,7 @@ import { leaseIsLive, liveLease, readLease, releaseLease, selfLease, writeLease 
 import { ADJECTIVES, NOUNS, drawName, nameState } from "../src/sessions/names.ts";
 import { namesLockPath } from "../src/sessions/paths.ts";
 import { bindName, formatEntry, parseEntry, readEntry, writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
+import { attachHint, enter } from "../src/sessions/tmux.ts";
 import { ResolveError, resolvesTo, resolveTarget, shortId } from "../src/sessions/resolve.ts";
 
 function freshRoot(): string {
@@ -207,4 +208,43 @@ test("resolve: an agent name reaches its one running session, else its most rece
 	// Session names still resolve as before.
 	assert.equal(resolveTarget("rev-red-owl", { root }).uuid, U2);
 	assert.throws(() => resolveTarget("nobody", { root }), /unknown session/);
+});
+
+test("enter: switch-client with no current client prints the name + attach hint, exits 0", () => {
+	const calls: string[][] = [];
+	let out = "";
+	const prev = process.env.KL_TMUX_SOCKET;
+	process.env.KL_TMUX_SOCKET = "sock1";
+	const origErr = process.stderr.write.bind(process.stderr);
+	let err = "";
+	(process.stderr as { write: unknown }).write = (s: string) => ((err += s), true);
+	try {
+		const code = enter("rev-red-owl", {
+			inTmux: true,
+			run: (args) => (calls.push(args), { status: 1, stderr: "no current client\n" }),
+			out: (s) => (out += s),
+		});
+		assert.equal(code, 0);
+	} finally {
+		(process.stderr as { write: unknown }).write = origErr;
+		if (prev === undefined) delete process.env.KL_TMUX_SOCKET;
+		else process.env.KL_TMUX_SOCKET = prev;
+	}
+	assert.deepEqual(calls, [["switch-client", "-t", "=rev-red-owl"]]);
+	assert.equal(out, "rev-red-owl\n");
+	assert.match(err, /tmux -L sock1 attach -t =rev-red-owl/);
+});
+
+test("enter: other switch-client failures still fail; outside tmux it attaches", () => {
+	const origErr = process.stderr.write.bind(process.stderr);
+	(process.stderr as { write: unknown }).write = () => true;
+	try {
+		assert.equal(enter("x", { inTmux: true, run: () => ({ status: 1, stderr: "can't find session: =x\n" }) }), 1);
+	} finally {
+		(process.stderr as { write: unknown }).write = origErr;
+	}
+	const calls: [string[], boolean][] = [];
+	assert.equal(enter("x", { inTmux: false, run: (a, i) => (calls.push([a, i]), { status: 0, stderr: "" }) }), 0);
+	assert.deepEqual(calls, [[["attach-session", "-t", "=x"], true]]);
+	assert.equal(attachHint("x").startsWith("tmux "), true);
 });

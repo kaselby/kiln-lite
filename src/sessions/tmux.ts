@@ -54,3 +54,39 @@ export function ownTmuxSession(): string {
 	const cur = spawnSync("tmux", ["-S", sock, "display-message", "-p", "-t", pane, "#{session_name}"], { encoding: "utf8" });
 	return (cur.stdout ?? "").trim();
 }
+
+/** How to attach to `name` by hand (honours $KL_TMUX_SOCKET). */
+export function attachHint(name: string): string {
+	return ["tmux", ...tmuxBaseArgs(), "attach", "-t", `=${name}`].join(" ");
+}
+
+type TmuxRun = (args: string[], inherit: boolean) => { status: number | null; stderr: string };
+
+const runTmux: TmuxRun = (args, inherit) => {
+	const r = spawnSync("tmux", [...tmuxBaseArgs(), ...args], {
+		stdio: inherit ? "inherit" : ["inherit", "inherit", "pipe"],
+		encoding: "utf8",
+	});
+	return { status: r.status, stderr: r.stderr ?? "" };
+};
+
+/**
+ * Switch (inside tmux) or attach to an exact session name. Returns the exit code.
+ * Inside tmux from a pane nobody is viewing (an agent's pane), switch-client
+ * fails with "no current client": that isn't an error, the session is up, so
+ * print its name and how to attach, and return 0.
+ */
+export function enter(name: string, opts: { inTmux?: boolean; run?: TmuxRun; out?: (s: string) => void } = {}): number {
+	const inTmux = opts.inTmux ?? !!process.env.TMUX;
+	const run = opts.run ?? runTmux;
+	if (!inTmux) return run(["attach-session", "-t", `=${name}`], true).status ?? 1;
+	const r = run(["switch-client", "-t", `=${name}`], false);
+	if (r.status === 0) return 0;
+	if (/no current client/i.test(r.stderr)) {
+		(opts.out ?? ((s) => process.stdout.write(s)))(`${name}\n`);
+		process.stderr.write(`kl: no tmux client to switch; attach with: ${attachHint(name)}\n`);
+		return 0;
+	}
+	process.stderr.write(r.stderr);
+	return r.status ?? 1;
+}

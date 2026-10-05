@@ -15,14 +15,13 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { launchNew, wake } from "./launch.ts";
 import { liveLeases } from "./lease.ts";
 import { inboxDir, klRoot, UUID_RE } from "./paths.ts";
 import { lastSeen, listEntries, readEntry, type RegistryEntry } from "./registry.ts";
 import { knownUuids, resolveTarget, ResolveError, shortId } from "./resolve.ts";
-import { tmuxBaseArgs } from "./tmux.ts";
+import { enter } from "./tmux.ts";
 
 function die(msg: string): never {
 	process.stderr.write(`kl: ${msg}\n`);
@@ -33,12 +32,6 @@ function info(msg: string): void {
 	process.stderr.write(`kl: ${msg}\n`);
 }
 
-/** Switch (inside tmux) or attach to an exact session name. Returns the exit code. */
-function enter(name: string): number {
-	const verb = process.env.TMUX ? "switch-client" : "attach-session";
-	const r = spawnSync("tmux", [...tmuxBaseArgs(), verb, "-t", `=${name}`], { stdio: "inherit" });
-	return r.status ?? 1;
-}
 
 function fmtTime(d: Date | null): string {
 	if (!d) return "-";
