@@ -5,8 +5,8 @@
  * wake(uuid): wake lock → re-check lease → reserve a name (the session's
  * last name unless something live holds it) → `tmux new-session -d` with
  * `pi --session <transcript>` (model/thinking from `launch:`, everything
- * else re-derived from home + agent.yml) → hold the lock until the new
- * process has written its lease.
+ * else re-derived from home + agent.yml), after the agent's pre-launch hook
+ * → hold the lock until the new process has written its lease.
  */
 
 import { accessSync, constants, existsSync } from "node:fs";
@@ -62,7 +62,7 @@ export interface LaunchOptions {
 	warn?: (msg: string) => void;
 }
 
-/** <home>/hooks/pre-launch: run (if executable) by launchNew before pi starts. */
+/** <home>/hooks/pre-launch: run (if executable) by launchNew and wake before pi starts. */
 export function preLaunchHookPath(home: string): string {
 	return join(home, "hooks", "pre-launch");
 }
@@ -179,6 +179,7 @@ function startProcess(entry: RegistryEntry, extraArgs: string[], root: string): 
 	return reserveName(
 		(state) => (state.held.has(entry.name) ? drawName({ agent: entry.agent, held: state.held, recent: state.recent }) : entry.name),
 		(name) => {
+			runPreLaunchHook(entry.home, p.agentName, name, cwd);
 			const r = tmux(["new-session", "-d", "-s", name, "-c", cwd, ...tmuxEnv(baseEnv(entry.home, p.piDir, name)), pi, ...p.args]);
 			if (!r.ok) throw new Error(`tmux new-session failed for ${name}: ${r.stderr.trim()}`);
 			return name;
