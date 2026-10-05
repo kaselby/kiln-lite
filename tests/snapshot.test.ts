@@ -7,13 +7,9 @@ import { join } from "node:path";
 import {
 	readMeta,
 	writeMeta,
-	readPromptSnapshot,
-	writePromptSnapshot,
 	findAgentIdForUuid,
-	resolveForkInheritedPrompt,
 	uniquifyAgentId,
 	metaPath,
-	promptPath,
 	type SnapshotMeta,
 } from "../extensions/kiln-lite/snapshot.ts";
 
@@ -99,27 +95,6 @@ test("writeMeta preserves unknown fields when overlaid manually", () => {
 	}
 });
 
-test("writePromptSnapshot + readPromptSnapshot round-trips verbatim", () => {
-	const home = makeHome();
-	try {
-		const prompt = "System prompt with\nmultiple\nlines\nand special chars: <>&\"'";
-		writePromptSnapshot(home, "scout-bright-bear", prompt);
-		const read = readPromptSnapshot(home, "scout-bright-bear");
-		assert.equal(read, prompt);
-	} finally {
-		cleanup(home);
-	}
-});
-
-test("readPromptSnapshot returns null for missing", () => {
-	const home = makeHome();
-	try {
-		assert.equal(readPromptSnapshot(home, "nonexistent"), null);
-	} finally {
-		cleanup(home);
-	}
-});
-
 test("findAgentIdForUuid finds existing", () => {
 	const home = makeHome();
 	try {
@@ -192,83 +167,3 @@ test("uniquifyAgentId increments past existing suffixes", () => {
 		cleanup(home);
 	}
 });
-
-test("metaPath and promptPath compose to known layout", () => {
-	const home = "/tmp/xyz";
-	assert.equal(metaPath(home, "scout-bright-bear"), "/tmp/xyz/state/sessions/scout-bright-bear/meta.json");
-	assert.equal(promptPath(home, "scout-bright-bear"), "/tmp/xyz/state/sessions/scout-bright-bear/system-prompt.txt");
-});
-
-test("snapshot dirs are created on first write (idempotent)", () => {
-	const home = makeHome();
-	try {
-		writePromptSnapshot(home, "fresh-id", "prompt");
-		assert.ok(existsSync(metaPath(home, "fresh-id").replace("/meta.json", "")));
-		// Second write should not fail
-		writePromptSnapshot(home, "fresh-id", "prompt v2");
-		assert.equal(readFileSync(promptPath(home, "fresh-id"), "utf8"), "prompt v2");
-	} finally {
-		cleanup(home);
-	}
-});
-
-// --- resolveForkInheritedPrompt (fork inheritance) ---
-
-const PARENT_FILE = "/p/sessions/2026-06-27T17-28-11-138Z_019f0a1f-e882-780a-9014-77c9ae096ab8.jsonl";
-const PARENT_UUID = "019f0a1f-e882-780a-9014-77c9ae096ab8";
-
-test("resolveForkInheritedPrompt returns the parent's snapshot when present", () => {
-	const home = makeHome();
-	try {
-		writeMeta(home, fixtureMeta("scout-amber-finch", PARENT_UUID));
-		writePromptSnapshot(home, "scout-amber-finch", "PARENT PROMPT\nwith handoff");
-		assert.equal(
-			resolveForkInheritedPrompt(home, PARENT_FILE),
-			"PARENT PROMPT\nwith handoff",
-		);
-	} finally {
-		cleanup(home);
-	}
-});
-
-test("resolveForkInheritedPrompt returns null for no previousSessionFile", () => {
-	const home = makeHome();
-	try {
-		assert.equal(resolveForkInheritedPrompt(home, undefined), null);
-	} finally {
-		cleanup(home);
-	}
-});
-
-test("resolveForkInheritedPrompt returns null when path has no uuid", () => {
-	const home = makeHome();
-	try {
-		assert.equal(resolveForkInheritedPrompt(home, "/p/sessions/not-a-session.txt"), null);
-	} finally {
-		cleanup(home);
-	}
-});
-
-test("resolveForkInheritedPrompt returns null when parent uuid has no recorded agent-id", () => {
-	const home = makeHome();
-	try {
-		// meta exists for a DIFFERENT uuid only.
-		writeMeta(home, fixtureMeta("scout-other", "some-other-uuid"));
-		writePromptSnapshot(home, "scout-other", "unrelated");
-		assert.equal(resolveForkInheritedPrompt(home, PARENT_FILE), null);
-	} finally {
-		cleanup(home);
-	}
-});
-
-test("resolveForkInheritedPrompt returns null when parent agent-id has no snapshot file", () => {
-	const home = makeHome();
-	try {
-		// meta maps uuid -> agent-id, but no system-prompt.txt was written.
-		writeMeta(home, fixtureMeta("scout-amber-finch", PARENT_UUID));
-		assert.equal(resolveForkInheritedPrompt(home, PARENT_FILE), null);
-	} finally {
-		cleanup(home);
-	}
-});
-

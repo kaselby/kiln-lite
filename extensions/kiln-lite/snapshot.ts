@@ -1,32 +1,15 @@
 /**
- * Session snapshot store.
+ * Per-session metadata for `kl resume` / `kl history`.
  *
- * Persists a stable binding between agent-id and pi-session-uuid plus a
- * verbatim copy of the rendered system prompt, so that:
+ *   <agent home>/state/sessions/<agent-id>/meta.json
  *
- *   1. Resuming a session with `kl resume <agent-id>` (or plain
- *      `pi --continue` / `pi --resume`) recovers the original agent-id even
- *      when AGENT_ID isn't pre-set in the env. We reverse-look-up
- *      pi-session-uuid → agent-id from meta.json.
+ * Maps a kl session id to its Pi transcript, cwd, model and parent. Interim:
+ * the registry slice replaces this with ~/.kl/run. (The old verbatim
+ * system-prompt.txt replay is gone: Pi 1.0 records the system prompt in the
+ * transcript, so a resumed session already has it.)
  *
- *   2. The system prompt sent to the model on resume is byte-identical to
- *      what was sent originally, regardless of how the on-disk memory /
- *      skills / tools / identity files have drifted in the meantime. The
- *      snapshot is written exactly once, at the first compose of a fresh
- *      session, and replayed verbatim on every subsequent turn after a
- *      resume. (Within the same live process, turns continue to re-render
- *      from current state — the snapshot only takes over once the process
- *      has died and another one resumes.)
- *
- * Layout under $AGENT_HOME:
- *
- *   state/sessions/<agent-id>/
- *     meta.json           — JSON record (see SnapshotMeta below)
- *     system-prompt.txt   — verbatim system prompt string
- *
- * meta.json shape is treated as additive — unknown fields are preserved on
- * read/rewrite. Anything written here is best-effort: failures warn but
- * never block session startup.
+ * meta.json shape is additive — unknown fields are preserved on
+ * read/rewrite. Writes are best-effort: failures warn, never block startup.
  */
 
 import {
@@ -76,11 +59,6 @@ export function snapshotsRoot(agentHome: string): string {
 /** Path to the meta.json for a given agent-id. */
 export function metaPath(agentHome: string, agentId: string): string {
 	return join(snapshotDir(agentHome, agentId), "meta.json");
-}
-
-/** Path to the system-prompt.txt for a given agent-id. */
-export function promptPath(agentHome: string, agentId: string): string {
-	return join(snapshotDir(agentHome, agentId), "system-prompt.txt");
 }
 
 /**
@@ -301,44 +279,6 @@ export function rebuildJournal(
 }
 
 /**
- * Read the cached system prompt for the given agent-id. Returns null if no
- * snapshot exists or the file is unreadable.
- */
-export function readPromptSnapshot(
-	agentHome: string,
-	agentId: string,
-	warn?: (msg: string) => void,
-): string | null {
-	const path = promptPath(agentHome, agentId);
-	if (!existsSync(path)) return null;
-	try {
-		return readFileSync(path, "utf8");
-	} catch (err) {
-		warn?.(`kiln-lite: failed to read system prompt snapshot at ${path}: ${(err as Error).message}`);
-		return null;
-	}
-}
-
-/**
- * Write the system prompt snapshot for the given agent-id. Creates the
- * directory if needed. Best-effort — failures warn but do not throw.
- */
-export function writePromptSnapshot(
-	agentHome: string,
-	agentId: string,
-	prompt: string,
-	warn?: (msg: string) => void,
-): void {
-	const dir = snapshotDir(agentHome, agentId);
-	try {
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(promptPath(agentHome, agentId), prompt);
-	} catch (err) {
-		warn?.(`kiln-lite: failed to write system prompt snapshot for ${agentId}: ${(err as Error).message}`);
-	}
-}
-
-/**
  * Reverse-look-up: given a pi-session-uuid, find the agent-id whose
  * snapshot meta.json points at it. Returns null if no match.
  *
@@ -370,41 +310,6 @@ export function findAgentIdForUuid(
 		if (meta?.pi_session_uuid === piSessionUuid) return name;
 	}
 	return null;
-}
-
-/**
- * Fork inheritance.
- *
- * A forked session (via `/spawn` or `pi --fork`) gets a fresh pi-session-uuid
- * and therefore a fresh agent-id with no snapshot of its own. Left alone it
- * would recompose the system prompt from current on-disk state — dropping
- * anything injected at the PARENT's launch, e.g. content appended via
- * `--append-system-prompt` (which is never persisted in the session JSONL). Resume doesn't have this problem because it keeps the same
- * uuid → same agent-id → same snapshot.
- *
- * Given the parent's session file (from `SessionStartEvent.previousSessionFile`),
- * resolve the parent's frozen system-prompt snapshot so the fork can replay it
- * verbatim, matching resume semantics. The caller is responsible for writing
- * the result under the FORK's own agent-id so later resumes of the fork stay
- * consistent.
- *
- * Returns null when there's no parent file, the uuid can't be parsed, the
- * parent has no recorded agent-id, or the parent has no snapshot — in every
- * such case the caller falls back to a fresh compose. Best-effort: never
- * throws.
- */
-export function resolveForkInheritedPrompt(
-	agentHome: string,
-	previousSessionFile: string | undefined,
-	warn?: (msg: string) => void,
-): string | null {
-	if (!previousSessionFile) return null;
-	// Same shape as inferSessionUuid: the uuid is the basename before .jsonl.
-	const m = previousSessionFile.match(/([0-9a-fA-F-]{20,})\.jsonl$/);
-	if (!m) return null;
-	const parentAgentId = findAgentIdForUuid(agentHome, m[1], warn);
-	if (!parentAgentId) return null;
-	return readPromptSnapshot(agentHome, parentAgentId, warn);
 }
 
 /**

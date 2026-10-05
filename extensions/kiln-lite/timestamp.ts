@@ -2,7 +2,7 @@
  * Message timestamping — gives the agent an ambient sense of wall-clock
  * time and how much of it has passed between user messages.
  *
- * Pure module — no pi SDK dependencies. The wiring lives in lib/install.ts:
+ * Pure module — no pi SDK dependencies. The wiring lives in lib/core.ts:
  * a `before_agent_start` handler injects a single `display:false` custom
  * message per user turn whose content is the `[time: ...]` line from
  * createTimestampInjector(). pi persists that message and feeds it to the
@@ -11,9 +11,10 @@
  * separate message, never the user's own input, so it never shows as an
  * artifact or leaks into the input box on rewind/cancel.
  *
- * Pi injects a static `Current date: YYYY-MM-DD` once at session start and
- * never updates it — no time of day, no weekday, no elapsed-time signal.
- * This fills that gap per user turn.
+ * Pi ≥0.80.7 puts no date in the system prompt at all (removed for prompt
+ * caching, #6621), so without this the model has no sense of the date, the
+ * time of day, or elapsed time. On by default; `timestamps:` in config.yml /
+ * agent.yml turns it off or tunes the periodic cadence.
  */
 
 // --- Elapsed-time formatting ---

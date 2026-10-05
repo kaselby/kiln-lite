@@ -1,29 +1,24 @@
 /**
- * System prompt assembly.
+ * System prompt composition.
  *
- * kiln-lite owns the entire system prompt composition — pi's assembled
- * `event.systemPrompt` is ignored. We build from scratch each turn using
- * `event.systemPromptOptions` (for skills, appendSystemPrompt, cwd, etc.)
- * plus kiln-lite state and the current model id.
+ * kl never builds the whole prompt and never returns `systemPrompt` or sets
+ * `forceSystemPrompt`. From a `before_agent_start` handler it edits Pi's
+ * mutable `event.systemPromptOptions`, and Pi renders the rest:
  *
- * Final structure, separated by `\n\n---\n\n`:
+ *   preamble        = customPrompt = agent identity (SYSTEM.md / agent.yml
+ *                     system_prompt) + kl baseline (prompts/kl-baseline.md)
+ *                     + tool rules rendered from toolGuidelines /
+ *                     promptGuidelines (Pi drops them once customPrompt is set)
+ *   <addendum>        Pi: APPEND_SYSTEM.md / --append-system-prompt
+ *   <project_context> Pi: AGENTS.md etc. (`project_context: false` empties it)
+ *   <skills>          Pi
+ *   <cwd>             Pi (always rendered)
+ *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
+ *   <name>…           agent.yml `sections:`, rendered once at session start
  *
- *   1. IDENTITY            — contents of agent.yml:system_prompt, or the
- *                            bundled default-identity.md if missing/unset
- *   2. ## Session          — agent id, model, date, cwd, home, inbox, session uuid
- *   3. ## Skills           — formatSkillsForPrompt output (header prefixed)
- *   4. ## Tools            — rendered shell-tool index
- *   5. ## Context          — unified: agent.yml context_injection entries
- *                            followed by options.appendSystemPrompt
- *
- * Any section with nothing to render (no skills, no tools, no context) is
- * skipped entirely — header and separator included.
- *
- * HTML comments are stripped from IDENTITY.md contents so it can carry
- * human-facing notes without leaking them to the model.
- *
- * Pi's project context files (AGENTS.md etc.) are intentionally NOT included.
- * If they're needed, point a context_injection entry at them.
+ * Pi records sections in the transcript and sends later changes as deltas,
+ * so sections other extensions add survive, and a changed `session` (e.g.
+ * after /model) costs one section update, not a new prompt.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -31,289 +26,215 @@ import { execSync } from "node:child_process";
 import { isAbsolute, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { formatSkillsForPrompt } from "@earendil-works/pi-coding-agent";
-import type { BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
+import type { AgentConfig, SectionEntry } from "./types.ts";
 
-import type { ContextInjectionEntry, SessionState } from "./types.ts";
+/** Hard caps for `sections:` commands (carried over from context_injection). */
+export const SECTION_COMMAND_TIMEOUT_MS = 1000;
+export const SECTION_COMMAND_MAX_BYTES = 64 * 1024;
 
-// Command-based context_injection hard cap — runs every turn when dynamic,
-// so a slow command tanks interactive latency. 1s is generous for anything
-// that should sanely live in a prompt block; exceeding it means the entry
-// is silently dropped for that turn (warn logged).
-const COMMAND_TIMEOUT_MS = 1000;
-const COMMAND_MAX_BYTES = 64 * 1024;
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+export const KL_BASELINE_PATH = join(PACKAGE_ROOT, "prompts", "kl-baseline.md");
 
-// ---------------------------------------------------------------------------
-// Bundled default identity (used when agent.yml system_prompt is unset or
-// the configured file is missing/unreadable). Loaded lazily on first miss.
-// ---------------------------------------------------------------------------
+/** The subset of Pi's NormalizedBuildSystemPromptOptions kl touches. */
+export interface PromptOptionsLike {
+	customPrompt?: string;
+	selectedTools: string[];
+	toolGuidelines: Record<string, string[]>;
+	promptGuidelines: string[];
+	sections: Record<string, string>;
+	contextFiles: Array<{ path: string; content: string }>;
+}
 
-const EXT_DIR = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_IDENTITY_PATH = join(EXT_DIR, "default-identity.md");
-const HARDCODED_FALLBACK = "You are a coding assistant operating inside pi, a coding agent harness.";
+/** Everything resolved once at session start. */
+export interface PromptParts {
+	/** Agent identity text, or null when the agent has none. */
+	identity: string | null;
+	/** kl baseline text, or null if the file couldn't be read. */
+	baseline: string | null;
+	/** Rendered agent.yml sections, in order. */
+	sections: Array<{ name: string; content: string }>;
+	projectContext: boolean;
+}
 
-/** null = not yet attempted; string = loaded; undefined = attempted and failed */
-let bundledDefault: string | null | undefined = null;
+export interface SessionInfo {
+	agentName: string;
+	sessionId: string;
+	/** `provider/id`, or undefined if no model is selected. */
+	model?: string;
+	home: string;
+}
 
-function getBundledDefault(warn: (msg: string) => void): string {
-	if (bundledDefault === undefined) return HARDCODED_FALLBACK;
-	if (bundledDefault !== null) return bundledDefault;
+/** Strip HTML comments (human notes) and leading blank space. */
+export function stripComments(raw: string): string {
+	return raw.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s+/, "").replace(/\s+$/, "");
+}
+
+function readPromptFile(path: string, label: string, warn: (msg: string) => void): string | null {
+	if (!existsSync(path)) {
+		warn(`kiln-lite: ${label} not found at ${path}`);
+		return null;
+	}
 	try {
-		bundledDefault = readFileSync(DEFAULT_IDENTITY_PATH, "utf8");
-		return bundledDefault;
+		return stripComments(readFileSync(path, "utf8"));
 	} catch (err) {
-		warn(
-			`kiln-lite: failed to read bundled default-identity.md (${DEFAULT_IDENTITY_PATH}): ${(err as Error).message}`,
-		);
-		bundledDefault = undefined;
-		return HARDCODED_FALLBACK;
+		warn(`kiln-lite: failed to read ${label} (${path}): ${(err as Error).message}`);
+		return null;
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+/** Agent identity from config.system_prompt (SYSTEM.md is defaulted in by loadConfig). */
+export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): string | null {
+	if (!config.system_prompt) return null;
+	const path = resolvePath(config.system_prompt_base, config.system_prompt);
+	const text = readPromptFile(path, "system_prompt", warn);
+	return text ? text : null;
+}
 
-/**
- * Read and cache static context_injection entries on SessionState.
- * Called once at session_start, after config is loaded.
- */
-export function preloadStaticInjection(state: SessionState, warn: (msg: string) => void): void {
-	for (const [i, entry] of state.config.context_injection.entries()) {
-		if (entry.dynamic) continue;
-		const content = readInjectionContent(state, entry, warn);
-		if (content !== null) {
-			state.staticInjection.set(cacheKey(entry, i), content);
-		}
-	}
+export function loadBaseline(warn: (msg: string) => void, path = KL_BASELINE_PATH): string | null {
+	const text = readPromptFile(path, "kl baseline prompt", warn);
+	return text ? text : null;
 }
 
 /**
- * Assemble the full system prompt for a turn. See file header for structure.
+ * Tool rules as Pi would have rendered them in its `rules` section: the
+ * guidelines of each selected tool, then promptGuidelines, trimmed and
+ * deduped. Pi's two hard-coded rules ("Be concise…", "Show file paths…")
+ * and its bash-for-file-ops rule are NOT included — those are prompt text,
+ * and belong in the kl baseline if wanted.
  */
-export function composeSystemPrompt(
-	state: SessionState,
-	options: BuildSystemPromptOptions,
-	modelId: string | undefined,
-	toolIndex: string,
-	warn: (msg: string) => void,
+export function renderToolRules(
+	selectedTools: string[],
+	toolGuidelines: Record<string, string[]>,
+	promptGuidelines: string[],
 ): string {
-	const sections: string[] = [];
-
-	sections.push(resolveIdentity(state, warn));
-	sections.push(renderSession(state, options, modelId));
-
-	const skills = renderSkills(options);
-	if (skills) sections.push(skills);
-
-	const tools = renderTools(toolIndex);
-	if (tools) sections.push(tools);
-
-	const context = renderContext(state, options, warn);
-	if (context) sections.push(context);
-
-	return sections.join("\n\n---\n\n");
+	const seen = new Set<string>();
+	const rules: string[] = [];
+	const add = (rule: string) => {
+		const r = rule.trim();
+		if (!r || seen.has(r)) return;
+		seen.add(r);
+		rules.push(`- ${r}`);
+	};
+	for (const name of selectedTools) for (const r of toolGuidelines[name] ?? []) add(r);
+	for (const r of promptGuidelines) add(r);
+	return rules.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// Section renderers
-// ---------------------------------------------------------------------------
-
-function resolveIdentity(state: SessionState, warn: (msg: string) => void): string {
-	if (state.systemPromptBase !== null) return state.systemPromptBase;
-
-	const configured = state.config.system_prompt;
-	if (configured) {
-		const path = resolvePath(state.agentHome, configured);
-		if (existsSync(path)) {
-			try {
-				const raw = readFileSync(path, "utf8");
-				const cleaned = stripIdentityArtifacts(raw);
-				state.systemPromptBase = cleaned;
-				return cleaned;
-			} catch (err) {
-				warn(
-					`kiln-lite: failed to read system_prompt (${path}): ${(err as Error).message} — using bundled default identity`,
-				);
-			}
-		} else {
-			warn(`kiln-lite: system_prompt file not found at ${path} — using bundled default identity`);
-		}
-	}
-
-	// Fall back to bundled default. Cache it so we don't re-read on every turn
-	// (the file does not change mid-session).
-	const fallback = getBundledDefault(warn);
-	state.systemPromptBase = fallback;
-	return fallback;
-}
-
-/**
- * Strip HTML comments and leading whitespace so a stripped header comment
- * doesn't leave blank lines at the top of the prompt.
- */
-function stripIdentityArtifacts(raw: string): string {
-	return raw.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s+/, "");
-}
-
-function renderSession(
-	state: SessionState,
-	options: BuildSystemPromptOptions,
-	modelId: string | undefined,
+export function buildCustomPrompt(
+	identity: string | null,
+	baseline: string | null,
+	toolRules: string,
 ): string {
-	const now = new Date();
-	const year = now.getFullYear();
-	const month = String(now.getMonth() + 1).padStart(2, "0");
-	const day = String(now.getDate()).padStart(2, "0");
-	const date = `${year}-${month}-${day}`;
-	const cwd = options.cwd.replace(/\\/g, "/");
-	const inbox = join(state.agentHome, state.config.inbox_dir, state.agentId);
-
-	const lines = [
-		"## Session",
-		"",
-		`- Agent ID: ${state.agentId}`,
-		`- Model: ${modelId ?? "(not set)"}`,
-		`- Current date: ${date}`,
-		`- Current working directory: ${cwd}`,
-		`- Agent home: ${state.agentHome}`,
-		`- Inbox: ${inbox}`,
-		`- Session UUID: ${state.sessionUuid}`,
-	];
-	return lines.join("\n");
-}
-
-function renderSkills(options: BuildSystemPromptOptions): string | null {
-	const hasRead = !options.selectedTools || options.selectedTools.includes("read");
-	const skills = options.skills ?? [];
-	if (!hasRead || skills.length === 0) return null;
-
-	// formatSkillsForPrompt returns "\n\n<preamble>\n\n<xml>"; strip leading
-	// whitespace and prepend our section header.
-	const body = formatSkillsForPrompt(skills).replace(/^\s+/, "");
-	return `## Skills\n\n${body}`;
-}
-
-function renderTools(toolIndex: string): string | null {
-	const trimmed = toolIndex.trim();
-	if (!trimmed) return null;
-	return `## Tools\n\n${trimmed}`;
-}
-
-function renderContext(
-	state: SessionState,
-	options: BuildSystemPromptOptions,
-	warn: (msg: string) => void,
-): string | null {
-	const entries: Array<{ label: string; body: string }> = [];
-
-	for (const [i, entry] of state.config.context_injection.entries()) {
-		const body = entry.dynamic
-			? readInjectionContent(state, entry, warn)
-			: state.staticInjection.get(cacheKey(entry, i)) ?? null;
-		if (body !== null) entries.push({ label: entry.label, body });
-	}
-
-	const appended = options.appendSystemPrompt?.trim();
-	if (appended) entries.push({ label: "Appended system prompt", body: appended });
-
-	if (entries.length === 0) return null;
-
-	const parts = ["## Context"];
-	for (const entry of entries) {
-		parts.push(`### ${entry.label}\n\n${entry.body.trim()}`);
-	}
+	const parts: string[] = [];
+	if (identity) parts.push(identity);
+	if (baseline) parts.push(baseline);
+	if (toolRules) parts.push(`Tool guidelines:\n${toolRules}`);
 	return parts.join("\n\n");
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Dispatch to path- or command-based loading. Returns null on any failure
- * (the entry is skipped for that turn; warn is logged).
- */
-function readInjectionContent(
-	state: SessionState,
-	entry: ContextInjectionEntry,
-	warn: (msg: string) => void,
-): string | null {
-	if (entry.command) {
-		return runInjectionCommand(state, entry.command, warn);
-	}
-	if (entry.path) {
-		return readInjectionFile(state.agentHome, entry.path, warn);
-	}
-	// Config-layer validation should prevent this, but be explicit.
-	warn(`kiln-lite: context_injection entry '${entry.label}' has neither path nor command — skipping`);
-	return null;
+export function renderSessionSection(info: SessionInfo): string {
+	return [
+		`agent: ${info.agentName}`,
+		`session: ${info.sessionId}`,
+		`model: ${info.model ?? "(none)"}`,
+		`home: ${info.home}`,
+	].join("\n");
 }
 
 /**
- * Unique cache key per entry, used for the staticInjection map. Falls back to
- * the entry index when neither path nor command is set (shouldn't happen after
- * config validation, but the key must be defined).
+ * Render agent.yml `sections:` once. Each failure (missing file, failing or
+ * slow command, oversized output) warns and drops that section; the caller
+ * routes warnings to the UI so they're visible at startup.
  */
-function cacheKey(entry: ContextInjectionEntry, index: number): string {
-	if (entry.path) return `path:${entry.path}`;
-	if (entry.command) return `cmd:${entry.command}`;
-	return `__${index}__`;
+export function renderSections(
+	entries: SectionEntry[],
+	env: Record<string, string>,
+	warn: (msg: string) => void,
+): Array<{ name: string; content: string }> {
+	const out: Array<{ name: string; content: string }> = [];
+	for (const entry of entries) {
+		const content = entry.command
+			? runSectionCommand(entry, env, warn)
+			: readSectionFile(entry, warn);
+		if (content === null) continue;
+		const trimmed = content.replace(/\s+$/, "");
+		if (trimmed) out.push({ name: entry.name, content: trimmed });
+	}
+	return out;
 }
 
-function readInjectionFile(
-	agentHome: string,
-	rawPath: string,
-	warn: (msg: string) => void,
-): string | null {
-	const path = resolvePath(agentHome, rawPath);
+function readSectionFile(entry: SectionEntry, warn: (msg: string) => void): string | null {
+	const path = resolvePath(entry.baseDir, entry.path!);
 	if (!existsSync(path)) {
-		warn(`kiln-lite: context_injection file not found: ${path} — skipping`);
+		warn(`kiln-lite: section '${entry.name}': file not found: ${path} — section omitted`);
 		return null;
 	}
 	try {
 		return readFileSync(path, "utf8");
 	} catch (err) {
-		warn(`kiln-lite: failed to read context_injection file ${path}: ${(err as Error).message}`);
+		warn(`kiln-lite: section '${entry.name}': failed to read ${path}: ${(err as Error).message} — section omitted`);
+		return null;
+	}
+}
+
+function runSectionCommand(
+	entry: SectionEntry,
+	env: Record<string, string>,
+	warn: (msg: string) => void,
+): string | null {
+	const command = entry.command!;
+	const label = command.length > 60 ? `${command.slice(0, 57)}…` : command;
+	try {
+		return execSync(command, {
+			encoding: "utf8",
+			timeout: SECTION_COMMAND_TIMEOUT_MS,
+			maxBuffer: SECTION_COMMAND_MAX_BYTES,
+			cwd: entry.baseDir,
+			env: { ...process.env, ...env },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	} catch (err) {
+		const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; signal?: string };
+		let why: string;
+		if (e.code === "ENOBUFS") why = `output exceeded ${SECTION_COMMAND_MAX_BYTES} bytes`;
+		else if (e.signal === "SIGTERM") why = `timed out after ${SECTION_COMMAND_TIMEOUT_MS}ms`;
+		else {
+			const stderr = e.stderr ? String(e.stderr).trim().slice(0, 200) : "";
+			why = `${e.message.split("\n")[0]}${stderr ? ` — stderr: ${stderr}` : ""}`;
+		}
+		warn(`kiln-lite: section '${entry.name}': command failed (${label}): ${why} — section omitted`);
 		return null;
 	}
 }
 
 /**
- * Run a shell command, capture stdout, return as content. On timeout,
- * non-zero exit, or spawn error: warn and return null (caller treats as
- * "no content this turn"). Stderr is forwarded to the warn channel so
- * misconfigured commands are discoverable.
+ * Apply kl's prompt edits to Pi's mutable systemPromptOptions. Pure apart
+ * from mutating `options`; safe to call every turn (idempotent for the same
+ * inputs). `session` is (re)inserted first among kl's sections so the order
+ * is session → agent sections, after anything Pi or earlier handlers added.
+ *
+ * `selectedTools`: the tools whose guidelines to render. Pass the live
+ * active set (pi.getActiveTools()): when no handler edits
+ * `options.selectedTools`, Pi replaces it with the active set after the
+ * before_agent_start handlers run, so the incoming value can be stale.
  */
-function runInjectionCommand(
-	state: SessionState,
-	command: string,
-	warn: (msg: string) => void,
-): string | null {
-	try {
-		const out = execSync(command, {
-			encoding: "utf8",
-			timeout: COMMAND_TIMEOUT_MS,
-			maxBuffer: COMMAND_MAX_BYTES,
-			cwd: state.agentHome,
-			env: { ...process.env, ...state.env },
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		return out;
-	} catch (err) {
-		const e = err as NodeJS.ErrnoException & { stderr?: Buffer | string; signal?: string };
-		const label = command.length > 60 ? `${command.slice(0, 57)}…` : command;
-		if (e.signal === "SIGTERM") {
-			warn(`kiln-lite: context_injection command timed out (>${COMMAND_TIMEOUT_MS}ms): ${label}`);
-		} else {
-			const stderr = e.stderr ? String(e.stderr).trim() : "";
-			const tail = stderr ? ` — stderr: ${stderr.slice(0, 200)}` : "";
-			warn(`kiln-lite: context_injection command failed (${label}): ${e.message}${tail}`);
-		}
-		return null;
-	}
+export function applyPrompt(
+	options: PromptOptionsLike,
+	parts: PromptParts,
+	session: SessionInfo,
+	selectedTools: string[] = options.selectedTools,
+): void {
+	const toolRules = renderToolRules(selectedTools, options.toolGuidelines, options.promptGuidelines);
+	options.customPrompt = buildCustomPrompt(parts.identity, parts.baseline, toolRules);
+
+	if (!parts.projectContext) options.contextFiles = [];
+
+	delete options.sections.session;
+	for (const s of parts.sections) delete options.sections[s.name];
+	options.sections.session = renderSessionSection(session);
+	for (const s of parts.sections) options.sections[s.name] = s.content;
 }
 
-function resolvePath(agentHome: string, p: string): string {
-	return isAbsolute(p) ? p : join(agentHome, p);
+function resolvePath(base: string, p: string): string {
+	return isAbsolute(p) ? p : join(base, p);
 }

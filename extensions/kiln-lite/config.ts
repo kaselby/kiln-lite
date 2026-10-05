@@ -1,46 +1,72 @@
 /**
- * agent.yml loader.
+ * kl configuration.
  *
- * Resolves $AGENT_HOME (env var or default ~/.agent/), loads agent.yml if present,
- * merges with defaults, and validates the shape.
+ * Two layers, merged key by key:
+ *   1. `<kl root>/config.yml`   — global defaults for every kl agent
+ *                                 (kl root = $KL_ROOT or ~/.kl)
+ *   2. `<agent home>/agent.yml` — per agent; any top-level key it sets
+ *                                 replaces the global value outright
  *
- * Missing agent.yml => defaults. Missing required files in context_injection =>
- * warned but non-fatal (skipped at inject time).
+ * Relative paths (`system_prompt`, `sections[].path`) resolve against the
+ * dir of the file that declared them, so a global section can point into
+ * ~/.kl and an agent's into its own folder.
+ *
+ * Minimal schema: name, description, model, thinking, system_prompt,
+ * sections, project_context, timestamps. A few more keys are recognized for
+ * modules outside the core slice (cleanup, inbox_dir, sessions_dir,
+ * session_state_interval); anything else warns and is ignored.
  */
 
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve, join } from "node:path";
+import { basename, resolve, join } from "node:path";
 import yaml from "js-yaml";
 
-import type { AgentConfig, ContextInjectionEntry } from "./types.ts";
+import type { AgentConfig, SectionEntry, TimestampConfig } from "./types.ts";
 import { parsePromptSource } from "./prompt-source.ts";
 
-const DEFAULT_CONFIG: AgentConfig = {
-	name: "pi",
-	context_injection: [],
-	startup: [],
-	cleanup: "",
-	tools_dir: "tools",
-	inbox_dir: "inbox",
-	sessions_dir: "sessions",
-	skills_dirs: ["active"],
-	session_state_interval: 15,
-};
+/** Pi rejects section names outside this grammar (system-prompt.js). */
+export const SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
 
 /**
- * Resolve $AGENT_HOME. Env var if set, else ~/.agent/.
- * Does NOT create the directory — the caller (or startup commands) can mkdir.
+ * Section names kl must not let agents take: Pi's built-ins (a same-named
+ * custom section replaces the built-in in place) and kl's own `session`.
  */
-export function resolveAgentHome(): string {
-	return resolveAgentHomeDetailed().path;
-}
+export const RESERVED_SECTIONS = new Set([
+	"preamble",
+	"tools",
+	"rules",
+	"docs",
+	"addendum",
+	"project_context",
+	"skills",
+	"cwd",
+	"session",
+]);
 
-/**
- * Resolve $AGENT_HOME, reporting whether it came from the env or the default.
- * The auto-scaffolder uses `explicit` to decide whether it's safe to create
- * files under the resolved path.
- */
+export const DEFAULT_TIMESTAMPS: TimestampConfig = { per_turn: true, every_calls: 20, every_minutes: 10 };
+
+const KNOWN_KEYS = new Set([
+	"name",
+	"description",
+	"model",
+	"thinking",
+	"system_prompt",
+	"sections",
+	"project_context",
+	"timestamps",
+	"cleanup",
+	"inbox_dir",
+	"sessions_dir",
+	"session_state_interval",
+]);
+
+/** Keys that only make sense per agent; ignored (with a warning) in the global file. */
+const AGENT_ONLY_KEYS = new Set(["name", "description"]);
+
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Resolve $AGENT_HOME, reporting whether it came from the env. */
 export function resolveAgentHomeDetailed(): { path: string; explicit: boolean } {
 	const fromEnv = process.env.AGENT_HOME;
 	if (fromEnv && fromEnv.trim()) {
@@ -49,180 +75,234 @@ export function resolveAgentHomeDetailed(): { path: string; explicit: boolean } 
 	return { path: resolve(join(homedir(), ".agent")), explicit: false };
 }
 
-/**
- * Resolve the kiln-lite root (`~/.kl/`) — the directory that holds
- * kl-global state (the daemon dir, guardrails.yml, and the per-agent
- * `agents/<name>/` homes). Honors the `KL_ROOT` env var for testability,
- * else defaults to `~/.kl`, matching the daemon/client convention.
- *
- * Deliberately NOT derived from $AGENT_HOME: under the multi-agent layout
- * an agent home is `~/.kl/agents/<name>/`, two levels deep, so relative
- * `..` resolution is fragile and layout-dependent.
- */
+export function resolveAgentHome(): string {
+	return resolveAgentHomeDetailed().path;
+}
+
+/** kl root: $KL_ROOT (tests, alternate installs) or ~/.kl. */
 export function resolveKlRoot(): string {
 	const fromEnv = process.env.KL_ROOT;
-	if (fromEnv && fromEnv.trim()) {
-		return resolve(fromEnv);
-	}
+	if (fromEnv && fromEnv.trim()) return resolve(fromEnv);
 	return resolve(join(homedir(), ".kl"));
 }
 
-/**
- * Load agent.yml from $AGENT_HOME. Returns merged config.
- *
- * @param agentHome Resolved $AGENT_HOME
- * @param warn Called with a human-readable message for any non-fatal issue
- *             (missing file, unknown field, invalid shape for a field). The caller
- *             decides how to surface the warning (ctx.ui.notify, console, etc).
- */
-export function loadAgentConfig(agentHome: string, warn: (msg: string) => void): AgentConfig {
-	const configPath = join(agentHome, "agent.yml");
-	if (!existsSync(configPath)) {
-		return { ...DEFAULT_CONFIG };
-	}
+export function defaultConfig(agentHome: string): AgentConfig {
+	return {
+		name: basename(agentHome) || "agent",
+		system_prompt_base: agentHome,
+		sections: [],
+		project_context: true,
+		timestamps: { ...DEFAULT_TIMESTAMPS },
+		cleanup: "",
+		inbox_dir: "inbox",
+		sessions_dir: "sessions",
+		session_state_interval: 15,
+	};
+}
 
+/** Read a YAML file that must be a mapping. Missing file → null; bad file → warn + null. */
+export function readYamlMapping(
+	path: string,
+	label: string,
+	warn: (msg: string) => void,
+): Record<string, unknown> | null {
+	if (!existsSync(path)) return null;
 	let raw: unknown;
 	try {
-		const contents = readFileSync(configPath, "utf8");
-		raw = yaml.load(contents);
+		raw = yaml.load(readFileSync(path, "utf8"));
 	} catch (err) {
-		warn(`kiln-lite: failed to parse agent.yml: ${(err as Error).message} — using defaults`);
-		return { ...DEFAULT_CONFIG };
+		warn(`kiln-lite: failed to parse ${label} (${path}): ${(err as Error).message} — ignoring it`);
+		return null;
 	}
-
-	if (raw === null || raw === undefined) {
-		return { ...DEFAULT_CONFIG };
-	}
+	if (raw === null || raw === undefined) return null;
 	if (typeof raw !== "object" || Array.isArray(raw)) {
-		warn(`kiln-lite: agent.yml must be a YAML mapping — using defaults`);
-		return { ...DEFAULT_CONFIG };
+		warn(`kiln-lite: ${label} must be a YAML mapping — ignoring it`);
+		return null;
 	}
+	return raw as Record<string, unknown>;
+}
 
-	const obj = raw as Record<string, unknown>;
-	const known = new Set([
-		"name",
-		"description",
-		"model",
-		// Read by bin/kl (prepends --thinking), not by the extension.
-		"thinking",
-		"system_prompt",
-		"context_injection",
-		"startup",
-		"cleanup",
-		"tools_dir",
-		"inbox_dir",
-		"sessions_dir",
-		"skills_dirs",
-		"session_state_interval",
-	]);
-	for (const key of Object.keys(obj)) {
-		if (!known.has(key)) {
-			warn(`kiln-lite: agent.yml has unknown field '${key}' — ignoring`);
-		}
-	}
+export interface LoadConfigOptions {
+	agentHome: string;
+	/** Defaults to resolveKlRoot(). */
+	klRoot?: string;
+	warn: (msg: string) => void;
+}
 
-	const config: AgentConfig = { ...DEFAULT_CONFIG };
+/** Load `<klRoot>/config.yml`, then `<agentHome>/agent.yml` over it. */
+export function loadConfig(opts: LoadConfigOptions): AgentConfig {
+	const { agentHome, warn } = opts;
+	const klRoot = opts.klRoot ?? resolveKlRoot();
+	const config = defaultConfig(agentHome);
 
-	if (typeof obj.name === "string" && obj.name.trim()) {
-		config.name = obj.name.trim();
-	}
+	const globalPath = join(klRoot, "config.yml");
+	const global = readYamlMapping(globalPath, "kl config.yml", warn);
+	if (global) applyLayer(config, global, { baseDir: klRoot, label: globalPath, isGlobal: true, warn });
 
-	if (typeof obj.system_prompt === "string" && obj.system_prompt.trim()) {
-		config.system_prompt = obj.system_prompt.trim();
-	}
+	const agentPath = join(agentHome, "agent.yml");
+	const agent = readYamlMapping(agentPath, "agent.yml", warn);
+	if (agent) applyLayer(config, agent, { baseDir: agentHome, label: agentPath, isGlobal: false, warn });
 
-	if (Array.isArray(obj.context_injection)) {
-		const entries: ContextInjectionEntry[] = [];
-		for (const [i, e] of obj.context_injection.entries()) {
-			if (e === null || typeof e !== "object" || Array.isArray(e)) {
-				warn(`kiln-lite: agent.yml context_injection[${i}] is not a mapping — skipping`);
-				continue;
-			}
-			const entry = e as Record<string, unknown>;
-			const hasPath = typeof entry.path === "string" && (entry.path as string).trim() !== "";
-			const hasCommand = typeof entry.command === "string" && (entry.command as string).trim() !== "";
-			if (!hasPath && !hasCommand) {
-				warn(`kiln-lite: agent.yml context_injection[${i}] needs either 'path' or 'command' — skipping`);
-				continue;
-			}
-			if (hasPath && hasCommand) {
-				warn(`kiln-lite: agent.yml context_injection[${i}] has both 'path' and 'command' — skipping (they're mutually exclusive)`);
-				continue;
-			}
-			if (typeof entry.label !== "string" || !entry.label.trim()) {
-				warn(`kiln-lite: agent.yml context_injection[${i}] missing 'label' — skipping`);
-				continue;
-			}
-			const parsed: ContextInjectionEntry = {
-				label: entry.label.trim(),
-			};
-			if (hasPath) parsed.path = (entry.path as string).trim();
-			if (hasCommand) parsed.command = (entry.command as string).trim();
-			if (typeof entry.dynamic === "boolean") {
-				parsed.dynamic = entry.dynamic;
-			}
-			entries.push(parsed);
-		}
-		config.context_injection = entries;
-	}
-
-	if (Array.isArray(obj.startup)) {
-		const cmds: string[] = [];
-		for (const [i, c] of obj.startup.entries()) {
-			if (typeof c !== "string") {
-				warn(`kiln-lite: agent.yml startup[${i}] is not a string — skipping`);
-				continue;
-			}
-			cmds.push(c);
-		}
-		config.startup = cmds;
-	}
-
-	if (obj.cleanup !== undefined) {
-		const cleanup = parsePromptSource(obj.cleanup, "agent.yml cleanup", warn);
-		if (cleanup !== undefined) config.cleanup = cleanup;
-	}
-
-	if (typeof obj.tools_dir === "string" && obj.tools_dir.trim()) {
-		config.tools_dir = obj.tools_dir.trim();
-	}
-	if (typeof obj.inbox_dir === "string" && obj.inbox_dir.trim()) {
-		config.inbox_dir = obj.inbox_dir.trim();
-	}
-	if (typeof obj.sessions_dir === "string" && obj.sessions_dir.trim()) {
-		config.sessions_dir = obj.sessions_dir.trim();
-	}
-	if (typeof obj.skills_dirs === "string" && obj.skills_dirs.trim()) {
-		// Single-string shorthand: skills_dirs: core
-		config.skills_dirs = [obj.skills_dirs.trim()];
-	} else if (Array.isArray(obj.skills_dirs)) {
-		const dirs: string[] = [];
-		for (const [i, d] of obj.skills_dirs.entries()) {
-			if (typeof d !== "string" || !d.trim()) {
-				warn(`kiln-lite: agent.yml skills_dirs[${i}] is not a non-empty string — skipping`);
-				continue;
-			}
-			dirs.push(d.trim());
-		}
-		if (dirs.length > 0) {
-			config.skills_dirs = dirs;
-		} else if (obj.skills_dirs.length > 0) {
-			warn(`kiln-lite: agent.yml skills_dirs had no valid entries — using default ${JSON.stringify(DEFAULT_CONFIG.skills_dirs)}`);
-		}
-		// Empty list is meaningful: explicitly discover no skills.
-		if (obj.skills_dirs.length === 0) {
-			config.skills_dirs = [];
-		}
-	}
-	if (typeof obj.session_state_interval === "number" && Number.isFinite(obj.session_state_interval)) {
-		const n = Math.floor(obj.session_state_interval);
-		if (n >= 0) {
-			config.session_state_interval = n;
-		} else {
-			warn(`kiln-lite: agent.yml session_state_interval must be >= 0 — using default ${DEFAULT_CONFIG.session_state_interval}`);
-		}
-	} else if (obj.session_state_interval !== undefined) {
-		warn(`kiln-lite: agent.yml session_state_interval must be a number — using default ${DEFAULT_CONFIG.session_state_interval}`);
+	if (config.system_prompt === undefined && existsSync(join(agentHome, "SYSTEM.md"))) {
+		config.system_prompt = "SYSTEM.md";
+		config.system_prompt_base = agentHome;
 	}
 	return config;
+}
+
+/** Back-compat shim: load with the default kl root. */
+export function loadAgentConfig(agentHome: string, warn: (msg: string) => void): AgentConfig {
+	return loadConfig({ agentHome, warn });
+}
+
+interface LayerOptions {
+	baseDir: string;
+	label: string;
+	isGlobal: boolean;
+	warn: (msg: string) => void;
+}
+
+function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: LayerOptions): void {
+	const { baseDir, label, isGlobal, warn } = layer;
+	const has = (k: string) => Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined;
+
+	for (const key of Object.keys(obj)) {
+		if (!KNOWN_KEYS.has(key)) warn(`kiln-lite: ${label} has unknown field '${key}' — ignoring`);
+		else if (isGlobal && AGENT_ONLY_KEYS.has(key)) warn(`kiln-lite: ${label}: '${key}' is per-agent only — ignoring`);
+	}
+
+	if (!isGlobal && has("name")) {
+		const v = str(obj.name);
+		if (v && /^[a-z][a-z0-9_]*$/.test(v)) config.name = v;
+		else warn(`kiln-lite: ${label}: name must match [a-z][a-z0-9_]* — using '${config.name}'`);
+	}
+	if (!isGlobal && has("description")) {
+		const v = str(obj.description);
+		if (v !== undefined) config.description = v;
+	}
+	if (has("model")) {
+		const v = str(obj.model);
+		if (v) config.model = v;
+		else warn(`kiln-lite: ${label}: model must be a non-empty string — ignoring`);
+	}
+	if (has("thinking")) {
+		const v = str(obj.thinking);
+		if (v && THINKING_LEVELS.includes(v)) config.thinking = v;
+		else warn(`kiln-lite: ${label}: thinking must be one of ${THINKING_LEVELS.join(", ")} — ignoring`);
+	}
+	if (has("system_prompt")) {
+		const v = str(obj.system_prompt);
+		if (v) {
+			config.system_prompt = v;
+			config.system_prompt_base = baseDir;
+		} else warn(`kiln-lite: ${label}: system_prompt must be a path string — ignoring`);
+	}
+	if (has("sections")) {
+		const parsed = parseSections(obj.sections, baseDir, label, warn);
+		if (parsed) config.sections = parsed;
+	}
+	if (has("project_context")) {
+		if (typeof obj.project_context === "boolean") config.project_context = obj.project_context;
+		else warn(`kiln-lite: ${label}: project_context must be true or false — ignoring`);
+	}
+	if (has("timestamps")) {
+		const t = parseTimestamps(obj.timestamps, label, warn);
+		if (t !== undefined) config.timestamps = t;
+	}
+	if (has("cleanup")) {
+		const c = parsePromptSource(obj.cleanup, `${label} cleanup`, warn);
+		if (c !== undefined) config.cleanup = c;
+	}
+	for (const key of ["inbox_dir", "sessions_dir"] as const) {
+		if (!has(key)) continue;
+		const v = str(obj[key]);
+		if (v) config[key] = v;
+		else warn(`kiln-lite: ${label}: ${key} must be a non-empty string — ignoring`);
+	}
+	if (has("session_state_interval")) {
+		const n = obj.session_state_interval;
+		if (typeof n === "number" && Number.isFinite(n) && n >= 0) config.session_state_interval = Math.floor(n);
+		else warn(`kiln-lite: ${label}: session_state_interval must be a number >= 0 — ignoring`);
+	}
+}
+
+function str(v: unknown): string | undefined {
+	return typeof v === "string" ? v.trim() : undefined;
+}
+
+/** Parse `sections:`. Returns undefined (keep the lower layer) when the value isn't a list. */
+export function parseSections(
+	raw: unknown,
+	baseDir: string,
+	label: string,
+	warn: (msg: string) => void,
+): SectionEntry[] | undefined {
+	if (!Array.isArray(raw)) {
+		warn(`kiln-lite: ${label}: sections must be a list of {name, path} or {name, command} — ignoring`);
+		return undefined;
+	}
+	const out: SectionEntry[] = [];
+	const seen = new Set<string>();
+	for (const [i, e] of raw.entries()) {
+		const where = `${label}: sections[${i}]`;
+		if (e === null || typeof e !== "object" || Array.isArray(e)) {
+			warn(`kiln-lite: ${where} is not a mapping — skipping`);
+			continue;
+		}
+		const entry = e as Record<string, unknown>;
+		const name = str(entry.name);
+		const path = str(entry.path);
+		const command = str(entry.command);
+		if (!name || !SECTION_NAME.test(name)) {
+			warn(`kiln-lite: ${where}: name must match [a-z][a-z0-9_-]* — skipping`);
+			continue;
+		}
+		if (RESERVED_SECTIONS.has(name)) {
+			warn(`kiln-lite: ${where}: '${name}' is a reserved section name — skipping`);
+			continue;
+		}
+		if (seen.has(name)) {
+			warn(`kiln-lite: ${where}: duplicate section name '${name}' — skipping`);
+			continue;
+		}
+		if (!!path === !!command) {
+			warn(`kiln-lite: ${where} ('${name}') needs exactly one of 'path' or 'command' — skipping`);
+			continue;
+		}
+		seen.add(name);
+		out.push(path ? { name, path, baseDir } : { name, command, baseDir });
+	}
+	return out;
+}
+
+/**
+ * `timestamps:` accepts `true` / `false`, or a mapping overriding any of
+ * per_turn / every_calls / every_minutes on top of the defaults.
+ */
+export function parseTimestamps(
+	raw: unknown,
+	label: string,
+	warn: (msg: string) => void,
+): TimestampConfig | false | undefined {
+	if (raw === false) return false;
+	if (raw === true) return { ...DEFAULT_TIMESTAMPS };
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		warn(`kiln-lite: ${label}: timestamps must be true, false, or a mapping — ignoring`);
+		return undefined;
+	}
+	const obj = raw as Record<string, unknown>;
+	const out: TimestampConfig = { ...DEFAULT_TIMESTAMPS };
+	for (const key of Object.keys(obj)) {
+		if (key === "per_turn") {
+			if (typeof obj.per_turn === "boolean") out.per_turn = obj.per_turn;
+			else warn(`kiln-lite: ${label}: timestamps.per_turn must be true or false — ignoring`);
+		} else if (key === "every_calls" || key === "every_minutes") {
+			const n = obj[key];
+			if (typeof n === "number" && Number.isFinite(n) && n >= 0) out[key] = n;
+			else warn(`kiln-lite: ${label}: timestamps.${key} must be a number >= 0 — ignoring`);
+		} else {
+			warn(`kiln-lite: ${label}: unknown timestamps field '${key}' — ignoring`);
+		}
+	}
+	return out;
 }

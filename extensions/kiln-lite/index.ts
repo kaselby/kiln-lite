@@ -1,31 +1,18 @@
 /**
- * kiln-lite — default extension entry point.
+ * kiln-lite core entry point.
  *
- * Composes the stock kiln-lite behavior by calling installDefaultHarness
- * from ./lib/, which wires every building block (config, env, prompt
- * assembly, snapshot, inbox watcher, cleanup, gates, tools, daemon) in
- * the order the pre-refactor monolithic index.ts did.
+ * `kl` loads this with `pi -e` for every agent. Persistent-agent behaviour
+ * (cleanup turn, exit_session, continuation) is a separate entry,
+ * ./persistence.ts, loaded only for agents that use it.
  *
- * To customize without forking this repo, write a harness at
- * $AGENT_HOME/harness/index.ts. `kl` will load it in preference to this
- * file when present. A harness can either:
- *
- *   1. Call installDefaultHarness(pi) and then add its own handlers /
- *      tools / commands on top — Pi composes handlers across all
- *      registrations.
- *   2. Skip installDefaultHarness entirely and compose the building
- *      blocks from `./lib/index.ts` to its own taste — useful when the
- *      harness needs to REPLACE behavior (custom prompt assembly,
- *      different agent-id policy, etc.) rather than just extend.
- *
- * See docs/extension.md for the override patterns and the stable lib
- * surface contract.
+ * Agents extend kl with ordinary Pi extensions in <agent>/extensions/*.ts
+ * (kl passes each with -e); there is no harness override.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { installDefaultHarness } from "./lib/index.ts";
+import { installCore } from "./lib/core.ts";
 
 export default function (pi: ExtensionAPI): void {
-	installDefaultHarness(pi);
+	installCore(pi);
 }
