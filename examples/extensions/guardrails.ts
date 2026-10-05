@@ -1,7 +1,7 @@
 /**
  * Command gates — configurable tool-call interception.
  *
- * Reads ~/.kl/guardrails.yml (the kiln-lite root) and provides
+ * Example extension (not kl core). Reads ~/.kl/guardrails.yml (the kl root) and provides
  * a tool_call handler that blocks or prompts for confirmation on matching
  * commands.
  *
@@ -26,6 +26,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { execFile } from "node:child_process";
 import yaml from "js-yaml";
 
@@ -271,4 +272,27 @@ export async function applyCommandGates(
 	}
 
 	return undefined;
+}
+
+/**
+ * Standalone Pi extension: load ~/.kl/guardrails.yml (or $KL_ROOT/guardrails.yml)
+ * at session start and gate matching tool calls. Not part of kl core; add it to
+ * an agent with `cp` into <agent>/extensions/ (kl passes each file with -e), or
+ * `pi -e examples/extensions/guardrails.ts`.
+ */
+export default function guardrails(pi: import("@earendil-works/pi-coding-agent").ExtensionAPI): void {
+	let gates: CompiledGate[] = [];
+	pi.on("session_start", async (_event, ctx) => {
+		const root = process.env.KL_ROOT?.trim() || join(homedir(), ".kl");
+		gates = loadCommandGates(root, (msg) => {
+			if (ctx.hasUI) ctx.ui.notify(msg, "warning");
+			else console.warn(msg);
+		});
+	});
+	pi.on("tool_call", async (event, ctx) => {
+		if (gates.length === 0) return;
+		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx, {
+			agentId: process.env.AGENT_ID ?? "agent",
+		});
+	});
 }

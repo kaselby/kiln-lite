@@ -3,7 +3,7 @@
  *
  * Everything a kl agent needs: config, session id + env, prompt composition
  *, timestamps, messaging (daemon, inbox, message tool), /spawn,
- * plan tool, command gates, and the lifecycle (cleanup turn, /exit, /fq,
+ * the subagent and schedule tools, and the lifecycle (cleanup turn, /exit, /fq,
  * exit_session, in-session reset; ../lifecycle.ts).
  *
  * There is no persistence code: a "persistent" agent is one whose
@@ -16,7 +16,7 @@ import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { resolveAgentHomeDetailed, loadConfig, resolveKlRoot } from "../config.ts";
+import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
 import {
 	applyPrompt,
@@ -27,11 +27,9 @@ import {
 } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
-import { buildPlanToolKit } from "../plan-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
-import { loadCommandGates, applyCommandGates, type CompiledGate } from "../gates.ts";
 import { readMeta, writeMeta, type SnapshotMeta } from "../snapshot.ts";
 import { installLifecycle } from "../lifecycle.ts";
 import type { SessionState } from "../types.ts";
@@ -52,18 +50,12 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	let watcher: InboxWatcher | null = null;
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
-	let gates: CompiledGate[] = [];
 	let originReminderSent = false;
 	const timestamps = createTimestampInjector();
 	let periodicTime: PeriodicTimestamp | null = null;
 
 	// Tools register at load time; their closures read live state lazily.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
-	const planKit = buildPlanToolKit({
-		getAgentHome: () => state?.agentHome ?? null,
-		getAgentId: () => state?.agentId ?? null,
-	});
-	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
 	const lifecycle = installLifecycle(pi);
 
@@ -113,7 +105,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			config,
 			env,
 			sessionOrigin,
-			vars: { agent_id: agentId, agent_home: agentHome },
 		};
 		updateSnapshotMeta(state, ctx, warn);
 		lifecycle.start(state, warn);
@@ -160,13 +151,9 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn, transcriptEntries });
 
 		sessionState = createSessionStateHook({
-			getDaemon: () => daemon,
-			getAgentId: () => state?.agentId ?? null,
-			getWatcher: () => watcher,
+			getUnread: () => watcher?.unreadCount() ?? null,
 			interval: config.session_state_interval,
 		});
-
-		gates = loadCommandGates(resolveKlRoot(), warn);
 
 		if (ctx.hasUI) ctx.ui.setStatus("kiln-lite", `online as ${agentId}`);
 	});
@@ -217,24 +204,16 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		};
 	});
 
-	pi.on("tool_call", async (event, ctx) => {
-		if (gates.length === 0) return;
-		return applyCommandGates(gates, event.toolName, event.input as Record<string, unknown>, ctx, {
-			agentId: state?.agentId ?? "agent",
-		});
-	});
-
 	pi.on("tool_result", async (event, ctx) => {
 		if (!watcher) return;
 		if (event.toolName === "read" && !event.isError) {
 			const filePath = typeof event.input.path === "string" ? event.input.path : "";
 			if (filePath) watcher.handleReadOfPath(filePath);
 		}
-		const stateBlock = sessionState ? await sessionState.maybeBuildSuffix(ctx) : "";
-		const planSuffix = planKit.maybeSuffix();
+		const stateBlock = sessionState ? sessionState.maybeBuildSuffix(ctx) : "";
 		const inboxSuffix = watcher.midTurnSuffix();
 		const timeSuffix = periodicTime?.maybeSuffix() ?? "";
-		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix, timeSuffix]);
+		const suffix = composeToolResultSuffix([stateBlock, inboxSuffix, timeSuffix]);
 		if (suffix === null) return;
 		return { content: appendTextToContent(event.content, suffix), details: event.details, isError: event.isError };
 	});
@@ -267,7 +246,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			}
 			daemon = null;
 		}
-		gates = [];
 		lifecycle.stop();
 		state = null;
 		promptParts = null;

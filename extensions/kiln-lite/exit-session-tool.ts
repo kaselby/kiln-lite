@@ -106,38 +106,31 @@ export function buildExitSessionTool(deps: ExitSessionToolDeps): ToolDefinition<
 				});
 			}
 
-			if (params.skip_cleanup) {
-				console.log(`kiln-lite: exit_session (skip_cleanup, continue=${willContinue})`);
-				dispatcher.skip(ctx);
-				return {
-					content: [
-						{
-							type: "text",
-							text: willContinue
-								? "Context reset armed (cleanup skipped). End your response now; the reset happens when this turn settles."
-								: "Session exiting immediately (cleanup skipped). STOP — do not take any further action.",
-						},
-					],
-					details: {},
-				};
-			}
+			const runsCleanup = !params.skip_cleanup && dispatcher.hasPrompt();
+			const note = `kiln-lite: exit_session (${runsCleanup ? "cleanup turn" : "no cleanup turn"}, continue=${willContinue})`;
+			// console output garbles the TUI; notify when there is one.
+			if (ctx.hasUI) ctx.ui.notify(note, "info");
+			else console.log(note);
 
-			console.log(`kiln-lite: exit_session (cleanup, continue=${willContinue})`);
-			dispatcher.dispatch(ctx);
-			const what = willContinue ? "Context reset" : "Session exit";
-			return {
-				content: [
-					{
-						type: "text",
-						text:
-							`${what} initiated. STOP — do not take any further action in this turn. End your response now. ` +
-							"If this agent has a cleanup prompt it will arrive as the next message.",
-					},
-				],
-				details: {},
-			};
+			if (runsCleanup) dispatcher.dispatch(ctx);
+			else dispatcher.skip(ctx);
+			return { content: [{ type: "text", text: exitSessionResultText(willContinue, runsCleanup) }], details: {} };
 		},
 	};
+}
+
+/** What the model is told after exit_session. Pure, for tests. */
+export function exitSessionResultText(willContinue: boolean, runsCleanup: boolean): string {
+	if (runsCleanup) {
+		const what = willContinue ? "Context reset" : "Session exit";
+		return (
+			`${what} initiated. Your cleanup prompt arrives as the next message: do what it asks, ` +
+			"then end your response. Take no other action in this turn."
+		);
+	}
+	return willContinue
+		? "Context reset armed (no cleanup turn). End your response now; the reset happens when this turn settles."
+		: "Session exiting now (no cleanup turn). STOP: do not take any further action.";
 }
 
 /**

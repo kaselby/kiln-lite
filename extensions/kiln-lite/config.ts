@@ -13,7 +13,7 @@
  *
  * Minimal schema: name, description, model, thinking, system_prompt,
  * sections, project_context, timestamps. A few more keys are recognized for
- * modules outside the core slice (cleanup, inbox_dir, sessions_dir,
+ * modules outside the core slice (cleanup, inbox_dir,
  * session_state_interval); anything else warns and is ignored.
  */
 
@@ -57,7 +57,6 @@ const KNOWN_KEYS = new Set([
 	"timestamps",
 	"cleanup",
 	"inbox_dir",
-	"sessions_dir",
 	"session_state_interval",
 ]);
 
@@ -95,7 +94,6 @@ export function defaultConfig(agentHome: string): AgentConfig {
 		timestamps: { ...DEFAULT_TIMESTAMPS },
 		cleanup: "",
 		inbox_dir: "inbox",
-		sessions_dir: "sessions",
 		session_state_interval: 15,
 	};
 }
@@ -213,7 +211,7 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 		const c = parsePromptSource(obj.cleanup, `${label} cleanup`, warn);
 		if (c !== undefined) config.cleanup = c;
 	}
-	for (const key of ["inbox_dir", "sessions_dir"] as const) {
+	for (const key of ["inbox_dir"] as const) {
 		if (!has(key)) continue;
 		const v = str(obj[key]);
 		if (v) config[key] = v;

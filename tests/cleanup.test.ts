@@ -28,7 +28,6 @@ function makeState(home: string, cleanup: PromptSource): SessionState {
 			cleanup,
 			tools_dir: "tools",
 			inbox_dir: "inbox",
-			sessions_dir: "sessions",
 			skills_dirs: ["active"],
 			session_state_interval: 15,
 		},
@@ -37,20 +36,16 @@ function makeState(home: string, cleanup: PromptSource): SessionState {
 		systemPromptBase: null,
 		cachedSystemPrompt: null,
 		snapshotWritten: false,
-		vars: {
-			agent_id: "scout-test-agent",
-			session_uuid: "session-uuid",
-		},
 	};
 }
 
-test("cleanup dispatcher reads a file-backed prompt and expands placeholders", () => {
+test("cleanup dispatcher reads a file-backed prompt verbatim, minus HTML comments", () => {
 	const home = makeHome();
 	try {
 		mkdirSync(join(home, "prompts"));
 		writeFileSync(
 			join(home, "prompts", "cleanup.md"),
-			"Wrap {agent_id}; write {summary_path}.",
+			"<!-- authoring note -->\nWrap {agent_id}; write {summary_path}.",
 		);
 		const sent: Array<{ prompt: string; options: unknown }> = [];
 		const pi = {
@@ -72,7 +67,9 @@ test("cleanup dispatcher reads a file-backed prompt and expands placeholders", (
 		assert.equal(shutdowns, 0);
 		assert.equal(sent.length, 1);
 		assert.deepEqual(sent[0].options, { deliverAs: "followUp" });
-		assert.match(sent[0].prompt, /Wrap scout-test-agent; write .*scout-test-agent\.md\./);
+		assert.match(sent[0].prompt, /^Wrap \{agent_id\}; write \{summary_path\}\./);
+		assert.doesNotMatch(sent[0].prompt, /authoring note/);
+		assert.equal(dispatcher.hasPrompt(), true);
 		assert.match(sent[0].prompt, /<!-- kiln-lite:cleanup:/);
 		assert.deepEqual(warnings, []);
 	} finally {
@@ -123,7 +120,25 @@ test("cleanup dispatcher retains inline prompt compatibility", () => {
 
 		dispatcher.dispatch(ctx);
 
-		assert.match(prompt, /^Inline scout-test-agent/);
+		assert.match(prompt, /^Inline \{agent_id\}/);
+	} finally {
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("a cleanup prompt that is only comments counts as no prompt: plain exit", () => {
+	const home = makeHome();
+	try {
+		writeFileSync(join(home, "c.md"), "<!-- just a note\nspanning lines -->\n\n");
+		let sends = 0;
+		let shutdowns = 0;
+		const pi = { sendUserMessage: () => sends++ } as unknown as ExtensionAPI;
+		const ctx = { shutdown: () => shutdowns++ } as unknown as ExtensionContext;
+		const dispatcher = createCleanupDispatcher(pi, makeState(home, { path: "c.md" }), () => {});
+		assert.equal(dispatcher.hasPrompt(), false);
+		dispatcher.dispatch(ctx);
+		assert.equal(sends, 0);
+		assert.equal(shutdowns, 1);
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}

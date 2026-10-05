@@ -68,6 +68,7 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 	// the per-session dispatcher.
 	const facade: CleanupDispatcher = {
 		inProgress: () => dispatcher?.inProgress() ?? false,
+		hasPrompt: () => dispatcher?.hasPrompt() ?? false,
 		dispatch: (ctx) => (dispatcher ? dispatcher.dispatch(ctx) : finish(ctx)),
 		forceExit: (ctx) => {
 			armed = null;

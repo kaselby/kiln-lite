@@ -18,7 +18,7 @@
  *
  * Flow (when the configured cleanup source resolves to non-empty text):
  *   1. Resolve inline text or read the configured file path
- *   2. Expand {key} placeholders (state.vars + cleanup-specific vars)
+ *   2. Strip HTML comments (authoring notes, like SYSTEM.md's)
  *   3. Embed a unique sentinel in the prompt (so we can identify completion)
  *   4. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
  *   5. Core's agent_end handler watches for the sentinel in agent_end messages;
@@ -31,18 +31,16 @@
  * force-exits — same effect as /fq.
  */
 
-import { mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import type { SessionState } from "./types.ts";
-import { expandPlaceholders } from "./placeholders.ts";
 import { resolvePromptSource } from "./prompt-source.ts";
 
 export interface CleanupDispatcher {
 	/** True if a cleanup turn is currently in flight. */
 	inProgress(): boolean;
+	/** True if the agent configures a non-empty cleanup prompt (so dispatch runs a turn). */
+	hasPrompt(): boolean;
 	/** Dispatch a cleanup turn (or exit immediately if cleanup is empty/unset). */
 	dispatch(ctx: ExtensionContext): void;
 	/** Bypass any in-flight cleanup and shut down immediately. */
@@ -57,40 +55,15 @@ export interface CleanupDispatcher {
 	handleAgentEnd(ctx: ExtensionContext, messages: unknown[]): boolean;
 }
 
-function fmtDate(d: Date): string {
-	const y = d.getFullYear();
-	const m = String(d.getMonth() + 1).padStart(2, "0");
-	const day = String(d.getDate()).padStart(2, "0");
-	return `${y}-${m}-${day}`;
+/** Drop `<!-- ... -->` authoring comments; the prompt goes to the model as a user turn. */
+export function stripHtmlComments(text: string): string {
+	return text.replace(/<!--[\s\S]*?-->/g, "").trim();
 }
 
-
-
-function summaryPath(state: SessionState): string {
-	const today = fmtDate(new Date());
-	return join(state.agentHome, state.config.sessions_dir, `${today}-${state.agentId}.md`);
-}
-
-function ensureSummaryDir(state: SessionState, warn: (msg: string) => void): void {
-	const dir = dirname(summaryPath(state));
-	try {
-		mkdirSync(dir, { recursive: true });
-	} catch (err) {
-		warn(`kiln-lite: failed to create sessions dir ${dir}: ${(err as Error).message}`);
-	}
-}
-
-function buildCleanupPrompt(state: SessionState, body: string, sentinel: string): string {
-	// Merge state.vars (base + harness-provided) with cleanup-specific vars.
-	const vars: Record<string, string> = {
-		...state.vars,
-		today: fmtDate(new Date()),
-		summary_path: summaryPath(state),
-	};
-	const expanded = expandPlaceholders(body, vars);
-	// HTML comment keeps the sentinel visible in message content (for our scan) but
-	// unobtrusive for the agent reading the prompt.
-	return `${expanded}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;
+export function buildCleanupPrompt(body: string, sentinel: string): string {
+	// The sentinel rides in an HTML comment: visible in message content (for
+	// our scan), unobtrusive for the agent. Added after stripping.
+	return `${stripHtmlComments(body)}\n\n<!-- kiln-lite:cleanup:${sentinel} -->`;
 }
 
 /**
@@ -107,14 +80,12 @@ export function createCleanupDispatcher(
 ): CleanupDispatcher {
 	let pendingSentinel: string | null = null;
 
+	const resolveBody = (w: (msg: string) => void) =>
+		resolvePromptSource(state.config.cleanup, state.agentHome, "cleanup prompt", w);
+
 	function dispatch(ctx: ExtensionContext): void {
-		const body = resolvePromptSource(
-			state.config.cleanup,
-			state.agentHome,
-			"cleanup prompt",
-			warn,
-		);
-		if (body === null || !body.trim()) {
+		const body = resolveBody(warn);
+		if (body === null || !stripHtmlComments(body)) {
 			finish(ctx);
 			return;
 		}
@@ -124,9 +95,7 @@ export function createCleanupDispatcher(
 		}
 		const sentinel = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 		pendingSentinel = sentinel;
-		ensureSummaryDir(state, warn);
-
-		const prompt = buildCleanupPrompt(state, body, sentinel);
+		const prompt = buildCleanupPrompt(body, sentinel);
 		try {
 			pi.sendUserMessage(prompt, { deliverAs: "followUp" });
 		} catch (err) {
@@ -157,6 +126,10 @@ export function createCleanupDispatcher(
 
 	return {
 		inProgress: () => pendingSentinel !== null,
+		hasPrompt: () => {
+			const body = resolveBody(() => {});
+			return body !== null && stripHtmlComments(body) !== "";
+		},
 		dispatch,
 		forceExit,
 		skip,

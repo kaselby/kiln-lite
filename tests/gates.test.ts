@@ -10,7 +10,7 @@ import {
 	DEFAULT_CONFIRM_TIMEOUT_MS,
 	type CompiledGate,
 	type GateNotifyInfo,
-} from "../extensions/kiln-lite/gates.ts";
+} from "../examples/extensions/guardrails.ts";
 
 // --- helpers ---------------------------------------------------------------
 

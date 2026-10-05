@@ -128,7 +128,6 @@ function lifecycleState(home: string, cleanup: PromptSource): SessionState {
 		sessionUuid: "uuid",
 		config: { ...defaultConfig(home), name: "scout", cleanup },
 		env: {},
-		vars: { agent_id: "scout-test-agent", agent_home: home },
 	};
 }
 
@@ -224,4 +223,14 @@ test("lifecycle: /fq during a continue's cleanup turn shuts down and drops the r
 	assert.equal(shutdowns(), 1);
 	assert.equal(await settle(f, ctx), undefined);
 	rmSync(home, { recursive: true });
+});
+
+test("exit_session result text matches whether a cleanup turn runs", async () => {
+	const { exitSessionResultText } = await import("../extensions/kiln-lite/exit-session-tool.ts");
+	assert.match(exitSessionResultText(false, false), /^Session exiting now \(no cleanup turn\)/);
+	assert.match(exitSessionResultText(true, false), /^Context reset armed \(no cleanup turn\)/);
+	assert.match(exitSessionResultText(false, true), /^Session exit initiated\. Your cleanup prompt arrives/);
+	assert.match(exitSessionResultText(true, true), /^Context reset initiated/);
+	// No "if this agent has a cleanup prompt" hedging in any variant.
+	for (const c of [true, false]) for (const r of [true, false]) assert.doesNotMatch(exitSessionResultText(c, r), /If this agent/);
 });

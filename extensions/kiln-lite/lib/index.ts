@@ -24,16 +24,7 @@ export {
 export { startInboxWatcher, type InboxWatcher, type InboxWatcherOptions } from "../inbox.ts";
 export { buildMessageTool } from "../message-tool.ts";
 export { registerSpawnCommand } from "../spawn.ts";
-export { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
-export {
-	loadCommandGates,
-	applyCommandGates,
-	defaultGateNotifier,
-	DEFAULT_CONFIRM_TIMEOUT_MS,
-	type CompiledGate,
-	type GateNotifier,
-	type GateNotifyInfo,
-} from "../gates.ts";
+export { createSessionStateHook, buildSessionStateLine, type SessionStateHook } from "../session-state.ts";
 export { readMeta, writeMeta, findAgentIdForUuid, uniquifyAgentId, snapshotDir, snapshotsRoot, metaPath, type SnapshotMeta } from "../snapshot.ts";
 export type { AgentConfig, SectionEntry, TimestampConfig, PromptFileSource, PromptSource, SessionState } from "../types.ts";
 export { DaemonClient } from "../../../src/client/index.ts";
