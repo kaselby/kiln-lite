@@ -132,6 +132,10 @@ export interface WakeOptions {
 	log?: (msg: string) => void;
 }
 
+export function neverStarted(entry: RegistryEntry): string {
+	return `${entry.name} never started a conversation; nothing to resume`;
+}
+
 export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 	const root = opts.root ?? klRoot();
 	const log = opts.log ?? (() => {});
@@ -139,6 +143,9 @@ export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 	if (!entry) throw new Error(`no registry entry for ${uuid}`);
 	const already = liveLease(uuid, root);
 	if (already) return { name: already.name, started: false, lease: already };
+	// Pi writes the transcript on the first message; no file = nothing to resume.
+	// (pi --session on a missing path would start a NEW session there.)
+	if (!existsSync(entry.transcript)) throw new Error(neverStarted(entry));
 
 	const release = acquireLock(wakeLockPath(uuid, root), {
 		timeoutMs: (opts.timeoutMs ?? 20000) + 5000,
@@ -165,10 +172,7 @@ export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 }
 
 function startProcess(entry: RegistryEntry, extraArgs: string[], root: string): string {
-	if (!existsSync(entry.transcript)) {
-		// pi --session on a missing path would start a NEW session (new UUID) there.
-		throw new Error(`transcript for ${entry.name} is gone: ${entry.transcript}`);
-	}
+	if (!existsSync(entry.transcript)) throw new Error(neverStarted(entry));
 	if (!existsSync(entry.home)) throw new Error(`agent home for ${entry.name} is gone: ${entry.home}`);
 	const launchArgs: string[] = [];
 	if (entry.launch.model && !extraArgs.includes("--model")) launchArgs.push("--model", entry.launch.model);

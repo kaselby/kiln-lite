@@ -159,6 +159,11 @@ export function lastSeen(e: RegistryEntry): Date | null {
 	}
 }
 
+/** Entries worth listing: a transcript exists (a message was exchanged) or the session is live. */
+export function visibleEntries(entries: RegistryEntry[], live: { has(uuid: string): boolean }): RegistryEntry[] {
+	return entries.filter((e) => live.has(e.uuid) || lastSeen(e) !== null);
+}
+
 export function entryExists(uuid: string, root = klRoot()): boolean {
 	return existsSync(entryPath(uuid, root));
 }

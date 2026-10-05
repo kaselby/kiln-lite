@@ -9,7 +9,7 @@ import { acquireLock } from "../src/sessions/fsutil.ts";
 import { leaseIsLive, liveLease, readLease, releaseLease, selfLease, writeLease } from "../src/sessions/lease.ts";
 import { ADJECTIVES, NOUNS, drawName, nameState } from "../src/sessions/names.ts";
 import { namesLockPath } from "../src/sessions/paths.ts";
-import { bindName, formatEntry, parseEntry, readEntry, writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
+import { bindName, formatEntry, parseEntry, readEntry, visibleEntries, writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
 import { attachHint, enter } from "../src/sessions/tmux.ts";
 import { ResolveError, resolvesTo, resolveTarget, shortId } from "../src/sessions/resolve.ts";
 
@@ -247,4 +247,14 @@ test("enter: other switch-client failures still fail; outside tmux it attaches",
 	assert.equal(enter("x", { inTmux: false, run: (a, i) => (calls.push([a, i]), { status: 0, stderr: "" }) }), 0);
 	assert.deepEqual(calls, [[["attach-session", "-t", "=x"], true]]);
 	assert.equal(attachHint("x").startsWith("tmux "), true);
+});
+
+test("visibleEntries: hides never-started (no transcript) entries unless live", () => {
+	const root = mkdtempSync(join(tmpdir(), "kl-vis-"));
+	const started = entry(U1, "rev-a", "2026-10-01T00:00:00Z", { transcript: join(root, "a.jsonl") });
+	writeFileSync(started.transcript, "{}\n");
+	const never = entry(U2, "rev-b", "2026-10-01T00:00:00Z", { transcript: join(root, "b.jsonl") });
+	const neverLive = entry(U3, "rev-c", "2026-10-01T00:00:00Z", { transcript: join(root, "c.jsonl") });
+	const shown = visibleEntries([started, never, neverLive], new Set([U3]));
+	assert.deepEqual(shown.map((e) => e.name), ["rev-a", "rev-c"]);
 });

@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { launchNew, wake } from "./launch.ts";
 import { liveLeases } from "./lease.ts";
 import { inboxDir, klRoot, UUID_RE } from "./paths.ts";
-import { lastSeen, listEntries, readEntry, type RegistryEntry } from "./registry.ts";
+import { lastSeen, listEntries, visibleEntries, readEntry, type RegistryEntry } from "./registry.ts";
 import { knownUuids, resolveTarget, ResolveError, shortId } from "./resolve.ts";
 import { enter } from "./tmux.ts";
 
@@ -146,18 +146,23 @@ function cmdResume(verb: string, args: string[]): void {
 
 function cmdSessions(args: string[]): void {
 	let limit = 20;
+	let showAll = false;
 	for (let i = 0; i < args.length; i++) {
-		if (args[i] === "--all") limit = Infinity;
+		if (args[i] === "--all") (limit = Infinity), (showAll = true);
 		else if (args[i] === "-n") limit = Number(args[++i]) || limit;
 		else die(`sessions: unknown argument '${args[i]}'`);
 	}
-	const entries = listEntries();
+	const live = liveLeases();
+	// No transcript = never exchanged a message: hidden unless live or --all.
+	const listed = listEntries();
+	const entries = showAll ? listed : visibleEntries(listed, live);
+	const hidden = listed.length - entries.length;
 	if (entries.length === 0) {
-		console.log(`(no sessions in ${join(klRoot(), "run", "sessions")})`);
+		console.log(hidden ? `(${hidden} never started a conversation; kl sessions --all)` : `(no sessions in ${join(klRoot(), "run", "sessions")})`);
 		return;
 	}
-	const live = liveLeases();
-	const all = [...new Set([...entries.map((e) => e.uuid), ...live.keys()])];
+	// Short ids stay unique against hidden entries too (resolve.ts sees them).
+	const all = [...new Set([...listed.map((e) => e.uuid), ...live.keys()])];
 	const ids = new Map(entries.map((e) => [e.uuid, shortId(e.uuid, all)]));
 	const idWidth = Math.max(8, ...[...ids.values()].map((id) => id.length));
 	const seen = new Map<string, Date | null>(entries.map((e) => [e.uuid, lastSeen(e)]));
@@ -193,6 +198,7 @@ function cmdSessions(args: string[]): void {
 	const shown = roots.slice(0, limit);
 	for (const r of shown) print(r, 0);
 	if (shown.length < roots.length) console.log(`(${roots.length - shown.length} older; kl sessions --all)`);
+	if (hidden) console.log(`(${hidden} never started a conversation; kl sessions --all)`);
 	console.log("* = running. Reach one by name, or name@<id> when a name was reused.");
 }
 

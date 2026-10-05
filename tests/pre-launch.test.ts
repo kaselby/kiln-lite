@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -91,4 +91,15 @@ test("a failing pre-launch hook rejects a wake; pi never starts", (t) => {
 	assert.throws(() => wake(uuid, { root, timeoutMs: 300 }), /pre-launch hook rejected the launch \(exit 4\): not now/);
 	sleepMs(300);
 	assert.equal(existsSync(join(root, "pi-ran")), false);
+});
+
+test("wake on a session with no transcript: 'never started a conversation', pi never starts", (t) => {
+	const { root, home, cleanup } = setup(`touch "$AGENT_HOME/../../hook-ran"`);
+	t.after(cleanup);
+	const uuid = stoppedSession(root, home);
+	rmSync(join(root, "t.jsonl"));
+	assert.throws(() => wake(uuid, { root, timeoutMs: 300 }), /^Error: rev-calm-fox never started a conversation; nothing to resume$/);
+	sleepMs(200);
+	assert.ok(!existsSync(join(root, "hook-ran")), "no hook, no launch");
+	assert.ok(!existsSync(join(root, "pi-ran")));
 });
