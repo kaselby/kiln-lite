@@ -120,15 +120,14 @@ interface WaitInput {
 }
 
 /**
- * Poll until (a) a new inbox message from the child, (b) the child's lease
- * goes idle after we saw it busy (or its idle `since` changes), (c) its pid
- * dies. Known gap: a whole run finishing between two polls before we ever
- * see the lease leaves only (a).
+ * Poll until (a) a new inbox message from the child, (b) the child is idle
+ * after having run: we saw its lease busy, or its transcript already holds an
+ * assistant message (a fast run can start and finish between two polls, and
+ * the lease is also idle before the first run), (c) its pid dies.
  */
 async function waitForChild(w: WaitInput): Promise<string> {
 	let uuid: string | null = null;
 	let sawBusy = false;
-	let firstIdleSince: string | null = null;
 	let sawLive = false;
 	for (;;) {
 		if (w.signal?.aborted) return "stopped waiting (interrupted); it keeps running";
@@ -152,13 +151,22 @@ async function waitForChild(w: WaitInput): Promise<string> {
 				} else {
 					sawLive = true;
 					if (l.state === "busy") sawBusy = true;
-					else if (sawBusy) return "it went idle without messaging you";
-					else if (firstIdleSince === null) firstIdleSince = l.since;
-					else if (l.since !== firstIdleSince) return "it went idle without messaging you";
+					else if (sawBusy || hasRun(uuid)) return "it went idle without messaging you";
 				}
 			} else if (sawLive) return "it exited without messaging you";
 		}
 		await sleep(POLL_MS, w.signal);
+	}
+}
+
+/** The child's transcript has an assistant message (Pi writes the file from the first one on). */
+function hasRun(uuid: string): boolean {
+	const e = readEntry(uuid);
+	if (!e?.transcript) return false;
+	try {
+		return readFileSync(e.transcript, "utf8").includes('"role":"assistant"');
+	} catch {
+		return false;
 	}
 }
 
