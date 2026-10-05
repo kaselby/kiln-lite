@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadAgentConfig } from "../extensions/kiln-lite/config.ts";
+import { loadConfig } from "../extensions/kiln-lite/config.ts";
 import {
 	parsePromptSource,
 	resolvePromptSource,
@@ -76,17 +76,17 @@ test("resolvePromptSource returns null and warns for a missing file", () => {
 	assert.match(warnings[0], /cleanup prompt file not found.*missing\.md/);
 });
 
-test("loadAgentConfig accepts file-backed cleanup and keeps inline compatibility", () => {
+test("loadConfig accepts cleanup as a file or inline text", () => {
 	const fileHome = makeHome();
 	const inlineHome = makeHome();
 	try {
 		writeFileSync(join(fileHome, "agent.yml"), "name: file-agent\ncleanup:\n  path: prompts/cleanup.md\n");
 		writeFileSync(join(inlineHome, "agent.yml"), "name: inline-agent\ncleanup: raw cleanup\n");
 
-		assert.deepEqual(loadAgentConfig(fileHome, () => {}).cleanup, {
+		assert.deepEqual(loadConfig({ agentHome: fileHome, klRoot: fileHome, warn: () => {} }).cleanup, {
 			path: "prompts/cleanup.md",
 		});
-		assert.equal(loadAgentConfig(inlineHome, () => {}).cleanup, "raw cleanup");
+		assert.equal(loadConfig({ agentHome: inlineHome, klRoot: inlineHome, warn: () => {} }).cleanup, "raw cleanup");
 	} finally {
 		cleanup(fileHome);
 		cleanup(inlineHome);

@@ -401,10 +401,21 @@ cmd_doctor() {
     else
         say_fail "core extension entry missing at $REPO_ROOT/extensions/kiln-lite/index.ts"
     fi
-    if [ -d "${KL_ROOT:-$HOME/.kl}/pi" ]; then
-        say_ok "kl pi agent dir present (${KL_ROOT:-$HOME/.kl}/pi)"
+    local kl_pi_dir="${KL_ROOT:-$HOME/.kl}/pi" base_auth="$HOME/.pi/agent/auth.json"
+    if [ -d "$kl_pi_dir" ]; then
+        say_ok "kl pi dir present ($kl_pi_dir)"
+        # ensureKlPiDir only links auth.json when nothing is there. If pi
+        # wrote its own file first, kl agents silently miss your pi login.
+        if [ -L "$kl_pi_dir/auth.json" ]; then
+            say_ok "auth.json -> $(readlink "$kl_pi_dir/auth.json")"
+        elif [ -f "$kl_pi_dir/auth.json" ] && [ -e "$base_auth" ]; then
+            say_warn "$kl_pi_dir/auth.json is a regular file, not a link to $base_auth: kl agents don't use your pi login"
+            say_warn "  fix: mv $kl_pi_dir/auth.json $kl_pi_dir/auth.json.old && ln -s $base_auth $kl_pi_dir/auth.json"
+        elif [ ! -e "$kl_pi_dir/auth.json" ] && [ -e "$base_auth" ]; then
+            say_warn "$kl_pi_dir/auth.json missing (linked to $base_auth on the next kl run)"
+        fi
     else
-        say_warn "kl pi agent dir missing (created on first 'kl run')"
+        say_warn "kl pi dir missing (created on first 'kl run')"
     fi
     echo
 
@@ -415,7 +426,7 @@ cmd_doctor() {
     else
         say_fail "node not on PATH"
     fi
-    local doc_pi
+    local doc_pi=""
     if doc_pi="$(resolve_pi_bin 2>/dev/null)"; then
         say_ok "pi: $doc_pi ($("$doc_pi" --version 2>/dev/null | head -n 1))"
     else
@@ -433,23 +444,19 @@ cmd_doctor() {
     fi
     echo
 
-    # 3. pi extension registration
-    # Expected: NOT registered globally. kl loads the extension via -e <path>;
-    # bare `pi` is intentionally extension-free (so e.g. quick one-off pi
-    # runs don't spin up daemon/tmux plumbing). If kiln-lite shows up in
-    # `pi list`, it's a leftover from an older install.sh that did
-    # `pi install .` — the current install.sh removes it.
-    echo "[pi registration]"
-    if command -v pi >/dev/null 2>&1; then
+    # 3. Pi packages in the kl pi dir, listed by the pi kl runs. kl loads its
+    # own extension with -e, so a kiln-lite package there would load it twice.
+    echo "[pi packages ($kl_pi_dir)]"
+    if [ -n "$doc_pi" ] && [ -d "$kl_pi_dir" ]; then
         local pi_out
-        if pi_out="$(pi list 2>&1)"; then
+        if pi_out="$(PI_CODING_AGENT_DIR="$kl_pi_dir" "$doc_pi" list 2>&1)"; then
             if echo "$pi_out" | grep -q "kiln-lite"; then
-                say_warn "kiln-lite is registered globally with pi — this is legacy state."
-                say_warn "bare 'pi' will now auto-load kiln-lite (probably not what you want)."
-                say_warn "run: pi remove kiln-lite   (or rerun install.sh to clean up)"
+                say_warn "kiln-lite is installed as a pi package in $kl_pi_dir: it loads twice (kl passes it with -e)"
+                say_warn "  fix: PI_CODING_AGENT_DIR=$kl_pi_dir $doc_pi remove <the kiln-lite source shown by pi list>"
             else
-                say_ok "kiln-lite not in 'pi list' — kl loads the extension directly via -e"
+                say_ok "no kiln-lite package (kl loads it with -e)"
             fi
+            echo "$pi_out" | sed 's/^/       /'
         else
             say_warn "pi list failed: $pi_out"
         fi

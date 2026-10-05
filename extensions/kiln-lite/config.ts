@@ -149,11 +149,6 @@ export function loadConfig(opts: LoadConfigOptions): AgentConfig {
 	return config;
 }
 
-/** Back-compat shim: load with the default kl root. */
-export function loadAgentConfig(agentHome: string, warn: (msg: string) => void): AgentConfig {
-	return loadConfig({ agentHome, warn });
-}
-
 interface LayerOptions {
 	baseDir: string;
 	label: string;

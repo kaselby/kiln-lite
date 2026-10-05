@@ -58,7 +58,8 @@ Every kl session runs with `PI_CODING_AGENT_DIR=~/.kl/pi`, not
 
 Log in with base `pi` before the first `kl run`. If Pi creates its own
 `~/.kl/pi/auth.json` first (because `~/.pi/agent/auth.json` didn't exist yet),
-replace it with the symlink by hand.
+kl never replaces it; `kl doctor` warns and prints the commands to swap in
+the symlink.
 
 Base pi and kl share `auth.json` but not its lock. If both refresh a token in
 the same second, one refresh wins.

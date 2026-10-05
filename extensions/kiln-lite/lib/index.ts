@@ -6,7 +6,7 @@
 export { installCore, type CoreHandle } from "./core.ts";
 export { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
 
-export { resolveAgentHomeDetailed, resolveKlRoot, loadConfig, loadAgentConfig } from "../config.ts";
+export { resolveAgentHomeDetailed, resolveKlRoot, loadConfig } from "../config.ts";
 export { buildEnv, applyEnv } from "../env.ts";
 export {
 	applyPrompt,

@@ -1,12 +1,9 @@
 #!/usr/bin/env -S npx tsx
 /**
- * kl-msg — thin CLI wrapper around DaemonClient.
- *
- * Invoked from the bash `message` script (and usable standalone) for
- * daemon-bound operations: send DMs, publish/subscribe to channels, query
- * subscriptions and sessions. File-based operations (read, list, clear,
- * stats) stay in the bash script — those paths read files directly and
- * don't need the daemon.
+ * kl-msg — thin CLI wrapper around DaemonClient, for shell scripts in a
+ * session and for the human at a terminal: send DMs, publish/subscribe to
+ * channels, query subscriptions and sessions. Agents use the `message` tool
+ * instead. Reading an inbox is `kl inbox <session>`, not kl-msg.
  *
  * Subcommands:
  *   kl-msg send <to> <summary> [--body-stdin | --body <text>] [--priority normal|high]

@@ -53,7 +53,9 @@ kl migrate [--dry-run] [<agent-home>...]
 - **inbox** shows a session's inbox directory and messages; `new` = unread.
 - **agents** lists installed agents with their session count and description.
 - **init** scaffolds an agent; see [agents.md](agents.md).
-- **doctor** checks node, pi, tmux, kl-msg, the daemon and each agent folder.
+- **doctor** checks node, the pi kl runs, tmux, kl-msg, the daemon, the kl
+  Pi dir (is `auth.json` the link to your Pi login? which packages are
+  installed?) and each agent folder.
 
 - **install** runs `pi install` with `PI_CODING_AGENT_DIR` set to the kl Pi
   dir (`~/.kl/pi`), so the package loads for every kl agent and base `pi`

@@ -1,7 +1,7 @@
 {
   "name": "kiln-lite",
   "version": "0.4.0",
-  "description": "Kiln-style infrastructure for Pi: config-driven lifecycle plumbing, file-based messaging, and shell tool conventions.",
+  "description": "kl runs Pi sessions as named agents that can message each other: a Pi extension plus a launcher.",
   "license": "MIT",
   "private": true,
   "keywords": [
@@ -13,7 +13,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/kiln-lite/index.ts"
     ]
   },
   "scripts": {
