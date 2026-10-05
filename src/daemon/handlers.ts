@@ -295,7 +295,9 @@ export async function handleDeliverSelf(
     writeInboxMessage({
         inboxRoot: req.inbox_path,
         recipient: req.session,
-        sender: req.session,
+        sender: req.name || req.session,
+        senderSession: req.session,
+        recipientName: req.name || undefined,
         summary,
         body,
         priority,

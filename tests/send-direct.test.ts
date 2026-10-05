@@ -156,6 +156,22 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		assert.equal(files.length, 1);
 	});
 
+	it("headers carry the session name, not the uuid (uuid in from_session)", async () => {
+		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
+			agent: "rev",
+			session: UA,
+			name: "rev-calm-fox",
+			inbox_path: join(dir, "run", "inbox"),
+		});
+		assert.equal((await handleDeliverSelf(msg, daemon as never)).type, proto.ACK);
+		const files = inboxFiles(UA);
+		assert.equal(files.length, 1);
+		const text = readFileSync(join(dir, "run", "inbox", UA, files[0]), "utf8");
+		assert.match(text, /^from: rev-calm-fox$/m);
+		assert.match(text, new RegExp(`^from_session: ${UA}$`, "m"));
+		assert.match(text, /^to: rev-calm-fox$/m);
+	});
+
 	it("rejects a requester without an inbox path", async () => {
 		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
 			agent: "a",
