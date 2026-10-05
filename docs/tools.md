@@ -21,6 +21,10 @@ Every kl session has these, next to Pi's own tools:
   `watch` fires when process `pid` exits. The wake arrives as a message to
   your own inbox carrying `note`. Wakes are files under
   `~/.kl/run/schedule/<uuid>/`, each with its own small worker process.
+- **plan** `{goal, tasks, project?, worktree?}`: write your working plan
+  (each call replaces the task list). Stored at
+  `~/.kl/run/plans/<uuid>.json`; while a task is in progress, a one-line
+  `[Plan]` summary is appended to a tool result every 15 calls.
 - **exit_session** `{skip_cleanup?, continue?, handoff?, autonomous?}`:
   end the session, or reset its context and continue. See
   [agents.md](agents.md#ending-and-resetting).

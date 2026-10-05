@@ -36,8 +36,9 @@ import { registerScheduleTool } from "../schedule.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
-import { inboxDir as sessionInboxDir, inboxRoot } from "../../../src/sessions/paths.ts";
+import { inboxDir as sessionInboxDir, inboxRoot, klRoot } from "../../../src/sessions/paths.ts";
 import { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
+import { buildPlanToolKit } from "../plan-tool.ts";
 
 export interface CoreHandle {
 	getState: () => SessionState | null;
@@ -58,6 +59,11 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 	// Tools register at load time; their closures read live state lazily.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
+	const planKit = buildPlanToolKit({
+		getKlRoot: () => (state ? klRoot() : null),
+		getSessionUuid: () => state?.sessionUuid ?? null,
+	});
+	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
 	const lifecycle = installLifecycle(pi);
 	let cwd = process.cwd();
@@ -250,7 +256,8 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		const stateBlock = sessionState ? sessionState.maybeBuildSuffix(ctx) : "";
 		const inboxSuffix = watcher.midTurnSuffix();
 		const timeSuffix = periodicTime?.maybeSuffix() ?? "";
-		const suffix = composeToolResultSuffix([stateBlock, inboxSuffix, timeSuffix]);
+		const planSuffix = planKit.maybeSuffix();
+		const suffix = composeToolResultSuffix([stateBlock, planSuffix, inboxSuffix, timeSuffix]);
 		if (suffix === null) return;
 		return { content: appendTextToContent(event.content, suffix), details: event.details, isError: event.isError };
 	});
