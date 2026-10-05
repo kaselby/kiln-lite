@@ -50,7 +50,10 @@ export const ERROR = "error";
  */
 export interface Requester {
     agent: string;
+    /** Session UUID (identity). */
     session: string;
+    /** Session name (handle), for the `from:` line of messages. */
+    name?: string;
     inbox_path?: string;
 }
 

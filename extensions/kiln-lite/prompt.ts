@@ -62,6 +62,8 @@ export interface SessionInfo {
 	/** `provider/id`, or undefined if no model is selected. */
 	model?: string;
 	home: string;
+	/** This session's inbox dir (~/.kl/run/inbox/<uuid>): the one place a UUID reaches the model. */
+	inbox?: string;
 }
 
 /** Strip HTML comments (human notes) and leading blank space. */
@@ -138,6 +140,7 @@ export function renderSessionSection(info: SessionInfo): string {
 		`session: ${info.sessionId}`,
 		`model: ${info.model ?? "(none)"}`,
 		`home: ${info.home}`,
+		...(info.inbox ? [`inbox: ${info.inbox}`] : []),
 	].join("\n");
 }
 

@@ -3,13 +3,11 @@
  * kl's building blocks. Additions allowed; renames are breaking.
  */
 
-export { installCore, inferSessionUuid, type CoreHandle } from "./core.ts";
+export { installCore, type CoreHandle } from "./core.ts";
 export { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
-export { resolveAgentId, type ResolveAgentIdOptions, type ResolvedAgentId } from "./resolve-agent-id.ts";
 
 export { resolveAgentHomeDetailed, resolveKlRoot, loadConfig, loadAgentConfig } from "../config.ts";
 export { buildEnv, applyEnv } from "../env.ts";
-export { generateAgentId } from "../identity.ts";
 export {
 	applyPrompt,
 	buildCustomPrompt,

@@ -18,15 +18,15 @@
  *   kl-msg list-sessions [--agent NAME]
  *   kl-msg status
  *
- * Required env:
- *   AGENT_ID    this session's id
- *   AGENT_HOME  this session's home dir
- *   INBOX       exact per-session inbox path (preferred when set)
- *   INBOX_DIR   inbox dir name under AGENT_HOME (fallback; default: inbox)
+ * Required env (set by kl in every agent process):
+ *   SESSION_UUID  this session's Pi UUID (its identity)
+ *   AGENT_ID      this session's name (handle)
+ *   AGENT_NAME    agent name (optional; inferred from AGENT_ID)
+ * Inboxes live at $KL_ROOT/run/inbox/<uuid> (KL_ROOT defaults to ~/.kl).
  */
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { inboxRoot } from "../sessions/paths.ts";
 
 import { DaemonClient } from "./index.ts";
 
@@ -40,17 +40,15 @@ function envOrDie(name: string): string {
 }
 
 function makeClient(): DaemonClient {
-    const session = envOrDie("AGENT_ID");
-    const agent_name = process.env.AGENT_NAME ?? inferAgentName(session);
-    const agent_home = envOrDie("AGENT_HOME");
-    const inbox_path = process.env.INBOX
-        ? dirname(process.env.INBOX)
-        : join(agent_home, process.env.INBOX_DIR ?? "inbox");
+    const session = envOrDie("SESSION_UUID");
+    const name = envOrDie("AGENT_ID");
+    const agent_name = process.env.AGENT_NAME ?? inferAgentName(name);
     return new DaemonClient({
         requester: {
             agent: agent_name,
             session,
-            inbox_path,
+            name,
+            inbox_path: inboxRoot(),
         },
     });
 }
@@ -232,10 +230,8 @@ function printUsage(): void {
             "  kl-msg status",
             "",
             "Env:",
-            "  AGENT_ID    this session's id (required)",
-            "  AGENT_HOME  this session's home dir (required)",
-            "  INBOX       exact per-session inbox path; its parent is the inbox root",
-            "  INBOX_DIR   inbox dir name fallback (default: inbox)",
+            "  SESSION_UUID this session's UUID (required)",
+            "  AGENT_ID    this session's name (required)",
             "  AGENT_NAME  agent name for requester envelope",
             "              (default: first segment of AGENT_ID)",
             "",

@@ -6,8 +6,6 @@
  * commands, messaging scripts).
  */
 
-import { join } from "node:path";
-
 import type { AgentConfig } from "./types.ts";
 
 export interface EnvInputs {
@@ -15,17 +13,19 @@ export interface EnvInputs {
 	agentId: string;
 	sessionUuid: string;
 	config: AgentConfig;
+	/** ~/.kl/run/inbox/<uuid>. */
+	inboxDir: string;
 }
 
 /** Compute the kiln-lite env map for the given session. */
 export function buildEnv(inputs: EnvInputs): Record<string, string> {
-	const { agentHome, agentId, sessionUuid, config } = inputs;
+	const { agentHome, agentId, sessionUuid, config, inboxDir } = inputs;
 	return {
 		AGENT_HOME: agentHome,
 		AGENT_ID: agentId,
 		AGENT_NAME: config.name,
 		SESSION_UUID: sessionUuid,
-		INBOX: join(agentHome, config.inbox_dir, agentId),
+		KL_INBOX: inboxDir,
 	};
 }
 
