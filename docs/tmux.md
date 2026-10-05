@@ -1,7 +1,7 @@
 # Recommended tmux settings
 
 kiln-lite wraps each pi session in a tmux session (`kl` does
-`tmux new-session -d -s <agent-id>` and attaches). A few tmux defaults
+`tmux new-session -d -s <session name>` and attaches). A few tmux defaults
 are worth overriding to get a good experience — particularly so
 modifier-Enter reaches pi and so tool output is scrollable.
 

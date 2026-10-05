@@ -1,52 +1,14 @@
-# kiln-lite Reference Docs
+# kiln-lite docs
 
-Progressive-disclosure reference for kiln-lite. Start with `overview.md` for the 30-second shape; drill into a topic doc for depth.
+Start with the [README](../README.md).
 
-## Where to start
-
-- [`overview.md`](./overview.md) — **What kiln-lite is.** What it gives you, what's out of scope, how it layers around Pi, repo layout, single-paragraph lifecycle. Read this first if you've never used kiln-lite before.
-
-## Topic docs
-
-- [`home.md`](./home.md) — **Agent Home.** The `~/.kl/` layout — agent home + daemon state side-by-side, ownership tiers, the env vars exported to every subprocess.
-- [`extension.md`](./extension.md) — **Pi Extension.** How the extension wires into Pi's lifecycle (`session_start`, `before_agent_start`, `tool_result`, `agent_end`, `session_shutdown`, `resources_discover`), `agent.yml` schema, identity generation, context injection.
-- [`daemon.md`](./daemon.md) — **Daemon.** Architecture, wire protocol, state registries, lifecycle, autostart. The JSON-line Unix-socket protocol every `kl-msg` call routes through.
-- [`messaging.md`](./messaging.md) — **Messaging.** Inbox file format, direct sends, channel pub/sub, the `message` skill, delivery modes (idle vs. mid-turn), subscription persistence.
-- [`tools.md`](./tools.md) — **Shell Tools.** How `<home>/tools/` is discovered and rendered into the system prompt. YAML header format. Bundled tools reference.
-- [`skills.md`](./skills.md) — **Skills.** SKILL.md-based skill packaging. Discovery via Pi's `resources_discover`. The bundled `messaging` skill.
-- [`cli.md`](./cli.md) — **CLI.** The `kl` session launcher (tmux wrap, `--detach` for peer-spawn) and the `kl-msg` messaging CLI.
-- [`install.md`](./install.md) — **Install.** `install.sh`, `kl new`, and `bootstrap.sh` — prerequisites, ordering, idempotency, migration from legacy single-agent layouts, bundled content, uninstall.
-- [`migration-multi-agent.md`](./migration-multi-agent.md) — **Migration.** Upgrade path from the pre-multi-agent layout (`~/.kl/agent/` singular) to the current one (`~/.kl/agents/<name>/`). What `install.sh` migrates automatically, what you need to update by hand, rollback.
-- [`tmux.md`](./tmux.md) — **tmux settings.** Recommended `~/.tmux.conf` tweaks for `kl` sessions — CSI-u extended keys (required for pi modifier-Enter), mouse scrollback, buffer size.
-
-## Conventions used in these docs
-
-Each topic doc follows the same shape:
-
-```
-# Title
-One-line summary.
-
-## Overview
-Narrative-level description — read this for the shape of the thing.
-
-## Architecture
-Code layout, diagrams, actors, flows — the how.
-
-## Reference
-Tables, wire protocols, exact field lists — the what.
-
-## Examples
-Usage snippets.
-
-## Conventions
-Norms: how this is *meant* to be used.
-
-## Gotchas
-Traps and sharp edges.
-
-## Cross-references
-Related docs.
-```
-
-Progressive disclosure: stop at Overview and you understand the surface; keep going for depth. Every section can be skimmed independently.
+- [agents.md](agents.md): the agent folder, `agent.yml`, the system prompt,
+  cleanup and resets, env vars
+- [cli.md](cli.md): `kl` and `kl-msg`; session names and how they resolve
+- [tools.md](tools.md): built-in tools (`message`, `subagent`, `schedule`,
+  `exit_session`), `/exit` `/fq` `/spawn`, writing your own tools
+- [messaging.md](messaging.md): delivery, parking, inboxes, message files,
+  channels, the daemon
+- [install.md](install.md): install.sh, the kl Pi dir, the `~/.kl` layout
+- [skills.md](skills.md): skills
+- [tmux.md](tmux.md): recommended tmux settings
