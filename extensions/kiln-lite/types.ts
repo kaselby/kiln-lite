@@ -68,6 +68,8 @@ export interface AgentConfig {
 	cleanup: PromptSource;
 	/** Tool calls between `[Session state]` suffixes; 0 disables. */
 	session_state_interval: number;
+	/** Load base pi's global extensions (~/.pi/agent/extensions) into kl agents. Default true. */
+	pi_extensions: boolean;
 }
 
 /**

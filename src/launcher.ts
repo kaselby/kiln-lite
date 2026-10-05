@@ -15,7 +15,7 @@
  *   3… the pi argv (without the pi binary; user args included, in order)
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,31 +76,59 @@ function exists(p: string): boolean {
 }
 
 /**
- * The agent's own Pi extensions, in load order: `<home>/extensions/*.ts|*.js`
- * and `<home>/extensions/<sub>/index.ts|index.js`, sorted by entry name.
- * (Same shapes Pi auto-discovers in an extensions dir; kl passes each with
- * its own -e so order is deterministic and nothing else is pulled in.)
+ * Extension entry points in an extensions dir, in load order, the shapes Pi
+ * auto-discovers (package-manager.js collectAutoExtensionEntries): `*.ts|*.js`
+ * files, and per subdir its package.json `pi.extensions` list or else its
+ * index.ts|index.js; sorted by entry name. kl passes each with its own -e so
+ * order is deterministic. Not replicated: Pi's .gitignore filtering.
  */
-export function agentExtensions(agentHome: string): string[] {
-	const dir = join(agentHome, "extensions");
+export function discoverExtensions(dir: string): string[] {
 	if (!existsSync(dir)) return [];
 	const out: string[] = [];
 	const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 	for (const e of entries) {
-		if (e.name.startsWith(".")) continue;
+		if (e.name.startsWith(".") || e.name === "node_modules") continue;
 		const p = join(dir, e.name);
-		if ((e.isFile() || e.isSymbolicLink()) && /\.(ts|js)$/.test(e.name) && !e.name.endsWith(".d.ts")) {
-			out.push(p);
-		} else if (e.isDirectory()) {
-			for (const idx of ["index.ts", "index.js"]) {
-				if (existsSync(join(p, idx))) {
-					out.push(join(p, idx));
-					break;
-				}
+		let isFile = e.isFile();
+		let isDir = e.isDirectory();
+		if (e.isSymbolicLink()) {
+			try {
+				const st = statSync(p);
+				isFile = st.isFile();
+				isDir = st.isDirectory();
+			} catch {
+				continue;
 			}
 		}
+		if (isFile && /\.(ts|js)$/.test(e.name) && !e.name.endsWith(".d.ts")) out.push(p);
+		else if (isDir) out.push(...packageEntries(p));
 	}
 	return out;
+}
+
+/** A subdir's entries: package.json `pi.extensions` (existing paths), else index.ts|index.js. */
+function packageEntries(dir: string): string[] {
+	try {
+		const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))?.pi?.extensions;
+		if (Array.isArray(manifest)) {
+			const found = manifest.filter((x): x is string => typeof x === "string").map((x) => resolve(dir, x)).filter((x) => existsSync(x));
+			if (found.length > 0) return found;
+		}
+	} catch {
+		// no package.json, or not JSON: fall through to index
+	}
+	for (const idx of ["index.ts", "index.js"]) if (existsSync(join(dir, idx))) return [join(dir, idx)];
+	return [];
+}
+
+/** The agent's own Pi extensions: `<home>/extensions`. */
+export function agentExtensions(agentHome: string): string[] {
+	return discoverExtensions(join(agentHome, "extensions"));
+}
+
+/** Base pi's global extensions dir (~/.pi/agent/extensions), loaded into kl agents unless `pi_extensions: false`. */
+export function basePiExtensionsDir(basePiDir = join(homedir(), ".pi", "agent")): string {
+	return join(basePiDir, "extensions");
 }
 
 function hasFlag(args: string[], ...flags: string[]): boolean {
@@ -133,16 +161,20 @@ export interface BuildPiArgsOptions {
 	resume?: boolean;
 	coreEntry?: string;
 	coreSkills?: string;
+	/** Base pi agent dir, for its extensions/ (default ~/.pi/agent). */
+	basePiDir?: string;
 }
 
 /**
- * pi argv: core -e (the only kl entry), agent extensions, --skill
+ * pi argv: core -e (the only kl entry), base pi's global extensions
+ * (unless pi_extensions: false), agent extensions, --skill
  * (kl's bundled skills, then the agent's),
  * model/thinking defaults the user didn't override, -a, then user args.
  */
 export function buildPiArgs(opts: BuildPiArgsOptions): string[] {
 	const { agentHome, config, userArgs } = opts;
 	const args: string[] = ["-e", opts.coreEntry ?? CORE_ENTRY];
+	if (config.pi_extensions) for (const ext of discoverExtensions(basePiExtensionsDir(opts.basePiDir))) args.push("-e", ext);
 	for (const ext of agentExtensions(agentHome)) args.push("-e", ext);
 	if (existsSync(opts.coreSkills ?? CORE_SKILLS)) args.push("--skill", opts.coreSkills ?? CORE_SKILLS);
 	const skills = join(agentHome, "skills");
@@ -189,7 +221,7 @@ export function plan(opts: { agentHome: string; userArgs: string[]; resume?: boo
 	return {
 		piDir: dir,
 		agentName: config.name,
-		args: buildPiArgs({ agentHome: opts.agentHome, config, userArgs: opts.userArgs, resume: opts.resume }),
+		args: buildPiArgs({ agentHome: opts.agentHome, config, userArgs: opts.userArgs, resume: opts.resume, basePiDir: opts.basePiDir }),
 		warnings,
 		created,
 	};
@@ -197,6 +229,13 @@ export function plan(opts: { agentHome: string; userArgs: string[]; resume?: boo
 
 function main(argv: string[]): number {
 	const [cmd, ...rest] = argv;
+	if (cmd === "pi-dir") {
+		// `kl install`: the kl pi dir, created (with its defaults) if needed.
+		const { dir, created } = ensureKlPiDir(resolveKlRoot());
+		for (const c of created) process.stderr.write(`kl: created ${c}\n`);
+		process.stdout.write(`${dir}\n`);
+		return 0;
+	}
 	if (cmd !== "plan") {
 		process.stderr.write("usage: launcher.ts plan --home <agent home> [--resume] [--] [pi args...]\n");
 		return 2;

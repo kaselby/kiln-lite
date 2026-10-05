@@ -43,6 +43,12 @@
 #                           (`kl new` is an alias.)
 #   kl doctor [<name>]      Diagnostics: system checks, then every installed
 #                           agent (or just <name>).
+#   kl install <pkg> [flags]
+#                           pi install into the kl-wide pi dir (<kl root>/pi):
+#                           the package loads for every kl agent.
+#   kl migrate [--dry-run] [<agent-home>...]
+#                           Convert old agent homes in place (agent.yml.bak
+#                           kept). Default: every agent in $KL_AGENTS_DIR.
 #   kl -h | --help          Show this help.
 #
 # Env:
@@ -239,6 +245,15 @@ cmd_run() {
     agent_home="$(resolve_agent_home "$explicit_name")"
     # The pre-launch hook (<home>/hooks/pre-launch) runs in launchNew.
     sessions_cli run --home "$agent_home" "$@"
+}
+
+# `kl install <pkg> [pi install flags]`: pi install into the kl-wide pi dir
+# (<kl root>/pi), so the package loads for every kl agent and not base pi.
+cmd_install() {
+    [ $# -gt 0 ] || die "install needs a package (e.g. kl install npm:@scope/pkg)"
+    local pi_dir
+    pi_dir="$("$(tsx_path)" "$REPO_ROOT/src/launcher.ts" pi-dir)" || exit 1
+    PI_CODING_AGENT_DIR="$pi_dir" exec "$(resolve_pi_bin)" install "$@"
 }
 
 cmd_init() {
@@ -540,6 +555,8 @@ main() {
         agents) shift; cmd_agents "$@" ;;
         init|new) shift; cmd_init "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
+        install) shift; cmd_install "$@" ;;
+        migrate) shift; exec "$(tsx_path)" "$REPO_ROOT/src/migrate.ts" "$@" ;;
         -h|--help|help) usage ;;
         # Bare `kl` (optionally with flags) is an alias for `kl run` against
         # the default agent. Empty or flag-leading invocations route to

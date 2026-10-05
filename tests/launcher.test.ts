@@ -21,6 +21,9 @@ function tmp(prefix: string): string {
 	return mkdtempSync(join(tmpdir(), prefix));
 }
 
+/** A base pi dir with no extensions/, so buildPiArgs never reads the real ~/.pi/agent. */
+const NO_PI = tmp("kl-nopi-");
+
 // --- ensureKlPiDir ---
 
 test("ensureKlPiDir: symlinks existing shared files, writes settings, never copies", () => {
@@ -85,7 +88,7 @@ test("userSetsThinking: --thinking, --model id:level, --model=id:level", () => {
 test("buildPiArgs: compact agent → core only, model/thinking defaults, -a, user args last", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "openai-codex/gpt-5.6-luna", thinking: "low" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: ["-p", "hi"] }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["-p", "hi"] }), [
 		"-e",
 		CORE_ENTRY,
 		"--skill",
@@ -106,7 +109,7 @@ test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions
 	mkdirSync(join(home, "skills"));
 	writeFileSync(join(home, "extensions", "mine.ts"), "");
 	const config = { ...defaultConfig(home), cleanup: "wrap up" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: [] }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: [] }), [
 		"-e",
 		CORE_ENTRY,
 		"-e",
@@ -122,21 +125,21 @@ test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions
 test("buildPiArgs: user --model wins; thinking still defaulted unless the user's model has a level", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/default", thinking: "low" };
-	let args = buildPiArgs({ agentHome: home, config, userArgs: ["--model", "y/mine"] });
+	let args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--model", "y/mine"] });
 	assert.ok(!args.includes("x/default"));
 	assert.deepEqual(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2), ["--thinking", "low"]);
 
-	args = buildPiArgs({ agentHome: home, config, userArgs: ["--model=y/mine:high"] });
+	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--model=y/mine:high"] });
 	assert.ok(!args.includes("--thinking"));
 
-	args = buildPiArgs({ agentHome: home, config, userArgs: ["--thinking", "max"] });
+	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--thinking", "max"] });
 	assert.equal(args.filter((a) => a === "--thinking").length, 1);
 });
 
 test("buildPiArgs: config model with a :level suffix suppresses config thinking", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/m:high", thinking: "low" };
-	const args = buildPiArgs({ agentHome: home, config, userArgs: [] });
+	const args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: [] });
 	assert.ok(args.includes("x/m:high"));
 	assert.ok(!args.includes("--thinking"));
 });
@@ -144,7 +147,7 @@ test("buildPiArgs: config model with a :level suffix suppresses config thinking"
 test("buildPiArgs: resume skips model/thinking defaults but keeps extensions", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/m", thinking: "low", cleanup: "c" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: ["--session", "/s.jsonl"], resume: true }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--session", "/s.jsonl"], resume: true }), [
 		"-e",
 		CORE_ENTRY,
 		"--skill",
@@ -186,4 +189,23 @@ test("CLI: plan prints NUL-separated piDir, name, argv", () => {
 	const recs = out.split("\0");
 	assert.equal(recs.pop(), "");
 	assert.deepEqual(recs, [join(klRoot, "pi"), "scout", "-e", CORE_ENTRY, "--skill", CORE_SKILLS, "--model", "a/b", "-a", "-p", "two words"]);
+});
+
+test("base pi's global extensions load by default (Pi's discovery shapes), and not with pi_extensions: false", () => {
+	const home = tmp("kl-agent-");
+	const base = tmp("kl-basepi-");
+	const ext = join(base, "extensions");
+	mkdirSync(join(ext, "pkg"), { recursive: true });
+	mkdirSync(join(ext, "plain"), { recursive: true });
+	writeFileSync(join(ext, "a.ts"), "");
+	writeFileSync(join(ext, "types.d.ts"), "");
+	writeFileSync(join(ext, "pkg", "package.json"), JSON.stringify({ pi: { extensions: ["./src/main.ts"] } }));
+	mkdirSync(join(ext, "pkg", "src"));
+	writeFileSync(join(ext, "pkg", "src", "main.ts"), "");
+	writeFileSync(join(ext, "plain", "index.ts"), "");
+	const config = defaultConfig(home);
+	const on = buildPiArgs({ agentHome: home, basePiDir: base, config, userArgs: [] });
+	assert.deepEqual(on.slice(0, 8), ["-e", CORE_ENTRY, "-e", join(ext, "a.ts"), "-e", join(ext, "pkg", "src", "main.ts"), "-e", join(ext, "plain", "index.ts")]);
+	const off = buildPiArgs({ agentHome: home, basePiDir: base, config: { ...config, pi_extensions: false }, userArgs: [] });
+	assert.ok(!off.some((a) => a.startsWith(ext)));
 });

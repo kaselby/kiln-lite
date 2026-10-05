@@ -14,7 +14,8 @@
  * Minimal schema: name, description, model, thinking, system_prompt,
  * sections, project_context, timestamps. A few more keys are recognized for
  * modules outside the core slice (cleanup,
- * session_state_interval); anything else warns and is ignored.
+ * session_state_interval) and by the launcher (pi_extensions); anything else
+ * warns and is ignored.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -57,6 +58,7 @@ const KNOWN_KEYS = new Set([
 	"timestamps",
 	"cleanup",
 	"session_state_interval",
+	"pi_extensions",
 ]);
 
 /** Keys that only make sense per agent; ignored (with a warning) in the global file. */
@@ -93,6 +95,7 @@ export function defaultConfig(agentHome: string): AgentConfig {
 		timestamps: { ...DEFAULT_TIMESTAMPS },
 		cleanup: "",
 		session_state_interval: 15,
+		pi_extensions: true,
 	};
 }
 
@@ -208,6 +211,10 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	if (has("cleanup")) {
 		const c = parsePromptSource(obj.cleanup, `${label} cleanup`, warn);
 		if (c !== undefined) config.cleanup = c;
+	}
+	if (has("pi_extensions")) {
+		if (typeof obj.pi_extensions === "boolean") config.pi_extensions = obj.pi_extensions;
+		else warn(`kiln-lite: ${label}: pi_extensions must be true or false — ignoring`);
 	}
 	if (has("session_state_interval")) {
 		const n = obj.session_state_interval;
