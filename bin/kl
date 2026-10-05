@@ -305,7 +305,6 @@ sections:
 YML
         # Empty until the agent writes to it; sections skip empty output.
         : > "$target/memory/MEMORY.md"
-        printf 'inbox/\nstate/\nsessions/\n' > "$target/.gitignore"
         if command -v git >/dev/null 2>&1; then
             git -C "$target" init -q && echo "kl: git init $target" >&2
         fi
