@@ -1,26 +1,25 @@
 /**
- * /spawn — fork the current session into a new tmux window.
+ * /spawn: fork the current session into a new kl session (own tmux session,
+ * own name and registry entry). The original keeps running.
  *
- * Shows the same user-message selector as Pi's /fork. When the user picks a
- * message, we build a new session file (entries from root up to — but not
- * including — the selected message), then launch it in a fresh kl tmux
- * session. The original session stays active.
+ * Shows Pi's /fork user-message selector. The fork holds everything before
+ * the picked message (same cut as /fork). Pi 1.0's
+ * SessionManager.createBranchedSession writes it; we run it on a second
+ * SessionManager opened on our transcript, because it switches the manager it
+ * is called on over to the new file (session-manager.js:1276-1278) and the
+ * live one must stay put. Then `kl run <this agent> --detach -- --session F`.
  *
- * Usage:
- *   /spawn          Pick a user message → new tmux window starts from that point
+ * Not a child: no --parent, so it is not ended when this session ends. The
+ * fork's header carries parentSession (our transcript) for provenance.
  */
 
-import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { CURRENT_SESSION_VERSION, type SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager, UserMessageSelectorComponent } from "@earendil-works/pi-coding-agent";
 
-type ReadonlySessionManager = Pick<SessionManager, "getCwd" | "getSessionDir" | "getSessionId" | "getSessionFile" | "getLeafId" | "getEntry" | "getLabel" | "getBranch" | "getHeader" | "getEntries" | "getSessionName">;
-import { UserMessageSelectorComponent } from "@earendil-works/pi-coding-agent";
+import { klBin, writeForkedSession } from "./fork.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -37,7 +36,7 @@ function extractText(content: unknown): string {
 }
 
 /** Build a list of {entryId, text} for every user message in the session. */
-function getUserMessages(sm: Pick<ReadonlySessionManager, "getEntries">): { entryId: string; text: string }[] {
+function getUserMessages(sm: Pick<SessionManager, "getEntries">): { entryId: string; text: string }[] {
 	const result: { entryId: string; text: string }[] = [];
 	for (const entry of sm.getEntries()) {
 		if (entry.type !== "message") continue;
@@ -46,78 +45,6 @@ function getUserMessages(sm: Pick<ReadonlySessionManager, "getEntries">): { entr
 		if (text) result.push({ entryId: entry.id, text });
 	}
 	return result;
-}
-
-/**
- * Build a new session JSONL file from the current session, truncated so
- * the leaf is the parent of `beforeEntryId`. Mirrors the logic in
- * SessionManager.createBranchedSession().
- */
-function buildForkedSessionFile(
-	sm: ReadonlySessionManager,
-	cwd: string,
-	beforeEntryId: string,
-): string | null {
-	const originalFile = sm.getSessionFile();
-	const entry = sm.getEntry(beforeEntryId);
-	if (!entry?.parentId) return null; // first entry — nothing before it
-
-	// Entries from root → parent (the point just before the selected message).
-	const path = sm.getBranch(entry.parentId);
-	if (path.length === 0) return null;
-
-	// Filter labels — we recreate resolved labels at the end of the chain.
-	const pathEntries = path.filter((e: { type: string }) => e.type !== "label");
-	const pathIds = new Set(pathEntries.map((e: { id: string }) => e.id));
-
-	// Collect resolved labels that target entries on the path.
-	const labelEntries: object[] = [];
-	let labelParent: string | null = pathEntries[pathEntries.length - 1]?.id ?? null;
-	for (const e of pathEntries) {
-		const label = sm.getLabel(e.id);
-		if (label) {
-			let labelId: string;
-			do {
-				labelId = randomUUID().slice(0, 8);
-			} while (pathIds.has(labelId));
-			pathIds.add(labelId);
-			labelEntries.push({
-				type: "label",
-				id: labelId,
-				parentId: labelParent,
-				timestamp: new Date().toISOString(),
-				targetId: e.id,
-				label,
-			});
-			labelParent = labelId;
-		}
-	}
-
-	// Session header.
-	const sessionId = randomUUID();
-	const timestamp = new Date().toISOString();
-	const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-	const header = {
-		type: "session",
-		version: CURRENT_SESSION_VERSION,
-		id: sessionId,
-		timestamp,
-		cwd,
-		parentSession: originalFile,
-	};
-
-	// Write JSONL.
-	const lines = [
-		JSON.stringify(header),
-		...pathEntries.map((e: object) => JSON.stringify(e)),
-		...labelEntries.map((e: object) => JSON.stringify(e)),
-	];
-
-	const sessionDir = sm.getSessionDir();
-	mkdirSync(sessionDir, { recursive: true });
-	const filePath = join(sessionDir, `${fileTimestamp}_${sessionId}.jsonl`);
-	writeFileSync(filePath, lines.join("\n") + "\n");
-	return filePath;
 }
 
 export function registerSpawnCommand(pi: ExtensionAPI): void {
@@ -169,23 +96,30 @@ export function registerSpawnCommand(pi: ExtensionAPI): void {
 
 			// Build a truncated session file (entries up to, but not including,
 			// the selected user message).
-			const forkedFile = buildForkedSessionFile(ctx.sessionManager, ctx.cwd, selectedEntryId);
+			let forkedFile: string | null;
+			try {
+				forkedFile = writeForkedSession(SessionManager.open(ctx.sessionManager.getSessionFile()!), selectedEntryId);
+			} catch (err) {
+				ctx.ui.notify(`Spawn failed: ${(err as Error).message}`, "error");
+				return;
+			}
 			if (!forkedFile) {
 				ctx.ui.notify("Cannot spawn from the first message (nothing before it)", "warning");
 				return;
 			}
 
-			// Launch in a new tmux window via kl. Pass --parent so the forked
-			// session records its origin (surfaced in snapshot meta) and can name
-			// the parent agent-id in its fork-origin orientation reminder.
+			const agent = process.env.AGENT_NAME;
+			if (!agent) {
+				ctx.ui.notify(`Spawn failed: AGENT_NAME not set; fork written to ${forkedFile}`, "error");
+				return;
+			}
 			try {
-				const parentId = process.env.AGENT_ID;
-				const klArgs = ["--detach"];
-				if (parentId) klArgs.push("--parent", parentId);
-				klArgs.push("--", "--session", forkedFile);
-				const { stdout } = await execFileAsync("kl", klArgs, { cwd: ctx.cwd, env: process.env });
-				const agentId = stdout.trim();
-				ctx.ui.notify(agentId ? `Spawned → ${agentId}` : "Spawned (could not read agent-id)", agentId ? "info" : "warning");
+				const { stdout } = await execFileAsync(klBin(), ["run", agent, "--detach", "--", "--session", forkedFile], {
+					cwd: ctx.cwd,
+					env: process.env,
+				});
+				const name = stdout.trim().split("\n").pop() ?? "";
+				ctx.ui.notify(name ? `Spawned → ${name}` : "Spawned (could not read its name)", name ? "info" : "warning");
 			} catch (err: unknown) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`Spawn failed: ${msg}`, "error");
