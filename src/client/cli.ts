@@ -18,7 +18,8 @@
  *   kl-msg list-sessions [--agent NAME]
  *   kl-msg status
  *
- * Required env (set by kl in every agent process):
+ * Env (set by kl in every agent process; without SESSION_UUID kl-msg sends
+ * as the human $USER, see humanClient):
  *   SESSION_UUID  this session's Pi UUID (its identity)
  *   AGENT_ID      this session's name (handle)
  *   AGENT_NAME    agent name (optional; inferred from AGENT_ID)
@@ -39,7 +40,24 @@ function envOrDie(name: string): string {
     return v;
 }
 
-function makeClient(): DaemonClient {
+/**
+ * Outside a kl session (no SESSION_UUID) kl-msg speaks for the human: from
+ * is $USER, and since that is no registered session the daemon writes no
+ * from_session, so the recipient sees no agent-mail disclaimer. No
+ * inbox_path either, so the daemon keeps no presence record for it.
+ */
+function humanClient(): DaemonClient {
+    const user = process.env.USER || process.env.LOGNAME || "user";
+    return new DaemonClient({ requester: { agent: "human", session: `human-${user}`, name: user } });
+}
+
+const NEEDS_SESSION = new Set(["deliver-self", "subscribe", "unsubscribe", "list-subscriptions"]);
+
+function makeClient(cmd: string): DaemonClient {
+    if (!process.env.SESSION_UUID) {
+        if (NEEDS_SESSION.has(cmd)) die(`${cmd} needs a kl session (SESSION_UUID not set)`);
+        return humanClient();
+    }
     const session = envOrDie("SESSION_UUID");
     const name = envOrDie("AGENT_ID");
     const agent_name = process.env.AGENT_NAME ?? inferAgentName(name);
@@ -102,7 +120,7 @@ async function main(): Promise<void> {
         process.exit(cmd ? 0 : 2);
     }
 
-    const client = makeClient();
+    const client = makeClient(cmd);
 
     switch (cmd) {
         case "send": {
@@ -229,8 +247,9 @@ function printUsage(): void {
             "  kl-msg status",
             "",
             "Env:",
-            "  SESSION_UUID this session's UUID (required)",
-            "  AGENT_ID    this session's name (required)",
+            "  SESSION_UUID this session's UUID. Unset: you send as $USER (send,",
+            "              publish, list-sessions, status only)",
+            "  AGENT_ID    this session's name (required with SESSION_UUID)",
             "  AGENT_NAME  agent name for requester envelope",
             "              (default: first segment of AGENT_ID)",
             "",

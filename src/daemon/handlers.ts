@@ -17,8 +17,8 @@ import { isAbsolute, resolve } from "node:path";
 import * as proto from "./protocol.ts";
 import type { SessionRecord } from "./state.ts";
 import { appendChannelHistory, writeInboxMessage } from "./inbox.ts";
-import { inboxRoot } from "../sessions/paths.ts";
-import { lastSeen } from "../sessions/registry.ts";
+import { inboxRoot, UUID_RE } from "../sessions/paths.ts";
+import { entryExists, lastSeen } from "../sessions/registry.ts";
 import { resolveTarget, ResolveError, type Resolved } from "../sessions/resolve.ts";
 import type { Daemon } from "./index.ts";
 
@@ -174,7 +174,8 @@ export async function handlePublish(
         writeInboxMessage({
             inboxRoot: inbox_root,
             recipient: sub_id,
-            sender: req.session,
+            sender: req.name || req.session,
+            senderSession: agentSession(daemon, req),
             summary,
             body,
             priority,
@@ -193,6 +194,16 @@ export async function handlePublish(
     });
 
     return proto.ack(msg.ref!, { recipient_count: delivered });
+}
+
+/**
+ * The sender's UUID for `from_session:`, only when the requester is a
+ * registered kl session. The recipient shows the agent-mail disclaimer only
+ * for mail with a from_session, so a human using kl-msg outside any session
+ * (no registry entry) sends plain mail.
+ */
+function agentSession(daemon: Daemon, req: proto.Requester): string | undefined {
+    return UUID_RE.test(req.session) && entryExists(req.session, daemon.config.klRoot) ? req.session : undefined;
 }
 
 /** "last seen" for a parked reply: local "YYYY-MM-DD HH:MM", or "never" if the transcript is gone. */
@@ -237,7 +248,7 @@ export async function handleSendDirect(
         inboxRoot: inboxRoot(daemon.config.klRoot),
         recipient: target.uuid,
         sender: req.name || req.session,
-        senderSession: req.session,
+        senderSession: agentSession(daemon, req),
         recipientName: target.name,
         summary,
         body,

@@ -459,12 +459,8 @@ cmd_doctor() {
         say_ok "socket file exists"
         if command -v kl-msg >/dev/null 2>&1; then
             # Minimal ping — status call returns quickly if the daemon is up.
-            # kl-msg needs AGENT_ID/AGENT_HOME even for status; fake if unset.
-            local probe_home="${AGENT_HOME:-$KL_AGENTS_DIR/agent}"
-            local probe_id="kl-doctor-$$"
-            if AGENT_ID="${AGENT_ID:-$probe_id}" \
-               AGENT_HOME="$probe_home" \
-               kl-msg status >/dev/null 2>&1; then
+            # No SESSION_UUID: kl-msg runs as the human, no identity needed.
+            if env -u SESSION_UUID kl-msg status >/dev/null 2>&1; then
                 say_ok "daemon responds to status"
             else
                 say_warn "daemon socket present but 'kl-msg status' failed — stale socket?"

@@ -7,7 +7,9 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import {
+	AGENT_MESSAGE_DISCLAIMER,
 	deliveredIdsFromEntries,
+	isAgentMail,
 	extractMessageIds,
 	formatDrainBody,
 	messageText,
@@ -24,12 +26,18 @@ interface Rig {
 	idle: { value: boolean };
 	throwOnSend: { value: boolean };
 	watcher: InboxWatcher;
+	/** Write a message and deliver its watch event synchronously (no fs.watch). */
+	arrive(id: string, body: string, fromSession?: string): void;
 	marker(id: string): boolean;
 	flush(): void;
 }
 
-function writeMsg(dir: string, id: string, body: string): void {
-	writeFileSync(join(dir, `${id}.md`), `---\nfrom: tester\nsummary: "${body}"\n---\n\n${body}\n`);
+const SELF = "0fff0d7c-d216-74b9-910c-aea077fe8fd5";
+const PEER = "0eee0d7c-d216-74b9-910c-aea077fe8fd5";
+
+function writeMsg(dir: string, id: string, body: string, fromSession = PEER): void {
+	const fs = fromSession ? `from_session: ${fromSession}\n` : "";
+	writeFileSync(join(dir, `${id}.md`), `---\nfrom: tester\n${fs}summary: "${body}"\n---\n\n${body}\n`);
 }
 
 function rig(
@@ -51,9 +59,15 @@ function rig(
 		},
 		appendEntry() {},
 	} as unknown as ExtensionAPI;
+	let onFile: ((f: string) => void) | null = null;
 	const watcher = startInboxWatcher({
 		inboxDir: dir,
 		pi,
+		selfSession: SELF,
+		watch: (_d, cb) => {
+			onFile = cb;
+			return { close() {} };
+		},
 		isIdle: () => idle.value,
 		warn: (m) => warnings.push(m),
 		transcriptEntries: opts.transcriptEntries,
@@ -68,6 +82,10 @@ function rig(
 		idle,
 		throwOnSend,
 		watcher,
+		arrive(id, body, fromSession) {
+			writeMsg(dir, id, body, fromSession);
+			onFile!(`${id}.md`);
+		},
 		marker: (id) => existsSync(join(dir, `${id}.read`)),
 		flush() {
 			for (const fn of deferred.splice(0)) fn();
@@ -102,14 +120,11 @@ test("nothing is marked at send time; markers appear only after the turn lands (
 	assert.equal(r.marker("msg-b"), true);
 });
 
-test("arrival while idle but a batch is in flight is deferred, then sent at the next drain", async (t) => {
+test("arrival while idle but a batch is in flight is deferred, then sent at the next drain", (t) => {
 	const r = rig(["msg-a"], { idle: true });
 	t.after(() => r.watcher.stop());
 	assert.equal(r.sent.length, 1);
-	writeMsg(r.dir, "msg-b", "late");
-	// Wait for fs.watch to see msg-b (idle → it tries to dispatch; must defer).
-	const start = Date.now();
-	while (r.watcher.unreadCount() < 2 && Date.now() - start < 2000) await new Promise((res) => setTimeout(res, 20));
+	r.arrive("msg-b", "late"); // idle → it tries to dispatch; must defer
 	assert.equal(r.watcher.unreadCount(), 2, "msg-a in flight + msg-b queued");
 	assert.equal(r.sent.length, 1, "no second sendUserMessage while in flight");
 	r.watcher.handleMessageEnd(userMsg(r.sent[0].body));
@@ -187,31 +202,40 @@ test("non-user message_end and user messages without ids are ignored", (t) => {
 });
 
 test("mid-turn ping path is unchanged: marks at ping time", (t) => {
-	const dir = mkdtempSync(join(tmpdir(), "kl-inbox-test-"));
-	const pi = { sendUserMessage() {}, appendEntry() {} } as unknown as ExtensionAPI;
-	const w = startInboxWatcher({ inboxDir: dir, pi, isIdle: () => false, warn: () => {} });
-	t.after(() => w.stop());
-	writeMsg(dir, "msg-m", "mid");
-	// Not enqueued without fs.watch; poll briefly for the watcher event.
-	return new Promise<void>((res, rej) => {
-		const start = Date.now();
-		const tick = () => {
-			const s = w.midTurnSuffix();
-			if (s) {
-				try {
-					assert.match(s, /\[Notification \| AGENT MESSAGE from tester/);
-					assert.equal(existsSync(join(dir, "msg-m.read")), true);
-					res();
-				} catch (e) {
-					rej(e);
-				}
-				return;
-			}
-			if (Date.now() - start > 2000) return rej(new Error("watcher never saw the file"));
-			setTimeout(tick, 20);
-		};
-		tick();
-	});
+	const r = rig([], { idle: false });
+	t.after(() => r.watcher.stop());
+	r.arrive("msg-m", "mid");
+	assert.equal(r.sent.length, 0, "busy: queued, not sent");
+	const s = r.watcher.midTurnSuffix();
+	assert.match(s, /\[Notification \| AGENT MESSAGE from tester/);
+	assert.ok(s.includes(AGENT_MESSAGE_DISCLAIMER), "mail from a peer session carries the disclaimer");
+	assert.equal(r.marker("msg-m"), true);
+});
+
+test("disclaimer only for mail from another session: not for self-wakes or human sends", (t) => {
+	const r = rig([], { idle: false });
+	t.after(() => r.watcher.stop());
+	r.arrive("msg-self", "wake", SELF);
+	r.arrive("msg-human", "from sam", "");
+	const s = r.watcher.midTurnSuffix();
+	assert.match(s, /msg-self\.md/);
+	assert.match(s, /msg-human\.md/);
+	assert.ok(!s.includes(AGENT_MESSAGE_DISCLAIMER));
+
+	const self = "---\nfrom: x\nfrom_session: S\n---\n\nb";
+	const peer = "---\nfrom: y\nfrom_session: P\n---\n\nb";
+	const human = "---\nfrom: sam\n---\n\nb";
+	assert.ok(!formatDrainBody([{ id: "a", text: self }, { id: "b", text: human }], "S").includes(AGENT_MESSAGE_DISCLAIMER));
+	assert.ok(formatDrainBody([{ id: "a", text: self }, { id: "c", text: peer }], "S").startsWith(AGENT_MESSAGE_DISCLAIMER));
+	assert.equal(isAgentMail(peer, "S"), true);
+	assert.equal(isAgentMail(self, "S"), false);
+	assert.equal(isAgentMail(human, "S"), false);
+});
+
+test("idle drain of a peer message is headed by the disclaimer", (t) => {
+	const r = rig(["msg-a"], { idle: true });
+	t.after(() => r.watcher.stop());
+	assert.ok(r.sent[0].body.startsWith(AGENT_MESSAGE_DISCLAIMER));
 });
 
 test("helpers: id extraction, text parts, transcript ledger", () => {

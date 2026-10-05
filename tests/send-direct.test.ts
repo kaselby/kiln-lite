@@ -97,6 +97,7 @@ function inboxFiles(uuid: string): string[] {
 
 describe("handleSendDirect: name resolution, parking", () => {
 	it("delivers to a live session by name, from: is the sender's name", async () => {
+		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
 		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
 		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
 		const res = await handleSendDirect(sendByName("rev-red-owl"), daemon as never);
@@ -108,6 +109,17 @@ describe("handleSendDirect: name resolution, parking", () => {
 		assert.match(text, /^from: rev-calm-fox$/m);
 		assert.match(text, new RegExp(`^from_session: ${UA}$`, "m"));
 		assert.match(text, /^to: rev-red-owl$/m);
+	});
+
+	it("a sender that is no registered session (kl-msg by a human) gets no from_session", async () => {
+		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
+		const msg = proto.sendDirect("rev-red-owl", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" });
+		const res = await handleSendDirect(msg, daemon as never);
+		assert.equal(res.type, proto.ACK);
+		const text = readFileSync(join(dir, "run", "inbox", UB, inboxFiles(UB)[0]), "utf8");
+		assert.match(text, /^from: sam$/m);
+		assert.doesNotMatch(text, /^from_session:/m);
+		assert.equal(daemon.state.presence.get("human-sam"), undefined, "no presence for a human sender");
 	});
 
 	it("parks for a registered session with no live lease, and says how to wake it", async () => {
@@ -154,6 +166,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		const inbox = join(inboxRootFor(from), from);
 		const files = readdirSync(inbox).filter((f) => f.endsWith(".md"));
 		assert.equal(files.length, 1);
+		assert.doesNotMatch(readFileSync(join(inbox, files[0]), "utf8"), /^from_session:/m, "a self-wake is not agent mail");
 	});
 
 	it("rejects a requester without an inbox path", async () => {

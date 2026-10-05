@@ -179,7 +179,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		} catch (err) {
 			warn(`kiln-lite: could not read transcript entries for inbox ledger: ${(err as Error).message}`);
 		}
-		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn, transcriptEntries });
+		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn, transcriptEntries, selfSession: sessionUuid });
 
 		sessionState = createSessionStateHook({
 			getUnread: () => watcher?.unreadCount() ?? null,
