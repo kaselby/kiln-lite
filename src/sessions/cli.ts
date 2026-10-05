@@ -1,6 +1,6 @@
 /**
- * The session half of `kl`, called by bin/kl (which resolves the agent home
- * and runs the pre-launch hook first):
+ * The session half of `kl`, called by bin/kl (which resolves the agent home;
+ * launchNew runs the pre-launch hook):
  *
  *   run --home <home> [--detach|-d] [--prompt-file F] [--parent <name|uuid>] [--wake park|auto] [--] [pi args...]
  *   resume <target> [--detach|-d] [pi args...]

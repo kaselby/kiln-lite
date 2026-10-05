@@ -219,8 +219,7 @@ resolve_pi_bin() {
 # --- subcommands ---
 
 # The session commands live in src/sessions/cli.ts (registry, leases,
-# name resolution, wake). bash only resolves the agent home for `run` and
-# runs the pre-launch hook.
+# name resolution, wake). bash only resolves the agent home for `run`.
 sessions_cli() {
     require_tool tmux "install with: brew install tmux"
     exec "$(tsx_path)" "$REPO_ROOT/src/sessions/cli.ts" "$@"
@@ -238,14 +237,7 @@ cmd_run() {
     fi
     local agent_home
     agent_home="$(resolve_agent_home "$explicit_name")"
-
-    # Pre-launch hook: $AGENT_HOME/harness/pre-launch, if executable, can
-    # reject the launch by exiting non-zero. It runs before a name is drawn,
-    # so it gets AGENT_HOME only (no AGENT_ID).
-    local pre_launch="$agent_home/harness/pre-launch"
-    if [ -x "$pre_launch" ]; then
-        AGENT_HOME="$agent_home" "$pre_launch" || exit 1
-    fi
+    # The pre-launch hook (<home>/hooks/pre-launch) runs in launchNew.
     sessions_cli run --home "$agent_home" "$@"
 }
 
@@ -521,6 +513,9 @@ cmd_doctor() {
             fi
             [ -d "$home/skills" ] && say_ok "skills/ present"
             [ -d "$home/extensions" ] && say_ok "extensions/ present"
+            if [ -e "$home/harness/pre-launch" ]; then
+                say_warn "harness/pre-launch is no longer run — kl migrate moves it to hooks/pre-launch"
+            fi
             if [ -f "$home/harness/index.ts" ]; then
                 say_warn "harness/index.ts is no longer loaded — move it to extensions/"
             fi
