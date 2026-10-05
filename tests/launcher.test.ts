@@ -14,6 +14,7 @@ import {
 	userSetsThinking,
 	CORE_ENTRY,
 	PERSISTENCE_ENTRY,
+	CORE_SKILLS,
 	REPO_ROOT,
 } from "../src/launcher.ts";
 import { defaultConfig } from "../extensions/kiln-lite/config.ts";
@@ -99,6 +100,8 @@ test("buildPiArgs: compact agent → core only, model/thinking defaults, -a, use
 	assert.deepEqual(buildPiArgs({ agentHome: home, config, userArgs: ["-p", "hi"] }), [
 		"-e",
 		CORE_ENTRY,
+		"--skill",
+		CORE_SKILLS,
 		"--model",
 		"openai-codex/gpt-5.6-luna",
 		"--thinking",
@@ -122,6 +125,8 @@ test("buildPiArgs: full agent → core, persistence, agent extensions, --skill",
 		PERSISTENCE_ENTRY,
 		"-e",
 		join(home, "extensions", "mine.ts"),
+		"--skill",
+		CORE_SKILLS,
 		"--skill",
 		join(home, "skills"),
 		"-a",
@@ -158,6 +163,8 @@ test("buildPiArgs: resume skips model/thinking defaults but keeps extensions", (
 		CORE_ENTRY,
 		"-e",
 		PERSISTENCE_ENTRY,
+		"--skill",
+		CORE_SKILLS,
 		"-a",
 		"--session",
 		"/s.jsonl",
@@ -194,5 +201,5 @@ test("CLI: plan prints NUL-separated piDir, name, argv", () => {
 	);
 	const recs = out.split("\0");
 	assert.equal(recs.pop(), "");
-	assert.deepEqual(recs, [join(klRoot, "pi"), "scout", "-e", CORE_ENTRY, "--model", "a/b", "-a", "-p", "two words"]);
+	assert.deepEqual(recs, [join(klRoot, "pi"), "scout", "-e", CORE_ENTRY, "--skill", CORE_SKILLS, "--model", "a/b", "-a", "-p", "two words"]);
 });

@@ -11,15 +11,15 @@
 #   3. Remove any legacy global pi registration of kiln-lite (idempotent).
 #      The extension is intentionally NOT registered globally — `kl` loads
 #      it explicitly via `-e <path>`. Bare `pi` runs extension-free.
-#   4. Scaffold the starter agent at $KL_AGENTS_DIR/agent (if it doesn't
-#      already exist). Use `kl new <name>` to add more later.
+#   4. Create a compact starter agent at $KL_AGENTS_DIR/agent (if it doesn't
+#      already exist) with `kl init`. Use `kl init <name> [--full]` for more.
 #
 # Usage:
 #   ./install.sh [--no-starter]
 #
 #   --no-starter    Install kl + daemon only; skip starter-agent scaffold.
 #                   Useful for CI or when you'll create agents explicitly
-#                   with `kl new <name>`.
+#                   with `kl init <name>`.
 #
 # Env:
 #   KL_AGENTS_DIR    Parent dir for agent homes (default: ~/.kl/agents/).
@@ -163,27 +163,10 @@ maybe_migrate_legacy "$HOME/.kl/agent"
 if [ "$SKIP_STARTER" = "1" ]; then
     log "--no-starter: skipping starter scaffold"
 elif [ -e "$STARTER_HOME" ]; then
-    log "starter agent exists at $STARTER_HOME — refreshing bundled skills + tools"
-    log "  (venv + agent.yml left as-is; use bootstrap.sh --rebuild-venv / --force for deeper updates)"
-    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME" --refresh-skills
-    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME" --refresh-tools
+    log "starter agent exists at $STARTER_HOME — leaving it as-is"
 else
-    log "scaffolding starter agent at $STARTER_HOME"
-    mkdir -p "$KL_AGENTS_DIR"
-    "$REPO_ROOT/bootstrap.sh" "$STARTER_HOME"
-    # Match install.sh's behavior to `kl new <name>`: ensure agent.yml's
-    # name field matches the dir name (here: "agent").
-    if [ -f "$STARTER_HOME/agent.yml" ]; then
-        tmp="$STARTER_HOME/agent.yml.tmp"
-        awk -v new_name="$STARTER_NAME" '
-            /^name:[[:space:]]/ && !done {
-                print "name: " new_name
-                done = 1
-                next
-            }
-            { print }
-        ' "$STARTER_HOME/agent.yml" > "$tmp" && mv "$tmp" "$STARTER_HOME/agent.yml"
-    fi
+    log "creating compact starter agent at $STARTER_HOME"
+    KL_AGENTS_DIR="$KL_AGENTS_DIR" "$REPO_ROOT/bin/kl" init "$STARTER_NAME"
 fi
 
 cat <<DONE
@@ -197,7 +180,7 @@ cat <<DONE
 
 Next:
   Launch the starter:           kl
-  Add another agent:            kl new <name>
+  Add another agent:            kl init <name> [--full]
   List agents:                  kl agents
   Diagnostics:                  kl doctor
 

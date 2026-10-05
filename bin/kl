@@ -60,7 +60,11 @@
 #                             3. $AGENT_HOME if explicitly set.
 #                             4. Otherwise hard error.
 #   kl attach <agent-id>    Attach an existing kl session.
-#   kl new <name>           Scaffold a new agent at $KL_AGENTS_DIR/<name>.
+#   kl init <name> [--full] Create an agent at $KL_AGENTS_DIR/<name>. Compact
+#                           (default): agent.yml + SYSTEM.md. --full adds
+#                           memory/ scratch/ extensions/ skills/ prompts/, a
+#                           cleanup prompt (loads the persistence entry), and
+#                           git init. (`kl new` is an alias.)
 #   kl list                 List active kl tmux sessions.
 #   kl agents               List installed agents under $KL_AGENTS_DIR.
 #   kl history [<name>]     Show recent sessions. Without <name>, walks all
@@ -75,6 +79,10 @@
 #   KL_AGENTS_DIR           Parent dir for all agent homes (default: ~/.kl/agents).
 #   AGENT_HOME              Explicit agent home path — bypasses the name lookup.
 #                           Escape hatch for advanced/test setups.
+#   KL_ROOT                 kl root (default: ~/.kl): config.yml + pi/ (the
+#                           kl-wide PI_CODING_AGENT_DIR, created on first run).
+#   KL_PI                   pi binary to run (default: the repo's
+#                           node_modules/.bin/pi if present, else pi on PATH).
 #
 # Notes:
 #   - tmux window name == agent-id. Collision is extremely unlikely but if it
@@ -102,29 +110,11 @@ while [ -L "$SCRIPT_PATH" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd -P)"
 REPO_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd -P)"
-DEFAULT_EXT_PATH="$REPO_ROOT/extensions/kiln-lite/index.ts"
 
-# Resolve the extension entry to load with `pi -e`.
-#
-# Priority:
-#   1. $AGENT_HOME/harness/index.ts  (per-agent custom harness)
-#   2. $REPO_ROOT/extensions/kiln-lite/index.ts  (bundled default)
-#
-# A custom harness lets an agent override kiln-lite's behavior wholesale
-# without forking the repo. It typically imports building blocks from
-# kiln-lite/extensions/kiln-lite/lib/ — either calling installDefaultHarness
-# then layering its own hooks, or composing primitives from scratch.
-#
-# See docs/extension.md for the harness contract.
-resolve_ext_path() {
-    local agent_home="$1"
-    local user_harness="$agent_home/harness/index.ts"
-    if [ -f "$user_harness" ]; then
-        printf '%s' "$user_harness"
-    else
-        printf '%s' "$DEFAULT_EXT_PATH"
-    fi
-}
+# The pi command line (extensions, skills, model/thinking defaults, the kl
+# Pi agent dir) is built by src/launcher.ts from the merged ~/.kl/config.yml
+# + agent.yml — see launcher_plan below. There is no harness override:
+# agents extend kl with ordinary Pi extensions in <home>/extensions/.
 
 # --- name pools (kept in sync with extensions/kiln-lite/identity.ts) ---
 #
@@ -171,7 +161,7 @@ resolve_agent_home() {
         if [ -d "$home" ]; then
             printf '%s' "$home"; return
         fi
-        die "no agent named '$name' at $home (use 'kl new $name' to create, or 'kl agents' to list)"
+        die "no agent named '$name' at $home (use 'kl init $name' to create, or 'kl agents' to list)"
     fi
     if [ -n "${AGENT_HOME:-}" ]; then
         if [ -d "$AGENT_HOME" ]; then
@@ -186,7 +176,7 @@ resolve_agent_home() {
     die "no agent home found.
   Tried: \$KL_AGENTS_DIR/agent  -> $default_home
          \$AGENT_HOME            -> (unset)
-  Run '$REPO_ROOT/install.sh' to scaffold a starter agent, or 'kl new <name>' to create one."
+  Run '$REPO_ROOT/install.sh' to scaffold a starter agent, or 'kl init <name>' to create one."
 }
 
 # Parse the agent-name prefix from a session-id like scout-bright-fox.
@@ -285,34 +275,6 @@ resolve_agent_description() {
     ' "$agent_home/agent.yml"
 }
 
-# Parse `model:` from agent.yml. Returns empty string if unset/commented.
-resolve_agent_model() {
-    local agent_home="$1"
-    if [ -f "$agent_home/agent.yml" ]; then
-        local m
-        m="$(awk '/^model:[[:space:]]*/{sub(/^model:[[:space:]]*/,""); sub(/[[:space:]]+#.*$/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
-        if [ -n "$m" ]; then printf '%s' "$m"; fi
-    fi
-}
-
-# Thinking levels pi accepts for --thinking (and as a --model :<level> suffix).
-PI_THINKING_LEVELS="off minimal low medium high xhigh max"
-
-is_thinking_level() {
-    case " $PI_THINKING_LEVELS " in *" $1 "*) return 0 ;; esac
-    return 1
-}
-
-# Parse `thinking:` from agent.yml. Returns empty string if unset/commented.
-resolve_agent_thinking() {
-    local agent_home="$1"
-    if [ -f "$agent_home/agent.yml" ]; then
-        local t
-        t="$(awk '/^thinking:[[:space:]]*/{sub(/^thinking:[[:space:]]*/,""); sub(/[[:space:]]+#.*$/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
-        if [ -n "$t" ]; then printf '%s' "$t"; fi
-    fi
-}
-
 # --- tmux helpers ---
 
 require_tool() {
@@ -324,13 +286,52 @@ require_tool() {
 # direct dependency, so it lives in the package's own node_modules; fall back
 # to a PATH tsx if that's somehow absent. Always the bundled state-cli — the
 # journal/snapshot logic is shared infra, not a per-agent harness override.
-run_tsx() {
+tsx_path() {
     local tsx_bin="$REPO_ROOT/node_modules/.bin/tsx"
     if [ ! -x "$tsx_bin" ]; then
         tsx_bin="$(command -v tsx 2>/dev/null || true)"
     fi
     [ -n "$tsx_bin" ] || die "tsx not found (expected $REPO_ROOT/node_modules/.bin/tsx — run install.sh)"
+    printf '%s' "$tsx_bin"
+}
+
+run_tsx() {
+    local tsx_bin
+    tsx_bin="$(tsx_path)"
     "$tsx_bin" "$REPO_ROOT/extensions/kiln-lite/state-cli.ts" "$@"
+}
+
+# Ask src/launcher.ts for the pi invocation. Args: --home <home> [--resume]
+# -- [user pi args...]. Sets PLAN_PI_DIR (PI_CODING_AGENT_DIR, created on
+# first use), PLAN_NAME (validated agent name), PLAN_ARGS (pi argv).
+# Config warnings print to stderr.
+launcher_plan() {
+    local tsx_bin tmp r
+    tsx_bin="$(tsx_path)"
+    tmp="$(mktemp "${TMPDIR:-/tmp}/kl-plan.XXXXXX")"
+    if ! "$tsx_bin" "$REPO_ROOT/src/launcher.ts" plan "$@" > "$tmp"; then
+        rm -f "$tmp"
+        die "could not build the pi command (see above)"
+    fi
+    local -a recs=()
+    while IFS= read -r -d '' r; do recs+=("$r"); done < "$tmp"
+    rm -f "$tmp"
+    [ ${#recs[@]} -ge 2 ] || die "launcher returned no plan"
+    PLAN_PI_DIR="${recs[0]}"
+    PLAN_NAME="${recs[1]}"
+    PLAN_ARGS=("${recs[@]:2}")
+}
+
+# pi binary: $KL_PI, else the repo's pinned dev copy, else pi on PATH.
+resolve_pi_bin() {
+    if [ -n "${KL_PI:-}" ]; then
+        [ -x "$KL_PI" ] || die "KL_PI=$KL_PI is not executable"
+        printf '%s' "$KL_PI"; return
+    fi
+    if [ -x "$REPO_ROOT/node_modules/.bin/pi" ]; then
+        printf '%s' "$REPO_ROOT/node_modules/.bin/pi"; return
+    fi
+    command -v pi 2>/dev/null || die "pi not found — install @earendil-works/pi-coding-agent >= 1.0.3 or set KL_PI"
 }
 
 # Enter a tmux session by switch-client if already inside tmux, else attach.
@@ -365,10 +366,6 @@ cmd_run() {
     local agent_home
     agent_home="$(resolve_agent_home "$explicit_name")"
 
-    local ext_path
-    ext_path="$(resolve_ext_path "$agent_home")"
-    [ -f "$ext_path" ] || die "extension entry not found at $ext_path (is the kiln-lite repo intact?)"
-
     # Consume --detach / -d and --prompt-file out of args; everything else
     # is passed to pi. Accept leading or interspersed: `kl --detach foo` and
     # `kl -- foo` both work. --prompt-file FILE reads the file and appends
@@ -381,30 +378,12 @@ cmd_run() {
     local detach=0
     local pi_args=()
     local prompt_file=""
-    local template=""
     local parent=""
     local handoff=""
-    local -a template_vars=()
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help) usage ;;
             --detach|-d) detach=1 ;;
-            --template)
-                shift
-                [ $# -ge 1 ] || die "--template requires a name argument"
-                template="$1"
-                ;;
-            --template=*)
-                template="${1#--template=}"
-                ;;
-            --var)
-                shift
-                [ $# -ge 1 ] || die "--var requires a KEY=VALUE argument"
-                template_vars+=("$1")
-                ;;
-            --var=*)
-                template_vars+=("${1#--var=}")
-                ;;
             --prompt-file)
                 shift
                 [ $# -ge 1 ] || die "--prompt-file requires a path argument"
@@ -435,6 +414,15 @@ cmd_run() {
         shift
     done
 
+    require_tool tmux "install with: brew install tmux"
+    local pi_bin
+    pi_bin="$(resolve_pi_bin)"
+
+    # Extensions, skills, model/thinking defaults (explicit --model /
+    # --thinking / --model id:level win) come from src/launcher.ts.
+    launcher_plan --home "$agent_home" -- ${pi_args[@]+"${pi_args[@]}"}
+    pi_args=(${PLAN_ARGS[@]+"${PLAN_ARGS[@]}"})
+
     if [ -n "$prompt_file" ]; then
         [ -f "$prompt_file" ] || die "--prompt-file: no such file: $prompt_file"
         local prompt_content
@@ -443,67 +431,7 @@ cmd_run() {
         pi_args+=("$prompt_content")
     fi
 
-    # If agent.yml specifies a default model and the caller didn't pass
-    # --model explicitly, prepend it to pi_args. Explicit --model wins.
-    local has_model=0
-    for arg in ${pi_args[@]+"${pi_args[@]}"}; do
-        case "$arg" in --model|--model=*) has_model=1; break ;; esac
-    done
-    if [ "$has_model" = 0 ]; then
-        local default_model
-        default_model="$(resolve_agent_model "$agent_home")"
-        if [ -n "$default_model" ]; then
-            pi_args=("--model" "$default_model" ${pi_args[@]+"${pi_args[@]}"})
-        fi
-    fi
-
-    # If agent.yml specifies a default thinking level and the caller didn't
-    # set one, prepend --thinking. The caller sets one with --thinking or with
-    # a --model <id>:<level> suffix; pi gives --thinking precedence over the
-    # suffix, so injecting here would silently override the caller's choice.
-    # Runs after the model default so a `model: <id>:<level>` in agent.yml
-    # also counts as an explicit level.
-    local has_thinking=0 prev="" model_val
-    for arg in ${pi_args[@]+"${pi_args[@]}"}; do
-        model_val=""
-        case "$arg" in
-            --thinking) has_thinking=1; break ;;
-            --model=*) model_val="${arg#--model=}" ;;
-        esac
-        [ "$prev" = "--model" ] && model_val="$arg"
-        if [ -n "$model_val" ] && [[ "$model_val" == *:* ]] \
-            && is_thinking_level "${model_val##*:}"; then
-            has_thinking=1; break
-        fi
-        prev="$arg"
-    done
-    if [ "$has_thinking" = 0 ]; then
-        local default_thinking
-        default_thinking="$(resolve_agent_thinking "$agent_home")"
-        if [ -n "$default_thinking" ]; then
-            if is_thinking_level "$default_thinking"; then
-                pi_args=("--thinking" "$default_thinking" ${pi_args[@]+"${pi_args[@]}"})
-            else
-                echo "kl: ignoring invalid agent.yml thinking '$default_thinking' (valid: $PI_THINKING_LEVELS)" >&2
-            fi
-        fi
-    fi
-
-    require_tool tmux "install with: brew install tmux"
-    require_tool pi "install @earendil-works/pi-coding-agent"
-
-    local pi_bin name agent_id
-    pi_bin="$(command -v pi)"
-    name="$(resolve_agent_name "$agent_home")"
-    # The session-id grammar is <name>-<adj>-<noun>. If agent.yml.name contains
-    # a hyphen, `kl resume` can't split prefix from suffix — same root issue
-    # that disallowing `-` in `kl new` solves, but `agent.yml` is source of
-    # truth, so we have to enforce it here too. Catches edited configs and
-    # migrated legacy homes that pre-date this rule.
-    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] \
-        || die "invalid agent.yml name '$name' in $agent_home/agent.yml — must match [a-z][a-z0-9_]*.
-  Hyphens are reserved: session-ids are <name>-<adj>-<noun>, so a hyphenated
-  name would make 'kl resume' unable to split prefix from suffix."
+    local name="$PLAN_NAME" agent_id
     agent_id="$(generate_agent_id "$name")"
 
     # If a tmux session already exists with this name, suffix until free.
@@ -525,9 +453,7 @@ cmd_run() {
     # lock checks) without hardcoding policy into kl itself.
     local pre_launch="$agent_home/harness/pre-launch"
     if [ -x "$pre_launch" ]; then
-        if ! AGENT_ID="$agent_id" AGENT_HOME="$agent_home" \
-             KL_TEMPLATE="${template:-}" \
-             "$pre_launch"; then
+        if ! AGENT_ID="$agent_id" AGENT_HOME="$agent_home" "$pre_launch"; then
             exit 1
         fi
     fi
@@ -536,16 +462,19 @@ cmd_run() {
     # export AGENT_ID (so the extension picks it up directly) and AGENT_HOME
     # (in case the caller's AGENT_HOME was inherited from shell, not set
     # explicitly). _KL=1 is a marker for the extension + future `kl` recursion.
-    # KL_TEMPLATE and KL_VAR_* carry template selection + vars.
+    # PI_CODING_AGENT_DIR points pi at the kl-wide agent dir (never
+    # ~/.pi/agent); KL_ROOT is forwarded because a running tmux server
+    # doesn't see the caller's env.
     # Use ${arr[@]+"${arr[@]}"} idiom to safely expand an empty array under
     # `set -u` (bash treats a bare "${arr[@]}" on an empty array as unbound).
     local tmux_env_args=(
         -e "AGENT_ID=$agent_id"
         -e "AGENT_HOME=$agent_home"
         -e "_KL=1"
+        -e "PI_CODING_AGENT_DIR=$PLAN_PI_DIR"
     )
-    if [ -n "$template" ]; then
-        tmux_env_args+=(-e "KL_TEMPLATE=$template")
+    if [ -n "${KL_ROOT:-}" ]; then
+        tmux_env_args+=(-e "KL_ROOT=$KL_ROOT")
     fi
     if [ -n "$parent" ]; then
         tmux_env_args+=(-e "KL_PARENT=$parent")
@@ -553,19 +482,10 @@ cmd_run() {
     if [ -n "$handoff" ]; then
         tmux_env_args+=(-e "KL_HANDOFF=$handoff")
     fi
-    for var in ${template_vars[@]+"${template_vars[@]}"}; do
-        local key="${var%%=*}"
-        local val="${var#*=}"
-        # Normalize key to uppercase for env var convention.
-        key="$(echo "$key" | tr '[:lower:]' '[:upper:]')"
-        tmux_env_args+=(-e "KL_VAR_${key}=${val}")
-    done
 
-    # -a/--approve: pre-trust the launch dir so detached agents never block
-    # on pi's project-trust prompt (pi 0.79.0). Scoped to this run's cwd only.
     tmux new-session -d -s "$agent_id" \
         ${tmux_env_args[@]+"${tmux_env_args[@]}"} \
-        "$pi_bin" -e "$ext_path" -a ${pi_args[@]+"${pi_args[@]}"}
+        "$pi_bin" ${pi_args[@]+"${pi_args[@]}"}
 
     if [ "$detach" = 1 ]; then
         # Peer-spawn mode: agent-id on stdout (for capture), log on stderr.
@@ -635,12 +555,7 @@ cmd_resume() {
   Tried prefix lookup ('$name') and scanned $KL_AGENTS_DIR/*/state/sessions/.
   Set AGENT_HOME=<path> if the snapshot lives outside the registry."
     fi
-    local ext_path
-    ext_path="$(resolve_ext_path "$agent_home")"
-    [ -f "$ext_path" ] || die "extension entry not found at $ext_path"
-
     require_tool tmux
-    require_tool pi "install @earendil-works/pi-coding-agent"
 
     # If the tmux session is already alive, just attach — same shape as
     # `kl attach <id>`. kl run + a detach leaves the tmux session running;
@@ -669,16 +584,23 @@ cmd_resume() {
     [ -n "$cwd" ] || cwd="$(pwd)"
 
     local pi_bin
-    pi_bin="$(command -v pi)"
+    pi_bin="$(resolve_pi_bin)"
+    # Same extensions/skills/agent dir as `kl run`; no model/thinking
+    # defaults (the transcript carries them). Pi restores the prompt from
+    # the transcript's recorded sections — no snapshot replay.
+    launcher_plan --home "$agent_home" --resume -- --session "$jsonl" "$@"
 
-    # Spawn pi with --session pointing at the original JSONL. AGENT_ID
-    # restoration is what makes the extension reuse the same identity
-    # (and find the snapshot system-prompt.txt to replay).
+    # AGENT_ID restoration is what makes the extension reuse the same identity.
+    local -a resume_env=(
+        -e "AGENT_ID=$id"
+        -e "AGENT_HOME=$agent_home"
+        -e "_KL=1"
+        -e "PI_CODING_AGENT_DIR=$PLAN_PI_DIR"
+    )
+    [ -z "${KL_ROOT:-}" ] || resume_env+=(-e "KL_ROOT=$KL_ROOT")
     tmux new-session -d -s "$id" -c "$cwd" \
-        -e "AGENT_ID=$id" \
-        -e "AGENT_HOME=$agent_home" \
-        -e "_KL=1" \
-        "$pi_bin" -e "$ext_path" -a --session "$jsonl" "$@"
+        "${resume_env[@]}" \
+        "$pi_bin" ${PLAN_ARGS[@]+"${PLAN_ARGS[@]}"}
 
     echo "kl: resumed $id (pi session $(basename "$jsonl"))" >&2
     enter_session "$id"
@@ -705,45 +627,70 @@ cmd_list() {
     [ "$any" = 1 ] || echo "(no kl sessions — use 'tmux list-sessions' for all tmux sessions)"
 }
 
-# --- new: scaffold a new agent home ---
-# Thin wrapper around bootstrap.sh that creates $KL_AGENTS_DIR/<name>
-# and ensures agent.yml's name field matches the directory name.
-cmd_new() {
-    [ $# -ge 1 ] || die "kl new requires an agent name (e.g. 'kl new scout')"
-    local name="$1"; shift
+# --- init: create a new agent folder ---
+# Compact: agent.yml + SYSTEM.md (that's a whole agent). --full scaffolds a
+# persistent agent home. No venv, no copied tools or skills (kl's bundled
+# skills load from the repo via --skill).
+cmd_init() {
+    local name="" full=0 arg
+    for arg in "$@"; do
+        case "$arg" in
+            --full) full=1 ;;
+            -*) die "init: unknown flag '$arg' (only --full)" ;;
+            *) [ -z "$name" ] || die "init: unexpected argument '$arg'"; name="$arg" ;;
+        esac
+    done
+    [ -n "$name" ] || die "kl init requires an agent name (e.g. 'kl init scout' or 'kl init scout --full')"
     [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] \
         || die "invalid agent name '$name' — must start with a lowercase letter and contain only [a-z0-9_].
-  (Hyphens are reserved: session-ids are <name>-<adj>-<noun>, so a hyphenated
-  name would make 'kl resume' unable to split prefix from suffix.)"
+  (Hyphens are reserved: session-ids are <name>-<adj>-<noun>.)"
 
     local target="$KL_AGENTS_DIR/$name"
-    if [ -e "$target" ]; then
-        die "agent '$name' already exists at $target (use 'kl agents' to list)"
+    [ ! -e "$target" ] || die "agent '$name' already exists at $target (use 'kl agents' to list)"
+    mkdir -p "$target"
+
+    cat > "$target/agent.yml" <<YML
+name: $name
+description: ""
+
+# Everything below is optional; ~/.kl/config.yml supplies defaults.
+# model: openai-codex/gpt-5.6-luna
+# thinking: medium
+# project_context: true     # false drops AGENTS.md/CLAUDE.md from the prompt
+# timestamps: true          # false, or {per_turn, every_calls, every_minutes}
+# sections:                 # rendered once at session start, after <session>
+#   - {name: notes, path: notes.md}
+#   - {name: today, command: "date +%A"}
+YML
+    cat > "$target/SYSTEM.md" <<MD
+<!--
+  Identity prompt for $name: who this agent is and how it works.
+  It opens the system prompt, before the kl baseline. HTML comments like
+  this one are stripped; an empty file means no identity prompt.
+-->
+MD
+
+    if [ "$full" = 1 ]; then
+        mkdir -p "$target"/{memory,scratch,extensions,skills,prompts}
+        cat > "$target/prompts/cleanup.md" <<'MD'
+<!-- Cleanup turn for /exit and exit_session. Placeholder: the persistence slice reworks this. -->
+You're wrapping up. Write a short summary of this session (what you did,
+what's still open) to {summary_path}, update anything in memory/ that should
+outlast it, then stop.
+MD
+        cat >> "$target/agent.yml" <<'YML'
+
+# Persistent agent: a cleanup turn makes kl load the persistence entry.
+cleanup: { path: prompts/cleanup.md }
+YML
+        printf 'inbox/\nstate/\nsessions/\n' > "$target/.gitignore"
+        if command -v git >/dev/null 2>&1; then
+            git -C "$target" init -q && echo "kl: git init $target" >&2
+        fi
     fi
 
-    [ -x "$REPO_ROOT/bootstrap.sh" ] || die "bootstrap.sh not found or not executable at $REPO_ROOT"
-
-    mkdir -p "$KL_AGENTS_DIR"
-    "$REPO_ROOT/bootstrap.sh" "$target" "$@"
-
-    # Patch agent.yml so the name field matches the dir. The scaffold
-    # template hardcodes `name: agent` — rewrite it to the actual name.
-    if [ -f "$target/agent.yml" ]; then
-        # Use a temp file + mv for atomicity; awk -i inplace isn't portable.
-        local tmp="$target/agent.yml.tmp"
-        awk -v new_name="$name" '
-            /^name:[[:space:]]/ && !done {
-                print "name: " new_name
-                done = 1
-                next
-            }
-            { print }
-        ' "$target/agent.yml" > "$tmp" && mv "$tmp" "$target/agent.yml"
-    fi
-
-    echo
-    echo "kl: created agent '$name' at $target"
-    echo "    launch with: kl $name"
+    echo "kl: created $([ "$full" = 1 ] && echo "full" || echo "compact") agent '$name' at $target"
+    echo "    launch with: kl run $name"
 }
 
 # --- agents: list installed agents under $KL_AGENTS_DIR ---
@@ -781,7 +728,7 @@ cmd_agents() {
 
     if [ "$found" = 0 ]; then
         echo "(no agents installed under $KL_AGENTS_DIR)"
-        echo "  Create one with: kl new <name>"
+        echo "  Create one with: kl init <name> [--full]"
         return 0
     fi
 }
@@ -819,11 +766,16 @@ cmd_doctor() {
     echo "  script     $SCRIPT_PATH"
     echo "  repo root  $REPO_ROOT"
     echo "  agents dir $KL_AGENTS_DIR"
-    echo "  default    $DEFAULT_EXT_PATH"
-    if [ -f "$DEFAULT_EXT_PATH" ]; then
-        say_ok "bundled extension entry present"
+    echo "  kl root    ${KL_ROOT:-$HOME/.kl}"
+    if [ -f "$REPO_ROOT/extensions/kiln-lite/index.ts" ]; then
+        say_ok "core extension entry present"
     else
-        say_fail "bundled extension entry missing at $DEFAULT_EXT_PATH"
+        say_fail "core extension entry missing at $REPO_ROOT/extensions/kiln-lite/index.ts"
+    fi
+    if [ -d "${KL_ROOT:-$HOME/.kl}/pi" ]; then
+        say_ok "kl pi agent dir present (${KL_ROOT:-$HOME/.kl}/pi)"
+    else
+        say_warn "kl pi agent dir missing (created on first 'kl run')"
     fi
     echo
 
@@ -834,10 +786,11 @@ cmd_doctor() {
     else
         say_fail "node not on PATH"
     fi
-    if command -v pi >/dev/null 2>&1; then
-        say_ok "pi: $(command -v pi)"
+    local doc_pi
+    if doc_pi="$(resolve_pi_bin 2>/dev/null)"; then
+        say_ok "pi: $doc_pi ($("$doc_pi" --version 2>/dev/null | head -n 1))"
     else
-        say_fail "pi not on PATH"
+        say_fail "pi not found (set KL_PI or install @earendil-works/pi-coding-agent >= 1.0.3)"
     fi
     if command -v tmux >/dev/null 2>&1; then
         say_ok "tmux: $(tmux -V 2>/dev/null)"
@@ -932,7 +885,7 @@ cmd_doctor() {
     if [ ${#homes[@]} -eq 0 ]; then
         echo "[agents]"
         say_warn "no agent homes found under $KL_AGENTS_DIR"
-        say_warn "  scaffold one with: kl new <name>   or run install.sh"
+        say_warn "  scaffold one with: kl init <name>   or run install.sh"
         echo
     fi
 
@@ -947,21 +900,13 @@ cmd_doctor() {
             else
                 say_warn "agent.yml missing"
             fi
-            if [ -d "$home/tools" ]; then
-                say_ok "tools/ present ($(ls "$home/tools" 2>/dev/null | wc -l | tr -d ' ') entries)"
-            else
-                say_warn "tools/ missing"
+            [ -d "$home/skills" ] && say_ok "skills/ present"
+            [ -d "$home/extensions" ] && say_ok "extensions/ present"
+            if [ -f "$home/harness/index.ts" ]; then
+                say_warn "harness/index.ts is no longer loaded — move it to extensions/"
             fi
-            if [ -d "$home/skills" ]; then
-                say_ok "skills/ present"
-            else
-                say_warn "skills/ missing"
-            fi
-            # Custom harness?
-            local home_ext
-            home_ext="$(resolve_ext_path "$home")"
-            if [ "$home_ext" != "$DEFAULT_EXT_PATH" ]; then
-                say_ok "custom harness at $home/harness/index.ts (overriding default)"
+            if [ -d "$home/tools" ] || [ -d "$home/venv" ]; then
+                say_warn "tools/ or venv/ present — kl no longer puts these on PATH"
             fi
         else
             say_fail "directory does not exist: $home"
@@ -1030,7 +975,7 @@ cmd_history() {
     fi
 
     if [ ${#homes[@]} -eq 0 ]; then
-        echo "(no agents found — run '$REPO_ROOT/install.sh' or 'kl new <name>')"
+        echo "(no agents found — run '$REPO_ROOT/install.sh' or 'kl init <name>')"
         return 0
     fi
 
@@ -1100,7 +1045,7 @@ main() {
         attach) shift; cmd_attach "$@" ;;
         list|ls) shift; cmd_list "$@" ;;
         agents) shift; cmd_agents "$@" ;;
-        new|init) shift; cmd_new "$@" ;;
+        init|new) shift; cmd_init "$@" ;;
         history) shift; cmd_history "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
         -h|--help|help) usage ;;
