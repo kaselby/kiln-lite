@@ -24,6 +24,7 @@ import { buildDescription, childPrompt, messageFrom } from "./subagent-text.ts";
 import { launchNew } from "../../src/sessions/launch.ts";
 import { leaseIsLive, liveLease, readLease, type Lease } from "../../src/sessions/lease.ts";
 import { listEntries, readEntry } from "../../src/sessions/registry.ts";
+import { resolvesTo } from "../../src/sessions/resolve.ts";
 
 export const NUDGE_TYPE = "kl-subagent-nudge";
 const POLL_MS = 500;
@@ -219,7 +220,7 @@ function installNudge(pi: ExtensionAPI, deps: SubagentDeps): void {
 		if (event.toolName !== "message" || event.isError) return;
 		if (event.input.action !== "send" || typeof event.input.to !== "string") return;
 		const parent = parentOf(deps);
-		if (parent && parent.handles.has(event.input.to)) messagedParent = true;
+		if (parent && addressesParent(event.input.to, parent)) messagedParent = true;
 	});
 
 	pi.on("agent_before_settle", async (event) => {
@@ -249,7 +250,12 @@ function installNudge(pi: ExtensionAPI, deps: SubagentDeps): void {
 }
 
 /** Parent handles (uuid, registry name, live lease name), or null if we have no parent. */
-function parentOf(deps: SubagentDeps): { name: string; handles: Set<string> } | null {
+/** Did a send to `to` reach the parent? Its known handles, else what the daemon's resolver picks (agent name, name@prefix). */
+function addressesParent(to: string, parent: { uuid: string; handles: Set<string> }): boolean {
+	return parent.handles.has(to) || resolvesTo(to, parent.uuid);
+}
+
+function parentOf(deps: SubagentDeps): { uuid: string; name: string; handles: Set<string> } | null {
 	const self = deps.getSelf();
 	if (!self) return null;
 	const mine = readEntry(self.uuid);
@@ -260,5 +266,5 @@ function parentOf(deps: SubagentDeps): { name: string; handles: Set<string> } | 
 	if (entry) handles.add(entry.name);
 	const lease = liveLease(parentUuid);
 	if (lease?.name) handles.add(lease.name);
-	return { name: lease?.name || entry?.name || parentUuid, handles };
+	return { uuid: parentUuid, name: lease?.name || entry?.name || parentUuid, handles };
 }

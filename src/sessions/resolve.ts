@@ -152,3 +152,12 @@ export function resolveTarget(target: string, opts: { root?: string } = {}): Res
 
 	throw new ResolveError(`unknown session '${t}' (no live session or registry entry has that name; see kl sessions)`);
 }
+
+/** True if `target` resolves to session `uuid` right now; unresolvable is false. */
+export function resolvesTo(target: string, uuid: string, opts: { root?: string } = {}): boolean {
+	try {
+		return resolveTarget(target, opts).uuid === uuid;
+	} catch {
+		return false;
+	}
+}

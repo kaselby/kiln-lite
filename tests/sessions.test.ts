@@ -10,7 +10,7 @@ import { leaseIsLive, liveLease, readLease, releaseLease, selfLease, writeLease 
 import { ADJECTIVES, NOUNS, drawName, nameState } from "../src/sessions/names.ts";
 import { namesLockPath } from "../src/sessions/paths.ts";
 import { bindName, formatEntry, parseEntry, readEntry, writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
-import { ResolveError, resolveTarget, shortId } from "../src/sessions/resolve.ts";
+import { ResolveError, resolvesTo, resolveTarget, shortId } from "../src/sessions/resolve.ts";
 
 function freshRoot(): string {
 	const root = mkdtempSync(join(tmpdir(), "kl-sessions-"));
@@ -202,6 +202,8 @@ test("resolve: an agent name reaches its one running session, else its most rece
 		assert.match(e.message, /rev-red-owl \(02b20d7c\)/);
 		return true;
 	});
+	assert.equal(resolvesTo("rev", U1, { root }), false, "ambiguous agent name reaches nobody");
+	assert.equal(resolvesTo("boss", U3, { root }), true, "the subagent nudge's check: agent name -> parent's uuid");
 	// Session names still resolve as before.
 	assert.equal(resolveTarget("rev-red-owl", { root }).uuid, U2);
 	assert.throws(() => resolveTarget("nobody", { root }), /unknown session/);
