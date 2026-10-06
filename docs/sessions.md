@@ -13,15 +13,14 @@ starts: `<agent>-<adjective>-<noun>`, never used by a running session and
 avoiding names used in the last three weeks. A name can be reused after
 that, which is why mail, plans and status files are keyed by UUID. How
 names resolve (`name@<id>`, agent names) is in
-[cli.md](cli.md#sessions-and-names).
+[cli.md](cli.md#session-names).
 
 Each session has two files in the kl folder ([config.md](config.md)):
 
 - **Registry entry**, `run/sessions/<uuid>.yml`: the agent, the current
   name and every name it has run under, the agent folder, the transcript
-  path, the working directory, the parent's UUID, the creation time, and
-  the model and thinking level it was launched with. The session's own
-  process writes it when it starts. It is never removed.
+  path, the working directory, the parent's UUID, and the creation time.
+  The session's own process writes it when it starts. It is never removed.
 - **Lease**, `run/leases/<uuid>.json`: the process id, its start time,
   the name, the tmux session, and `busy` or `idle`. The running process
   writes it and removes it when it exits. A session counts as running only
@@ -48,9 +47,8 @@ say so on stderr. Attaching would take over the agent's own terminal.
 **`/spawn`** forks the current session. Pick a message; the new session
 holds everything before it, gets its own name and tmux session, and runs
 alongside this one. It's not a child, so it keeps running when this session
-ends. It is started as `kl run <AGENT_NAME>`, so it needs the agent folder
-at `$KL_AGENTS_DIR/<agent name>`. Its first turn gets a hidden note saying
-it was forked.
+ends. It is started from this session's agent folder (`$AGENT_HOME`),
+like `kl run`. Its first turn gets a hidden note saying it was forked.
 
 Pi's in-session `/new`, `/fork` and `/resume` also work. The session they
 switch to keeps its last name if nothing running holds it, else gets a
@@ -67,10 +65,10 @@ transcript, then attach. Starting it again:
   entry);
 - runs in the session's recorded working directory, or the agent folder if
   that's gone;
-- passes the model and thinking level recorded when the session was first
-  launched, unless you pass `--model` or `--thinking`; everything else
-  (prompt, extensions, sections) is rebuilt from the agent folder as it is
-  now;
+- keeps the model and thinking level the session last used (pi reads
+  them from the transcript, so a `/model` change sticks), unless you pass
+  `--model` or `--thinking`; everything else (prompt, extensions,
+  sections) is rebuilt from the agent folder as it is now;
 - runs the pre-launch hook, and waits up to 20 s for the new process to
   write its lease;
 - gives the first turn a hidden note that the session was resumed and time
@@ -80,10 +78,11 @@ A session that never exchanged a message has no transcript and can't be
 resumed. Mail that arrived while a session was down is delivered when it
 starts; see [messaging.md](messaging.md).
 
-kl never starts a session on its own. A message to a session that isn't
-running is kept in its inbox until someone resumes it, and so is a wake
-from the `schedule` tool. `kl run --wake auto` is recorded in the registry
-but nothing acts on it.
+A message to a session that isn't running is kept in its inbox until
+someone resumes it, and so is a wake from the `schedule` tool. The one
+exception is a DM sent with `--wake` (or `wake: true` on the `message`
+tool), which starts the session detached, as `kl resume -d` would; see
+[messaging.md](messaging.md#sending).
 
 ## Subagents
 

@@ -19,7 +19,7 @@ session's inbox. The reply says what happened:
 - `sent to <name>`: the session is running.
 - `parked: <name> is not running (last seen <time>); kl resume <name> to
   wake`: the file is written anyway, and the session gets it when it next
-  starts. Nothing wakes it. `<time>` is local `YYYY-MM-DD HH:MM`, or `never`.
+  starts. `<time>` is local `YYYY-MM-DD HH:MM`, or `never`.
 - When the resolver had to pick (a reused name, or an agent name), its note
   is added on a second line.
 - An unknown or ambiguous name is an error, and nothing is written.
@@ -27,17 +27,30 @@ session's inbox. The reply says what happened:
 Because the name is resolved when the message is sent, a later session that
 draws the same name never sees the old mail.
 
+**Waking.** A parked message waits until someone resumes the session,
+unless the sender asks for a wake (`kl message send --wake`, or `wake:
+true` on the `message` tool). Then kl parks the message as usual and starts
+the session detached, as `kl resume -d` would; it reads the message at
+startup. The reply is `woke <name>; the message is in its inbox`. If the
+session turns out to be running, nothing is started. Several waking sends
+at once start it at most once. If the wake fails, the message stays parked
+and the reply says why (`kl message send` then exits 1). Only DMs can wake;
+`--wake` on a channel is an error.
+
 **Channels.** A broadcast goes to `#<channel>`. The daemon writes a copy
 into the inbox of every session subscribed to the channel, except the
 sender, and appends the message to the channel's history. The reply gives
 the number of inbox copies written. A channel exists once it has a
 subscriber or any history. There's no step to create one.
 
-**Subscriptions** belong to a session and are kept on disk, so they
-survive a daemon restart. They don't survive the session: when a session
-exits, kl deregisters it and the daemon drops its subscriptions. A resumed
-session has to subscribe again, and a session that isn't running gets no
-channel copies. It can still read the channel's history.
+Channel names use letters, digits, `.`, `_` and `-`, start with a letter or
+digit, and are at most 128 characters. A leading `#` is dropped, so `#dev`
+and `dev` are the same channel. Any other name is an error.
+
+**Subscriptions** belong to a session and last until it unsubscribes. They
+are kept on disk, so they outlive both the session's process and the
+daemon. A subscriber that isn't running still gets its copy, parked in its
+inbox like a DM, and reads it when it next starts.
 
 **Priority** is `normal` (default) or `high`. It's recorded in the file and
 shown in the mid-turn notification. It doesn't change how or when the
@@ -62,7 +75,8 @@ whether the agent is busy:
 
   `source` is `kiln-lite/#<channel>` for a channel copy. `priority` appears
   only when it's high, and `sent` is local time. The header says `AGENT
-  MESSAGE` whoever the sender is.
+  MESSAGE` for mail from another kl session and `MESSAGE` for the rest
+  (from your shell, a scheduled wake, the session itself).
 - Messages that arrive during a turn with no tool result left go into a
   user turn when the turn ends. When the session is about to shut down
   (cleanup turn or exit), they wait for its next start.
@@ -149,8 +163,8 @@ then waits up to 5 s for it. One runs per socket.
 **State.** In memory it keeps which sessions are running (they register at
 startup and deregister at exit) and who subscribes to what. Subscriptions
 are written to disk on every change and reloaded at start. Every 60 s it
-drops running sessions whose process has died, along with their
-subscriptions.
+stops counting as running any session whose process has died; its
+subscriptions stay.
 
 **Lifetime.** It exits 30 s after the last running session deregisters, or
 30 s after starting if no session registers (after a `kl message send` from
@@ -163,9 +177,10 @@ deleted.
 
 **When it's down.** Nothing that reads mail needs it: delivery to a running
 session, `kl message history`, `kl message channels` and the `message`
-tool's `channels` and `history` all read files. Sending, subscribing and
-`kl message status` need it, and start it if it's not running. If it can't
-start, the send fails with an error and nothing is written. A daemon that
+tool's `channels` and `history` all read files. Sending and subscribing
+need it, and start it if it's not running. If it can't start, the send
+fails with an error and nothing is written. `kl message status` never
+starts it; it reports `running: false`. A daemon that
 restarts while sessions run picks them up again on their next send or
 subscribe.
 
