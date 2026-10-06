@@ -38,7 +38,8 @@ agent by folder name, so keep the two the same.
 
 `kl init <name>` creates `$KL_AGENTS_DIR/<name>/` with an `agent.yml`
 (`name`, an empty `description`, and the optional keys commented out) and a
-`SYSTEM.md` holding only an HTML comment. It refuses a name that's taken.
+`SYSTEM.md` holding only an HTML comment, so the agent has the default
+identity until you write one. It refuses a name that's taken.
 `kl new` is the same command.
 
 `kl init <name> --full` also creates:
@@ -82,6 +83,7 @@ stderr and in the session's UI.
 | `model` | both | Pi's | `provider/id`, optionally with a `:<thinking>` suffix |
 | `thinking` | both | Pi's | `off` `minimal` `low` `medium` `high` `xhigh` `max` |
 | `system_prompt` | both | `SYSTEM.md`, if the agent folder has one | the identity prompt file |
+| `harness_prompt` | both | kl's baseline | a file that replaces kl's baseline prompt; `false` drops it |
 | `project_context` | both | `true` | `false` drops `AGENTS.md`/`CLAUDE.md` from the prompt |
 | `sections` | both | none | extra prompt sections (below) |
 | `cleanup` | both | none | the cleanup prompt: inline text, or `{path: ...}` |
@@ -90,10 +92,10 @@ stderr and in the session's UI.
 | `pi_extensions` | both | `true` | load base Pi's global extensions (`~/.pi/agent/extensions/`) too |
 | `user_name` | config.yml only | `user` | see [config.md](config.md) |
 
-**Paths.** `system_prompt` and `sections[].path` are relative to the folder
-of the file that sets them, so a global section can point into the kl
-folder and an agent's into its own. A `cleanup` path is always relative to
-the agent folder, even when set in `config.yml`.
+**Paths.** `system_prompt`, `harness_prompt` and `sections[].path` are
+relative to the folder of the file that sets them, so a global section can
+point into the kl folder and an agent's into its own. A `cleanup` path is
+always relative to the agent folder, even when set in `config.yml`.
 
 **model and thinking** apply only to new sessions, and only when you don't
 pass `--model` or `--thinking` to `kl run` yourself. `thinking` is also
@@ -118,28 +120,33 @@ missing cleanup prompt means no cleanup turn. How the turn runs is in
 
 kl writes the top of the prompt and leaves the rest to Pi. In order:
 
-1. The identity prompt (`system_prompt`, usually `SYSTEM.md`).
-2. The kl baseline, `prompts/kl-baseline.md` in the repo.
-3. `<tools>`: one line per active tool that has a prompt snippet.
-4. `<rules>`: the active tools' guidelines, deduplicated. Pi's own
-   built-in rules are not included.
-5. Pi's sections: `<addendum>` (`APPEND_SYSTEM.md` in the kl Pi dir, or
+1. The identity prompt (`system_prompt`, usually `SYSTEM.md`). If there
+   is none, or it's empty once comments are stripped, the agent gets
+   "You are <name> - an expert coding assistant operating inside pi..."
+2. `<harness>`, holding three parts:
+   - the baseline: `prompts/kl-baseline.md` in the repo, or the
+     `harness_prompt` file;
+   - `<tools>`: one line per active tool that has a prompt snippet;
+   - `<rules>`: the active tools' guidelines, deduplicated. Pi's own
+     built-in rules are not included.
+3. Pi's sections: `<addendum>` (`APPEND_SYSTEM.md` in the kl Pi dir, or
    `--append-system-prompt`), `<project_context>` (`AGENTS.md` and
    similar from the working directory), `<skills>`, `<cwd>`, and any
    sections other extensions add.
-6. `<session>`: the agent name, session name, model, agent folder and
+4. `<session>`: the agent name, session name, model, agent folder and
    inbox path.
-7. One `<name>` block per `sections:` entry, in order.
+5. One `<name>` block per `sections:` entry, in order.
 
 HTML comments are stripped from the identity prompt and the baseline, so
 use them for notes to yourself. kl edits Pi's prompt options rather than
 replacing the prompt, which is why other extensions' sections survive.
 `<session>` is refreshed every turn, so a `/model` change shows up there.
 
-**Baseline placeholders.** The baseline can use `{{kl_docs}}` (this
-`docs/` folder), `{{pi_readme}}`, `{{pi_docs}}` and `{{pi_examples}}` (in
-the Pi install that's running). Each becomes an absolute path. An unknown
-or unresolvable placeholder warns and is left as written.
+**Baseline placeholders.** The baseline (kl's or a `harness_prompt` file)
+can use `{{kl_docs}}` (this `docs/` folder), `{{pi_readme}}`, `{{pi_docs}}`
+and `{{pi_examples}}` (in the Pi install that's running). Each becomes an
+absolute path. An unknown or unresolvable placeholder warns and is left as
+written.
 
 **sections.** Each entry is `{name, path}` (the file's contents) or
 `{name, command}` (the command's stdout):
