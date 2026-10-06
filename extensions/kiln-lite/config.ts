@@ -54,6 +54,7 @@ const KNOWN_KEYS = new Set([
 	"model",
 	"thinking",
 	"system_prompt",
+	"harness_prompt",
 	"sections",
 	"project_context",
 	"timestamps",
@@ -217,6 +218,18 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 			config.system_prompt = v;
 			config.system_prompt_base = baseDir;
 		} else warn(`kiln-lite: ${label}: system_prompt must be a path string — ignoring`);
+	}
+	if (has("harness_prompt")) {
+		const raw = obj.harness_prompt;
+		if (raw === false || raw === "") {
+			config.harness_prompt = false;
+		} else {
+			const v = str(raw);
+			if (v) {
+				config.harness_prompt = v;
+				config.harness_prompt_base = baseDir;
+			} else warn(`kiln-lite: ${label}: harness_prompt must be a path string or false — ignoring`);
+		}
 	}
 	if (has("sections")) {
 		const parsed = parseSections(obj.sections, baseDir, label, warn);

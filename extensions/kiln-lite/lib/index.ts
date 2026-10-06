@@ -12,6 +12,8 @@ export {
 	applyPrompt,
 	buildCustomPrompt,
 	loadBaseline,
+	loadAgentBaseline,
+	defaultIdentity,
 	loadIdentity,
 	renderSections,
 	renderSessionSection,
