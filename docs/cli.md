@@ -157,20 +157,9 @@ Channel names can't contain `/` or start with `.`. Usage errors exit with
 
 ## Status files
 
-`<kl root>/run/status/<session uuid>.json` is an optional hook for tools
-outside kl, such as a memory tool saying which thread a session is on. kl
-never writes or deletes it. `kl sessions` and the `sessions` tool read it.
-
-```json
-{ "summary": "fixing the login bug", "detail": "any text", "updated_at": "2026-10-06T15:00:00Z" }
-```
-
-- `summary` (string, required) replaces the plan goal as DOING. Only its
-  first line shows in the list.
-- `detail` (optional) and `updated_at` (optional) are shown in the full view.
-- A file that isn't JSON, or has no string `summary`, is ignored.
-- Write it atomically (temp file, then rename). The writer owns it and
-  should delete it when it no longer applies.
+An extension can override what `kl sessions` shows as DOING by writing
+`<kl root>/run/status/<session uuid>.json`. The format is in
+[sessions.md](sessions.md#status-files).
 
 ## Environment
 

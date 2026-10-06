@@ -1,14 +1,20 @@
 # kiln-lite docs
 
-Start with the [README](../README.md).
+kiln-lite (kl) runs Pi sessions as named agents that can find and message
+each other. Start with the [README](../README.md).
 
-- [agents.md](agents.md): the agent folder, `agent.yml`, the system prompt,
-  cleanup and resets, env vars
-- [cli.md](cli.md): `kl` and `kl message`; session names and how they resolve; status files
-- [tools.md](tools.md): built-in tools (`message`, `sessions`, `plan`,
-  `subagent`, `schedule`, `exit_session`), `/exit` `/fq` `/spawn`, writing your own tools
-- [messaging.md](messaging.md): delivery, parking, inboxes, message files,
-  channels, the daemon
-- [install.md](install.md): install.sh, the kl Pi dir, the `~/.kl` layout
+- [agents.md](agents.md): the agent folder, `kl init`, `agent.yml` keys, how
+  the system prompt is built, extensions and hooks
+- [sessions.md](sessions.md): names and the registry, starting and resuming,
+  subagents, exiting and resets, plans and status files, session env vars
+- [messaging.md](messaging.md): sending and delivery, parked mail, read
+  markers, channels, message files, the daemon
+- [cli.md](cli.md): every `kl` and `kl message` command and flag, session
+  name resolution, env vars
+- [tools.md](tools.md): the built-in tools (message, sessions, plan, schedule,
+  subagent, exit_session), /exit /fq /spawn, adding your own tools
+- [config.md](config.md): the kl folder (`~/.kl`) layout, what's safe to
+  delete, global `config.yml`
+- [install.md](install.md): install.sh, `kl install`, `kl migrate`, uninstall
 - [skills.md](skills.md): skills
 - [tmux.md](tmux.md): recommended tmux settings

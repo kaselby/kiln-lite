@@ -27,8 +27,7 @@ git clone <this repo> ~/Git/kiln-lite && cd ~/Git/kiln-lite
 ```
 
 `kl install <pkg>` installs a Pi package for every kl agent (into the kl Pi
-dir, not base Pi). Coming from an older kiln-lite, run `kl migrate` once to
-convert your agent folders.
+dir, not base Pi). `kl migrate` converts agent folders from an older kiln-lite layout.
 
 kl logs in with your Pi credentials: `~/.kl/pi/auth.json` is a symlink to
 `~/.pi/agent/auth.json`. Log in once with base `pi` (`/login`) first. Details
@@ -59,14 +58,19 @@ kl doctor                # diagnostics
 
 ## Docs
 
-- [docs/agents.md](docs/agents.md): the agent folder, `agent.yml`, the system
-  prompt, cleanup and resets
-- [docs/cli.md](docs/cli.md): `kl` and `kl message`, names and how they resolve
-- [docs/tools.md](docs/tools.md): the built-in tools and commands, and adding
-  your own
-- [docs/messaging.md](docs/messaging.md): message delivery, inboxes, parking,
-  channels, the daemon
-- [docs/install.md](docs/install.md): install, the `~/.kl` layout, the kl Pi dir
+- [docs/agents.md](docs/agents.md): the agent folder, `kl init`, `agent.yml`,
+  how the system prompt is built, extensions and hooks
+- [docs/sessions.md](docs/sessions.md): names, starting and resuming,
+  subagents, exiting and resets, plans and status files
+- [docs/messaging.md](docs/messaging.md): sending and delivery, parked mail,
+  channels, message files, the daemon
+- [docs/cli.md](docs/cli.md): every `kl` and `kl message` command and flag,
+  name resolution, env vars
+- [docs/tools.md](docs/tools.md): the built-in tools and slash commands, and
+  adding your own
+- [docs/config.md](docs/config.md): the `~/.kl` layout and global `config.yml`
+- [docs/install.md](docs/install.md): install.sh, `kl install`, `kl migrate`,
+  uninstall
 - [docs/skills.md](docs/skills.md): skills
 - [docs/tmux.md](docs/tmux.md): recommended tmux settings
 
