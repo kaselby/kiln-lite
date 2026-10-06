@@ -41,7 +41,7 @@ This is `pi install` against `~/.kl/pi`: the package loads for every kl
 agent, and base `pi` doesn't see it. A package installed with plain
 `pi install` lands in `~/.pi/agent` and kl doesn't load it. Base Pi's
 global extensions folder is different: kl loads it unless an agent sets
-`pi_extensions: false` ([agents.md](agents.md#extensions)).
+`pi_extensions: false` ([harness.md](harness.md#extensions)).
 
 ## Converting agent folders: `kl migrate`
 

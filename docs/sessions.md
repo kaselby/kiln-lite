@@ -125,7 +125,9 @@ stopped child keeps its transcript and parent link, and can be resumed.
   its own. `skip_cleanup: true` skips the cleanup turn.
 
 The cleanup turn is the cleanup prompt sent as a user message once the
-current turn ends. The session exits when that turn ends. Messages that
+current turn ends. The prompt is read when it's used, so edits during the
+session apply; a `path` is relative to the agent folder, and an empty or
+missing prompt means no cleanup turn. The session exits when that turn ends. Messages that
 arrive meanwhile stay in the inbox for the next start (or, for a reset,
 until the reset is done).
 
