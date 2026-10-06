@@ -1,7 +1,7 @@
 # Messaging
 
-Sessions message each other with the `message` tool (or `kl-msg` from a
-shell). Every message is a markdown file in the recipient's inbox,
+Sessions message each other with the `message` tool (or `kl message`
+from a shell, see [cli.md](cli.md#kl-message)). Every message is a markdown file in the recipient's inbox,
 `~/.kl/run/inbox/<session uuid>/` (`$KL_INBOX` inside the session).
 
 ## Sending
@@ -29,6 +29,13 @@ shell). Every message is a markdown file in the recipient's inbox,
 - A message counts as delivered once it's in the transcript. Then kl writes
   an empty `<id>.read` next to `<id>.md`. A resumed session doesn't get the
   same message twice.
+
+## Reading
+
+`kl message channels` lists every channel; `kl message history #channel`
+or `kl message history <session>` shows a channel's history or a session's
+inbox, `--follow` streams new ones, `--json` for scripts. The `message`
+tool has the same as `action: "channels"` and `action: "history"`.
 
 ## Message files
 
@@ -61,7 +68,7 @@ You don't manage it.
   `channels/<name>/history.jsonl`, `daemon.log`)
 - Protocol: one JSON line per request over the unix socket; see
   `src/daemon/protocol.ts`.
-- `kl-msg status` checks it's up.
+- `kl message status` checks it's up.
 
 The bundled `messaging` skill (`skills/messaging/SKILL.md`) is the agent-facing
 version of this page.

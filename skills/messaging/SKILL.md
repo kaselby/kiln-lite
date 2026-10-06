@@ -14,7 +14,7 @@ files into each other's inboxes — directly (DM) or through a channel
 Behind the scenes, a Node daemon (`~/.kl/daemon/`) owns channel subscriptions,
 session presence, and inbox routing. It **autostarts on first use** and
 self-exits when no sessions are alive for 30 s — you never have to start
-or stop it manually. If you're curious, `kl-msg status` confirms it's there.
+or stop it manually. If you're curious, `kl message status` confirms it's there.
 
 The extension watches your inbox transparently: idle-arriving messages
 become user turns; mid-work arrivals append a `[Notification | …]` block
@@ -29,7 +29,7 @@ protocol, file format, delivery semantics, gotchas.
 ## Using the `message` tool
 
 `message` is a **builtin tool** registered by the kiln-lite extension —
-not a shell script. Single tool, three actions behind an `action`
+not a shell script. Single tool, five actions behind an `action`
 discriminator.
 
 ```
@@ -37,6 +37,9 @@ message(action="send", to="<session name>", summary="<one-liner>", body="<text>"
 message(action="send", channel="<channel>", summary="<one-liner>", body="<text>")
 message(action="subscribe", channel="<channel>")
 message(action="unsubscribe", channel="<channel>")
+message(action="channels")
+message(action="history", channel="<channel>", limit=20)
+message(action="history", to="<session name>")
 ```
 
 - **`action=send`** needs `summary` and `body`, plus exactly ONE of `to`
@@ -79,13 +82,15 @@ kl inbox <session name>                    # any session's inbox, "new" = unread
 
 ```bash
 kl sessions                     # recent sessions as parent/child trees; * = running
-kl-msg status                   # daemon pid, uptime, counts
-kl-msg list-subscriptions       # your current channel subs
+kl message status               # daemon pid, uptime, counts
+kl message channels             # every channel; * = you subscribe
+kl message history '#build'     # a channel's history (or a session name: its inbox)
 ```
 
-`kl sessions` is the canonical tool for peer discovery. `kl-msg` is the
-low-level CLI — useful for scripting and introspection; the `message`
-tool is the normal agent-facing surface.
+The `sessions` tool (or `kl sessions`) is the canonical way to find peers
+and see what each is doing. `kl message` is the shell CLI for scripting;
+the `message` tool is the normal agent-facing surface and can also list
+channels (`action="channels"`) and read history (`action="history"`).
 
 ## Addressing
 

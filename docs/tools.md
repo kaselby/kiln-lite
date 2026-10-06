@@ -7,7 +7,15 @@ Every kl session has these, next to Pi's own tools:
 - **message**: send a DM (`to`: a session name, see [cli.md](cli.md)) or a
   channel broadcast, or subscribe/unsubscribe to a channel. The result says
   whether the message was delivered (`sent to X`) or parked because X isn't
-  running. See [messaging.md](messaging.md).
+  running. `action: "channels"` lists every channel; `action: "history"`
+  with `channel` or `to` (and optional `limit`) reads a channel's history or
+  a session's inbox. See [messaging.md](messaging.md).
+- **sessions** `{name?, all?, limit?}`: with no `name`, recent sessions as
+  parent/child trees, which are running, busy or idle, and what each is
+  doing (its plan goal and progress, or a status file's summary). With
+  `name`, that session in full: parent, children, cwd, transcript, inbox
+  counts, status, and the plan with every task. Same output as
+  `kl sessions`; see [cli.md](cli.md).
 - **subagent** `{agent, prompt, wait?}`: start a new session of an installed
   agent (the tool description lists them) as a child of this one, with
   `prompt` as its first message. The child is told to send its results to

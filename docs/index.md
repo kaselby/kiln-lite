@@ -4,7 +4,7 @@ Start with the [README](../README.md).
 
 - [agents.md](agents.md): the agent folder, `agent.yml`, the system prompt,
   cleanup and resets, env vars
-- [cli.md](cli.md): `kl` and `kl-msg`; session names and how they resolve
+- [cli.md](cli.md): `kl` and `kl message`; session names and how they resolve; status files
 - [tools.md](tools.md): built-in tools (`message`, `subagent`, `schedule`,
   `exit_session`), `/exit` `/fq` `/spawn`, writing your own tools
 - [messaging.md](messaging.md): delivery, parking, inboxes, message files,

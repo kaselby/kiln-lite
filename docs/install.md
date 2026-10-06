@@ -10,8 +10,7 @@ Node 20+, tmux, and Pi 1.0.3 or newer (`@earendil-works/pi-coding-agent`).
 ./install.sh [--no-starter]
 ```
 
-It runs `npm install`, then `npm link`, which puts `kl` and `kl-msg` on
-PATH. It removes any old global `pi install` of kiln-lite, and creates a
+It runs `npm install`, then `npm link`, which puts `kl` on PATH. It removes any old global `pi install` of kiln-lite, and creates a
 starter agent at `~/.kl/agents/agent` (`kl init agent`) unless one exists.
 Running it again is safe.
 

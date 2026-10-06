@@ -1,4 +1,4 @@
-# CLI: `kl` and `kl-msg`
+# CLI: `kl`
 
 `kl --help` prints the same summary.
 
@@ -28,8 +28,10 @@ kl run [<agent>] [-d|--detach] [--prompt-file F] [--parent S] [--wake park|auto]
 kl [pi args...]               same as kl run with the default agent
 kl resume <session> [-d] [pi args...]
 kl attach <session> [-d]
-kl sessions [-n N] [--all]
+kl sessions [-n N] [--all] [--json]
+kl sessions <session> [--json]
 kl inbox <session>
+kl message <command>          see below
 kl agents
 kl init <name> [--full]       (kl new is an alias)
 kl doctor [<name>]
@@ -49,11 +51,20 @@ kl migrate [--dry-run] [<agent-home>...]
   from its transcript if nothing is running, then attach (`-d`: print the
   name instead). Mail that arrived while it was down is delivered on start.
 - **sessions** shows recent sessions as parent/child trees; `*` marks
-  running ones.
+  running ones. DOING is the session's plan goal and progress (`2/5`), or
+  the summary from its status file (below). `kl sessions <session>` shows
+  one session in full: state, parent and children, cwd, home, transcript,
+  inbox counts, status, and the plan with every task. `--json` prints the
+  same as JSON. The `sessions` tool shows the same thing to agents.
+- Inside a kl session (where `SESSION_UUID` is set, which includes anything
+  an agent runs from its bash tool) **run**, **resume**, **attach** and a
+  bare `kl` never attach: they act as `-d` and say so on stderr. Attaching
+  would take over the agent's own terminal. Your own shell has no
+  `SESSION_UUID`, so attaching from it works as usual.
 - **inbox** shows a session's inbox directory and messages; `new` = unread.
 - **agents** lists installed agents with their session count and description.
 - **init** scaffolds an agent; see [agents.md](agents.md).
-- **doctor** checks node, the pi kl runs, tmux, kl-msg, the daemon, the kl
+- **doctor** checks node, the pi kl runs, tmux, the daemon, the kl
   Pi dir (is `auth.json` the link to your Pi login? which packages are
   installed?) and each agent folder.
 
@@ -74,23 +85,67 @@ Env:
 | `KL_PI` | pi binary (default: the repo's `node_modules/.bin/pi`, else `pi` on PATH) |
 | `KL_TMUX_SOCKET` | run every tmux call as `tmux -L <socket>` (for isolated test runs) |
 
-## `kl-msg`
+## `kl message`
 
-The messaging CLI. Inside a session (where `SESSION_UUID` and `AGENT_ID` are
-set) it sends as that session; agents normally use the `message` tool
-instead. From your own shell, with no `SESSION_UUID`, `send` and `publish`
-go out as you (`from: $USER`) and the recipient gets no agent-mail
-disclaimer. `subscribe`, `unsubscribe`, `list-subscriptions` and
-`deliver-self` need a session.
+Messaging from a shell, and the surface a UI can build on. Inside a session
+(where `SESSION_UUID` and `AGENT_ID` are set) it acts as that session;
+agents normally use the `message` tool, which calls the same code. From your
+own shell, with no `SESSION_UUID`, you act as yourself (`from: $USER`) and
+the recipient gets no agent-mail disclaimer; `subscribe` and `unsubscribe`
+need a session.
 
 ```
-kl-msg send <to> <summary> [--body <text> | --body-stdin] [--priority normal|high]
-kl-msg publish <channel> <summary> [--body <text> | --body-stdin] [--priority ...]
-kl-msg subscribe <channel>
-kl-msg unsubscribe <channel>
-kl-msg list-subscriptions
-kl-msg status
+kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high]
+kl message subscribe <channel>
+kl message unsubscribe <channel>
+kl message channels [--json]
+kl message history <session|#channel> [-n N] [--follow] [--json]
+kl message status [--json]
 ```
 
-`kl-msg deliver-self` (used by scheduled wakes) and `list-sessions` also
-exist. For finding sessions, use `kl sessions`.
+- **send**: a DM to a session (any `<session>` form above), or `#channel`
+  to everyone subscribed to it.
+- **channels**: every channel that exists (has a subscriber or any
+  history), with subscriber names, subscriber count, message count and the
+  time of the last message. `*` marks the ones this session subscribes to.
+- **history**: oldest first, the last `N` (default 20; `-n 0` = all).
+  `#channel` reads the channel's history
+  (`~/.kl/daemon/channels/<name>/history.jsonl`). A session reads the mail
+  in its inbox (`~/.kl/run/inbox/<uuid>/`): what it received, DMs and
+  channel copies, with `new` on what it hasn't been given yet. What a
+  session sent is in the recipients' inboxes, not its own. `--follow` (`-f`)
+  keeps printing new messages until interrupted.
+- **status**: the daemon's pid, socket, session and channel counts.
+- **--json**: `channels` prints an array, `status` an object, and
+  `history` one JSON object per message per line (JSON Lines), so
+  `--follow --json` streams the same shape. A message has `id`, `ts`,
+  `from`, `from_session` (the sender's UUID, when the sender is a kl
+  session), `to` and `read` (inbox mail), `channel`, `summary`, `body`,
+  `priority`, `path` (inbox mail). Names, never UUIDs, in `from`, `to` and
+  subscriber lists.
+
+## Status files
+
+A session can have an optional status file at
+`~/.kl/run/status/<session uuid>.json` (`<kl root>/run/status/`). It is a
+hook for tools outside kl, e.g. a memory tool saying which thread a session
+is working on. kl never writes or deletes it; it only reads it in
+`kl sessions` and the `sessions` tool. With no such tool installed, there
+are no status files and everything comes from the plan.
+
+```json
+{ "summary": "fixing the login bug", "detail": "any text, any length", "updated_at": "2026-10-06T15:00:00Z" }
+```
+
+- `summary` (string, required): one line. It replaces the plan goal as the
+  session's DOING in the list. Only its first line is shown, cut to 60
+  characters.
+- `detail` (string, optional): shown in the full view, above the plan.
+- `updated_at` (ISO time, optional): shown next to the status.
+- A file that isn't JSON or has no string `summary` is ignored.
+- Write it atomically (write a temp file, then rename), keyed by the
+  session's UUID (`$SESSION_UUID` inside the session).
+- The writer owns it and should delete it when it no longer applies. A file
+  left behind after the session ends is harmless: the session shows as not
+  running. kl doesn't remove it, just as it keeps plans, since a session
+  can be resumed.

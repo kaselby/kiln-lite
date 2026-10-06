@@ -61,7 +61,7 @@ kl doctor                # diagnostics
 
 - [docs/agents.md](docs/agents.md): the agent folder, `agent.yml`, the system
   prompt, cleanup and resets
-- [docs/cli.md](docs/cli.md): `kl` and `kl-msg`, names and how they resolve
+- [docs/cli.md](docs/cli.md): `kl` and `kl message`, names and how they resolve
 - [docs/tools.md](docs/tools.md): the built-in tools and commands, and adding
   your own
 - [docs/messaging.md](docs/messaging.md): message delivery, inboxes, parking,
