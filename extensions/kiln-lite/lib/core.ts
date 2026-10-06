@@ -17,7 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
-import { applyPrompt, loadPromptParts, startPromptParts, PROMPT_ENTRY, type PromptParts } from "../prompt.ts";
+import { applyPrompt, loadPromptParts, type PromptParts } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildSessionsTool } from "../sessions-tool.ts";
@@ -63,12 +63,12 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
 	// A reset (exit_session continue) rebuilds the prompt from the files, as a
-	// fresh start would; the new parts are recorded after the reset entry.
+	// fresh start would.
 	const lifecycle = installLifecycle(pi, {
 		onReset: () => {
 			if (!state) return [];
 			promptParts = loadPromptParts(loadConfig({ agentHome: state.agentHome, warn }), state.env, warn);
-			return [{ type: "custom", customType: PROMPT_ENTRY, data: promptParts }];
+			return [];
 		},
 		afterReset: () => watcher?.dispatchIdle(),
 	});
@@ -146,22 +146,10 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		};
 		lifecycle.start(state, warn);
 
-		// Prompt parts. A resume or fork keeps the parts its transcript recorded,
-		// so the prompt is what it was even if the files changed since. Otherwise
-		// read them now (warnings surface at startup) and record them.
-		const start = startPromptParts(
-			sessionOrigin !== undefined,
-			() => ctx.sessionManager.getBranch(),
-			() => loadPromptParts(config, env, warn),
-		);
-		promptParts = start.parts;
-		if (start.record) {
-			try {
-				pi.appendEntry(PROMPT_ENTRY, promptParts);
-			} catch (err) {
-				warn(`kiln-lite: could not append ${PROMPT_ENTRY} entry: ${(err as Error).message}`);
-			}
-		}
+		// Prompt parts, read from the files now (warnings surface at startup).
+		// On a resume Pi compares the prompt built from them with the one in the
+		// transcript and appends only what changed.
+		promptParts = loadPromptParts(config, env, warn);
 
 		periodicTime =
 			config.timestamps === false
@@ -203,9 +191,8 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 
 	// --- before_agent_start: prompt composition (never returns systemPrompt) ---
-	pi.on("before_agent_start", async (event, ctx) => {
+	pi.on("before_agent_start", async (event) => {
 		if (!state || !promptParts) return;
-		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		let active: string[] | undefined;
 		try {
 			active = pi.getActiveTools();
@@ -218,7 +205,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			{
 				agentName: state.config.name,
 				sessionId: state.agentId,
-				model,
 				home: state.agentHome,
 				inbox: state.env.KL_INBOX,
 			},

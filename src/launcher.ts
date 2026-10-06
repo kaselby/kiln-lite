@@ -15,7 +15,7 @@
  *   3… the pi argv (without the pi binary; user args included, in order)
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +30,6 @@ export const CORE_SKILLS = join(REPO_ROOT, "skills");
 
 /** Files shared with base pi by symlink (never copied). */
 export const SHARED_PI_FILES = ["auth.json", "keybindings.json", "models.json"];
-export const DEFAULT_KL_PI_SETTINGS = { defaultTools: ["+tool_search"] };
 
 export interface EnsureResult {
 	dir: string;
@@ -39,9 +38,9 @@ export interface EnsureResult {
 }
 
 /**
- * Create `<klRoot>/pi` if needed: symlink auth/keybindings/models to the
- * base pi agent dir when they exist there, and write a kl settings.json if
- * absent. Never overwrites, never copies, never touches `basePiDir`.
+ * Create `<klRoot>/pi` if needed and symlink auth/keybindings/models to the
+ * base pi agent dir when they exist there. Never overwrites, never copies,
+ * never touches `basePiDir`. Pi writes its own settings.json.
  */
 export function ensureKlPiDir(klRoot: string, basePiDir = join(homedir(), ".pi", "agent")): EnsureResult {
 	const dir = join(klRoot, "pi");
@@ -56,11 +55,6 @@ export function ensureKlPiDir(klRoot: string, basePiDir = join(homedir(), ".pi",
 		if (!existsSync(target) || exists(link)) continue;
 		symlinkSync(target, link);
 		created.push(`${link} -> ${target}`);
-	}
-	const settings = join(dir, "settings.json");
-	if (!exists(settings)) {
-		writeFileSync(settings, JSON.stringify(DEFAULT_KL_PI_SETTINGS, null, 2) + "\n");
-		created.push(settings);
 	}
 	return { dir, created };
 }

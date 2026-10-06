@@ -39,11 +39,11 @@ test("ensureKlPiDir: symlinks existing shared files, writes settings, never copi
 	assert.equal(readlinkSync(join(r.dir, "auth.json")), join(base, "auth.json"));
 	assert.ok(lstatSync(join(r.dir, "models.json")).isSymbolicLink());
 	assert.equal(existsSync(join(r.dir, "keybindings.json")), false);
-	assert.deepEqual(JSON.parse(readFileSync(join(r.dir, "settings.json"), "utf8")), { defaultTools: ["+tool_search"] });
-	assert.equal(r.created.length, 4);
+	assert.equal(existsSync(join(r.dir, "settings.json")), false, "Pi's own defaults: kl writes no settings");
+	assert.equal(r.created.length, 3);
 });
 
-test("ensureKlPiDir: idempotent; never overwrites an edited settings.json or existing files", () => {
+test("ensureKlPiDir: idempotent; never overwrites settings.json or existing files", () => {
 	const klRoot = tmp("kl-root-");
 	const base = tmp("pi-base-");
 	writeFileSync(join(base, "auth.json"), "{}");

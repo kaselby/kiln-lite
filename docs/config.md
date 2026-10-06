@@ -15,7 +15,7 @@ keys of the global `config.yml`. Per-agent settings are in
     auth.json             symlinks to the same files in ~/.pi/agent
     keybindings.json
     models.json
-    settings.json         kl's Pi settings
+    settings.json         Pi's settings for kl sessions (Pi writes it)
     sessions/             Pi's transcripts of kl sessions
     APPEND_SYSTEM.md      optional: text added to every kl agent's prompt
   run/
@@ -43,8 +43,7 @@ so two kl folders on one machine share a daemon unless their
 **`pi/`** is the Pi config dir for every kl session
 (`PI_CODING_AGENT_DIR`), kept apart from base Pi's `~/.pi/agent`. kl creates
 it on the first launch: it symlinks `auth.json`, `keybindings.json` and
-`models.json` to `~/.pi/agent` if they exist there, and writes a
-`settings.json` that turns on Pi's `tool_search`. It never overwrites a
+`models.json` to `~/.pi/agent` if they exist there. It never overwrites a
 file that's already there, never copies, and never writes to
 `~/.pi/agent`. After that it's Pi's: Pi writes transcripts under
 `sessions/`, and `kl install` installs packages here

@@ -18,17 +18,15 @@
  *   <project_context> Pi: AGENTS.md etc. (`include_project_context: false` empties it)
  *   <skills>          Pi
  *   <cwd>             Pi (always rendered)
- *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
+ *   <session>         kl: agent, session id, home, inbox (no model: it would change on /model)
  *   <name>…           `prompt.extra_sections`
  *
  * The identity, baseline and extra sections (PromptParts) are read at session
- * start and again after a reset (exit_session continue), and each read is
- * recorded in the transcript as a `kl-prompt` entry. A resumed or forked
- * session reuses the recorded parts, so its prompt stays what it was.
+ * start and again after a reset (exit_session continue).
  *
- * Pi records sections in the transcript and sends later changes as deltas,
- * so sections other extensions add survive, and a changed `session` (e.g.
- * after /model) costs one section update, not a new prompt.
+ * Pi records the prompt's sections in the transcript and appends only changed
+ * sections later, so sections other extensions add survive, and a resumed
+ * session whose files changed gets a section update, not a new prompt.
  */
 
 import { readFileSync, existsSync, realpathSync } from "node:fs";
@@ -76,8 +74,6 @@ export interface PromptParts {
 export interface SessionInfo {
 	agentName: string;
 	sessionId: string;
-	/** `provider/id`, or undefined if no model is selected. */
-	model?: string;
 	home: string;
 	/** This session's inbox dir (~/.kl/run/inbox/<uuid>): the one place a UUID reaches the model. */
 	inbox?: string;
@@ -117,9 +113,6 @@ export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): 
 	return text ? text : defaultIdentity(config.name);
 }
 
-/** Transcript entry (custom, `data` = PromptParts) recording the parts a prompt was built from. */
-export const PROMPT_ENTRY = "kl-prompt";
-
 /** Everything applyPrompt needs from files. */
 export function loadPromptParts(config: AgentConfig, env: Record<string, string>, warn: (msg: string) => void): PromptParts {
 	const p = config.prompt;
@@ -131,44 +124,6 @@ export function loadPromptParts(config: AgentConfig, env: Record<string, string>
 		appendedPrompt: p.include_appended_prompt,
 		projectContext: p.include_project_context,
 	};
-}
-
-/** The last PromptParts recorded on a transcript branch, or null if there are none. */
-export function recordedPromptParts(entries: readonly unknown[]): PromptParts | null {
-	for (let i = entries.length - 1; i >= 0; i--) {
-		const e = entries[i] as { type?: unknown; customType?: unknown; data?: unknown } | null;
-		if (e?.type === "custom" && e.customType === PROMPT_ENTRY && isPromptParts(e.data)) return e.data;
-	}
-	return null;
-}
-
-/**
- * The parts a session starts with. A resumed or forked session (`reuse`)
- * keeps the parts its transcript recorded; otherwise, or when none are
- * recorded, they are loaded now and `record` is true.
- */
-export function startPromptParts(
-	reuse: boolean,
-	entries: () => readonly unknown[],
-	load: () => PromptParts,
-): { parts: PromptParts; record: boolean } {
-	const recorded = reuse ? recordedPromptParts(entries()) : null;
-	return recorded ? { parts: recorded, record: false } : { parts: load(), record: true };
-}
-
-function isPromptParts(d: unknown): d is PromptParts {
-	const p = d as Partial<PromptParts> | null;
-	const text = (v: unknown) => v === null || typeof v === "string";
-	return (
-		!!p &&
-		text(p.identity) &&
-		text(p.baseline) &&
-		Array.isArray(p.sections) &&
-		p.sections.every((s) => typeof s?.name === "string" && typeof s?.content === "string") &&
-		typeof p.klPrompt === "boolean" &&
-		typeof p.appendedPrompt === "boolean" &&
-		typeof p.projectContext === "boolean"
-	);
 }
 
 export function loadBaseline(
@@ -282,7 +237,6 @@ export function renderSessionSection(info: SessionInfo): string {
 	return [
 		`agent: ${info.agentName}`,
 		`session: ${info.sessionId}`,
-		`model: ${info.model ?? "(none)"}`,
 		`home: ${info.home}`,
 		...(info.inbox ? [`inbox: ${info.inbox}`] : []),
 	].join("\n");

@@ -149,22 +149,27 @@ kl writes the top of the prompt and leaves the rest to Pi. In order:
    `<project_context>` (`AGENTS.md` and similar from the working
    directory; `include_project_context: false` drops it), `<skills>`,
    `<cwd>`, and any sections other extensions add.
-4. `<session>`: the agent name, session name, model, agent folder and
-   inbox path.
+4. `<session>`: the agent name, session name, agent folder and inbox
+   path. It leaves out the model, so `/model` doesn't change the prompt.
 5. One `<name>` block per `extra_sections` entry, in order.
 
 HTML comments are stripped from the identity prompt and the baseline, so
 use them for notes to yourself. kl edits Pi's prompt options rather than
 replacing the prompt, which is why other extensions' sections survive.
-`<session>` is refreshed every turn, so a `/model` change shows up there.
 
 **When it's read.** kl reads the identity, the baseline and the extra
-sections at session start and again at each reset (`exit_session` with
-`continue`), so a cleanup turn's edits to them show up after the reset. A
-resumed or forked session keeps what its transcript last recorded, so its
-prompt reads as it did even if the files have changed since. `<tools>`,
-`<rules>`, `<session>` and Pi's own sections always follow the session as
-it is now.
+sections when the session's process starts (a new session or a resume) and
+again at each reset (`exit_session` with `continue`), so a cleanup turn's
+edits to them show up after the reset. Pi reads its own (AGENTS.md,
+`APPEND_SYSTEM.md`, skills) when the process starts and on `/reload`.
+
+**How changes reach the model.** Pi keeps the prompt in the transcript. At
+the start of each run it builds the prompt again and, if any section
+differs from the transcript's, appends a system message with just the
+changed sections; nothing earlier is rewritten. So a resumed session whose
+files changed since it last ran gets one such update. On models Pi doesn't
+flag for mid-conversation system messages, the whole prompt is resent
+instead, which costs the cached prefix.
 
 **Baseline placeholders.** The baseline can use `{{kl_docs}}` (this
 `docs/` folder), `{{pi_readme}}`, `{{pi_docs}}` and `{{pi_examples}}` (in
