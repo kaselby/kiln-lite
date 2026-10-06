@@ -131,8 +131,6 @@ export interface WakeOptions {
 	root?: string;
 	/** How long to wait for the new process's lease. Default 20000. */
 	timeoutMs?: number;
-	/** Extra pi args (e.g. a --model override). */
-	piArgs?: string[];
 	log?: (msg: string) => void;
 }
 
@@ -166,7 +164,7 @@ export async function wake(uuid: string, opts: WakeOptions = {}): Promise<WakeRe
 		// Someone may have woken it while we waited.
 		const now = liveLease(uuid, root);
 		if (now) return { name: now.name, started: false, lease: now };
-		const name = startProcess(entry, opts.piArgs ?? [], root);
+		const name = startProcess(entry, root);
 		const deadline = Date.now() + (opts.timeoutMs ?? 20000);
 		while (Date.now() < deadline) {
 			const l = liveLease(uuid, root);
@@ -181,12 +179,12 @@ export async function wake(uuid: string, opts: WakeOptions = {}): Promise<WakeRe
 	}
 }
 
-function startProcess(entry: RegistryEntry, extraArgs: string[], root: string): string {
+function startProcess(entry: RegistryEntry, root: string): string {
 	if (!existsSync(entry.transcript)) throw new Error(neverStarted(entry));
 	if (!existsSync(entry.home)) throw new Error(`agent home for ${entry.name} is gone: ${entry.home}`);
-	// No --model/--thinking unless the caller passes them: pi restores the
-	// transcript's latest model_change and thinking_level_change.
-	const p = plan({ agentHome: entry.home, userArgs: ["--session", entry.transcript, ...extraArgs], resume: true });
+	// No --model/--thinking: pi restores the transcript's latest
+	// model_change and thinking_level_change.
+	const p = plan({ agentHome: entry.home, userArgs: ["--session", entry.transcript], resume: true });
 	const pi = resolvePiBin();
 	const cwd = entry.cwd && existsSync(entry.cwd) ? entry.cwd : entry.home;
 	return reserveName(

@@ -56,9 +56,9 @@ fresh one.
 
 ## Resuming
 
-`kl resume <session>` and `kl attach <session>` do the same thing: if the
-session is running, attach to it; if not, start it again from its
-transcript, then attach. Starting it again:
+`kl resume <session>` starts a stopped session again from its transcript
+and attaches; `kl attach <session>` attaches to a running one and asks
+before resuming a stopped one. Starting it again:
 
 - uses the session's last name, unless a running session holds it, in
   which case it gets a fresh name for this run (added to its registry
@@ -66,8 +66,7 @@ transcript, then attach. Starting it again:
 - runs in the session's recorded working directory, or the agent folder if
   that's gone;
 - keeps the model and thinking level the session last used (pi reads
-  them from the transcript, so a `/model` change sticks), unless you pass
-  `--model` or `--thinking`;
+  them from the transcript, so a `/model` change sticks);
 - rereads config, extensions and prompt files from the agent folder as it
   is now;
 - runs the pre-launch hook, and waits up to 20 s for the new process to

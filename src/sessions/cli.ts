@@ -3,7 +3,7 @@
  * launchNew runs the pre-launch hook):
  *
  *   run --home <home> [--detach|-d] [--prompt-file F] [--parent <name|uuid>] [--] [pi args...]
- *   resume <target> [--detach|-d] [pi args...]
+ *   resume <target> [--detach|-d]
  *   attach <target> [--detach|-d]
  *   sessions [<target>] [-n N] [--all] [--json]
  *
@@ -17,6 +17,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { createInterface } from "node:readline/promises";
 
 import { launchNew, wake } from "./launch.ts";
 import { UUID_RE } from "./paths.ts";
@@ -94,22 +95,21 @@ function cmdRun(args: string[]): void {
 	process.exit(enter(name));
 }
 
-/** resume and attach: resolve → wake if not live → attach (or print the name with --detach). */
+/**
+ * resume: resolve → start it again if it isn't running → attach (or print the
+ * name with --detach). The session comes back exactly as it was: no pi args.
+ * attach: the same for a running session; a stopped one asks first (y/N),
+ * and without a terminal to ask in it is an error.
+ */
 async function cmdResume(verb: string, args: string[]): Promise<void> {
 	let detach = false;
 	let target = "";
-	const piArgs: string[] = [];
-	for (let i = 0; i < args.length; i++) {
-		const a = args[i];
+	for (const a of args) {
 		if (a === "--detach" || a === "-d") detach = true;
-		else if (a === "--") {
-			piArgs.push(...args.slice(i + 1));
-			break;
-		} else if (!target) target = a;
-		else piArgs.push(a);
+		else if (!target && !a.startsWith("-")) target = a;
+		else die(`${verb}: unexpected argument '${a}' (${verb} takes <session> [-d])`);
 	}
 	if (!target) die(`${verb} needs a session name (see kl sessions)`);
-	if (verb === "attach" && piArgs.length) die("attach takes no pi args; use kl resume <name> [pi args]");
 	const guard = guardDetach(detach);
 	if (guard.note) info(guard.note);
 	detach = guard.detach;
@@ -122,12 +122,11 @@ async function cmdResume(verb: string, args: string[]): Promise<void> {
 	}
 	if (r.note) info(r.note);
 	let name = r.name;
-	if (r.lease) {
-		if (piArgs.length) info(`${name} is already running; ignoring pi args`);
-	} else {
+	if (!r.lease) {
 		if (!r.entry) die(`${target} is not running and has no registry entry`);
+		if (verb === "attach" && !(await confirmResume(name))) process.exit(1);
 		try {
-			const w = await wake(r.uuid, { piArgs, log: info });
+			const w = await wake(r.uuid, { log: info });
 			name = w.name;
 			info(w.started ? `woke ${name} (${shortId(r.uuid, knownUuids())})` : `${name} was already running`);
 		} catch (e) {
@@ -139,6 +138,24 @@ async function cmdResume(verb: string, args: string[]): Promise<void> {
 		return;
 	}
 	process.exit(enter(name));
+}
+
+/** attach on a stopped session: ask on the terminal; no terminal → error. */
+async function confirmResume(name: string): Promise<boolean> {
+	if (!process.stdin.isTTY || !process.stderr.isTTY || process.env.SESSION_UUID) {
+		die(`${name} isn't running; kl resume ${name} starts it`);
+	}
+	const rl = createInterface({ input: process.stdin, output: process.stderr });
+	try {
+		const answer = await rl.question(`${name} isn't running. Resume it? [y/N] `);
+		return /^y(es)?$/i.test(answer.trim());
+	} catch {
+		// Ctrl+D or Ctrl+C at the prompt: no.
+		process.stderr.write("\n");
+		return false;
+	} finally {
+		rl.close();
+	}
 }
 
 function cmdSessions(args: string[]): void {

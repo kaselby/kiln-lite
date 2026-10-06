@@ -27,13 +27,15 @@
 #                           error, not a prompt.
 #   kl [--detach] [pi-args...]
 #                           Same as `kl run` with the default agent.
-#   kl resume <session> [--detach] [pi-args...]
+#   kl resume <session> [--detach]
+#                           Start a stopped session again exactly as it was
+#                           (same name unless another running session holds
+#                           it), then attach. Mail parked while it was down is
+#                           delivered when it starts. --detach: print the
+#                           name, don't attach.
 #   kl attach <session> [--detach]
-#                           Attach to a session, starting it again first if it
-#                           isn't running (same name unless another running
-#                           session holds it). Mail parked while it was down is
-#                           delivered when it starts. --detach: start it if
-#                           needed, print the name, don't attach.
+#                           Attach to a running session. A stopped one asks
+#                           whether to resume it (y/N).
 #   kl sessions [-n N] [--all] [--json]
 #                           Recent sessions as parent/child trees; * = running,
 #                           with what each is doing (its plan's goal).
