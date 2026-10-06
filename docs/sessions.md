@@ -68,10 +68,8 @@ transcript, then attach. Starting it again:
 - keeps the model and thinking level the session last used (pi reads
   them from the transcript, so a `/model` change sticks), unless you pass
   `--model` or `--thinking`;
-- keeps its prompt from the transcript; if the files behind it changed
-  since, the model gets one update with the changed sections
-  ([agents.md](agents.md#the-system-prompt)). Config and extensions come
-  from the agent folder as it is now;
+- rereads config, extensions and prompt files from the agent folder as it
+  is now;
 - runs the pre-launch hook, and waits up to 20 s for the new process to
   write its lease;
 - gives the first turn a hidden note that the session was resumed and time
