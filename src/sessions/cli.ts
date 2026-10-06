@@ -76,7 +76,7 @@ function cmdRun(args: string[]): void {
 		// Last positional = the prompt (pi [options] [@files...] [messages...]). Never goes through a shell.
 		piArgs.push(readFileSync(promptFile, "utf8"));
 	}
-	const guard = verb === "resume" ? { detach: true, note: "" } : guardDetach(detach);
+	const guard = guardDetach(detach);
 	if (guard.note) info(guard.note);
 	detach = guard.detach;
 	const parentUuid = parent ? resolveParent(parent) : undefined;
