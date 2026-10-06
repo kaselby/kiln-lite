@@ -30,7 +30,7 @@ An unknown name is an error. Notes about what kl picked go to stderr.
 ```
 kl run [<agent>] [-d|--detach] [--prompt-file F] [--parent S] [pi args...]
 kl [-d] [pi args...]
-kl resume <session> [-d]
+kl resume <session>
 kl attach <session> [-d]
 kl sessions [-n N] [--all] [--json]
 kl sessions <session> [--json]
@@ -63,18 +63,17 @@ own tmux session and attaches to it.
 
 Bare `kl`, or `kl` followed by a flag, is `kl run` with the default agent.
 
-**resume** starts a stopped session again from its transcript, exactly as
-it was (same name, unless another running session holds it), then
-attaches; a running one it just attaches to. It takes no pi arguments. Mail
-that arrived while it was down is delivered when it starts. `-d` prints the
-name instead of attaching.
+**resume** starts a stopped session again from its transcript, in the
+background, exactly as it was (same name, unless another running session
+holds it), and prints its name. It never attaches and takes no pi
+arguments. Mail that arrived while it was down is delivered when it starts.
 
 **attach** attaches to a running session. For a stopped one it asks
 `<name> isn't running. Resume it? [y/N]`; without a terminal to ask in
 (including inside a kl session) it's an error that points to `kl resume`.
 
 **Inside a kl session** (`SESSION_UUID` set, which includes anything an
-agent runs from its bash tool), `run`, `resume`, `attach` and bare `kl`
+agent runs from its bash tool), `run`, `attach` and bare `kl`
 always act as `-d` and say so on stderr, because attaching would take over
 the agent's own terminal.
 

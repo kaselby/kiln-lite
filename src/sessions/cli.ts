@@ -3,7 +3,7 @@
  * launchNew runs the pre-launch hook):
  *
  *   run --home <home> [--detach|-d] [--prompt-file F] [--parent <name|uuid>] [--] [pi args...]
- *   resume <target> [--detach|-d]
+ *   resume <target>
  *   attach <target> [--detach|-d]
  *   sessions [<target>] [-n N] [--all] [--json]
  *
@@ -76,7 +76,7 @@ function cmdRun(args: string[]): void {
 		// Last positional = the prompt (pi [options] [@files...] [messages...]). Never goes through a shell.
 		piArgs.push(readFileSync(promptFile, "utf8"));
 	}
-	const guard = guardDetach(detach);
+	const guard = verb === "resume" ? { detach: true, note: "" } : guardDetach(detach);
 	if (guard.note) info(guard.note);
 	detach = guard.detach;
 	const parentUuid = parent ? resolveParent(parent) : undefined;
@@ -96,21 +96,21 @@ function cmdRun(args: string[]): void {
 }
 
 /**
- * resume: resolve → start it again if it isn't running → attach (or print the
- * name with --detach). The session comes back exactly as it was: no pi args.
- * attach: the same for a running session; a stopped one asks first (y/N),
- * and without a terminal to ask in it is an error.
+ * resume: start a stopped session again, exactly as it was (no pi args), in
+ * the background, and print its name. Never attaches.
+ * attach: attach to a running session; a stopped one asks first (y/N), and
+ * without a terminal to ask in it is an error.
  */
 async function cmdResume(verb: string, args: string[]): Promise<void> {
 	let detach = false;
 	let target = "";
 	for (const a of args) {
-		if (a === "--detach" || a === "-d") detach = true;
+		if (verb === "attach" && (a === "--detach" || a === "-d")) detach = true;
 		else if (!target && !a.startsWith("-")) target = a;
-		else die(`${verb}: unexpected argument '${a}' (${verb} takes <session> [-d])`);
+		else die(`${verb}: unexpected argument '${a}' (${verb === "attach" ? "attach takes <session> [-d]" : "resume takes <session>"})`);
 	}
 	if (!target) die(`${verb} needs a session name (see kl sessions)`);
-	const guard = guardDetach(detach);
+	const guard = verb === "resume" ? { detach: true, note: "" } : guardDetach(detach);
 	if (guard.note) info(guard.note);
 	detach = guard.detach;
 	let r;
@@ -132,7 +132,7 @@ async function cmdResume(verb: string, args: string[]): Promise<void> {
 		} catch (e) {
 			die((e as Error).message);
 		}
-	}
+	} else if (verb === "resume") info(`${name} is already running`);
 	if (detach) {
 		process.stdout.write(`${name}\n`);
 		return;

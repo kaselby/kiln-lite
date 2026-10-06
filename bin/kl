@@ -15,7 +15,7 @@
 #                           Start a new session of <agent> ($KL_AGENTS_DIR/<agent>;
 #                           default: $AGENT_HOME, else the starter "agent") and
 #                           attach to it. Inside a kl session (SESSION_UUID set)
-#                           run, resume and attach never attach: they act as
+#                           run and attach never attach: they act as
 #                           --detach and say so.
 #                           --detach (-d): don't attach; print the name on stdout:
 #                             name=$(kl run reviewer -d --prompt-file brief.md)
@@ -27,12 +27,12 @@
 #                           error, not a prompt.
 #   kl [--detach] [pi-args...]
 #                           Same as `kl run` with the default agent.
-#   kl resume <session> [--detach]
-#                           Start a stopped session again exactly as it was
-#                           (same name unless another running session holds
-#                           it), then attach. Mail parked while it was down is
-#                           delivered when it starts. --detach: print the
-#                           name, don't attach.
+#   kl resume <session>
+#                           Start a stopped session again in the background,
+#                           exactly as it was (same name unless another
+#                           running session holds it), and print its name.
+#                           Mail parked while it was down is delivered when it
+#                           starts. Use `kl attach` to look at it.
 #   kl attach <session> [--detach]
 #                           Attach to a running session. A stopped one asks
 #                           whether to resume it (y/N).

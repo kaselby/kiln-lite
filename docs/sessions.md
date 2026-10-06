@@ -40,8 +40,8 @@ the pi command line from the agent folder: its extensions, its skills, its
 trust the directory. Your own arguments come last.
 
 **Detach guard.** Inside a kl session (where `SESSION_UUID` is set, which
-includes anything an agent runs from its bash tool), `kl run`, `kl resume`
-and `kl attach` never attach. They act as `--detach`, print the name, and
+includes anything an agent runs from its bash tool), `kl run` and `kl attach`
+never attach. They act as `--detach`, print the name, and
 say so on stderr. Attaching would take over the agent's own terminal.
 
 **`/spawn`** forks the current session. Pick a message; the new session
@@ -57,8 +57,8 @@ fresh one.
 ## Resuming
 
 `kl resume <session>` starts a stopped session again from its transcript
-and attaches; `kl attach <session>` attaches to a running one and asks
-before resuming a stopped one. Starting it again:
+in the background; `kl attach <session>` attaches to a running one and
+asks before resuming a stopped one. Starting it again:
 
 - uses the session's last name, unless a running session holds it, in
   which case it gets a fresh name for this run (added to its registry
@@ -81,7 +81,7 @@ starts; see [messaging.md](messaging.md).
 A message to a session that isn't running is kept in its inbox until
 someone resumes it, and so is a wake from the `schedule` tool. The one
 exception is a DM sent with `--wake` (or `wake: true` on the `message`
-tool), which starts the session detached, as `kl resume -d` would; see
+tool), which starts the session detached, as `kl resume` would; see
 [messaging.md](messaging.md#sending).
 
 ## Subagents

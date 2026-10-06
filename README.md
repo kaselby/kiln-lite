@@ -50,7 +50,8 @@ quits. `/fq` quits immediately.
 
 ```bash
 kl sessions              # recent sessions as parent/child trees; * = running
-kl resume scout-bright-raven   # start it again (if needed) and attach
+kl resume scout-bright-raven   # start it again in the background
+kl attach scout-bright-raven   # look at it (asks before resuming a stopped one)
 kl run reviewer -d --prompt-file brief.md   # detached; prints the new name
 kl message history scout-bright-raven   # a session's mail; "new" = unread
 kl agents                # installed agents

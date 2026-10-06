@@ -30,7 +30,7 @@ draws the same name never sees the old mail.
 **Waking.** A parked message waits until someone resumes the session,
 unless the sender asks for a wake (`kl message send --wake`, or `wake:
 true` on the `message` tool). Then kl parks the message as usual and starts
-the session detached, as `kl resume -d` would; it reads the message at
+the session detached, as `kl resume` would; it reads the message at
 startup. The reply is `woke <name>; the message is in its inbox`. If the
 session turns out to be running, nothing is started. Several waking sends
 at once start it at most once. If the wake fails, the message stays parked
