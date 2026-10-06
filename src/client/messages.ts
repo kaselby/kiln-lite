@@ -220,15 +220,29 @@ export function readInboxMessage(dir: string, file: string): MessageRecord | nul
 	};
 }
 
-/** Message files in an inbox dir, oldest first (names start with a UTC timestamp). */
+/**
+ * Message files in an inbox dir, oldest first. Names are
+ * `<YYYYMMDDTHHMMSSZ>-<random hex>`, so within one second the name says
+ * nothing about order: break ties by mtime.
+ */
 export function inboxFiles(dir: string): string[] {
+	let names: string[];
 	try {
-		return readdirSync(dir)
-			.filter((f) => f.endsWith(".md") && !f.startsWith("."))
-			.sort();
+		names = readdirSync(dir).filter((f) => f.endsWith(".md") && !f.startsWith("."));
 	} catch {
 		return [];
 	}
+	const mtime = (f: string): number => {
+		try {
+			return statSync(join(dir, f)).mtimeMs;
+		} catch {
+			return 0;
+		}
+	};
+	return names
+		.map((f) => ({ f, sec: f.split("-")[0], t: mtime(f) }))
+		.sort((a, b) => (a.sec < b.sec ? -1 : a.sec > b.sec ? 1 : a.t - b.t || (a.f < b.f ? -1 : 1)))
+		.map((x) => x.f);
 }
 
 /** The last `limit` messages (default all), oldest first. */
