@@ -88,7 +88,7 @@ const MESSAGE_DESCRIPTION =
 	"inbox (`to`), newest `limit` messages (default 20), oldest first.";
 
 const MESSAGE_PROMPT_SNIPPET =
-	"- **message** — send DMs (`to=`) or broadcasts (`channel=`), subscribe/" +
+	"Send DMs (`to=`) or broadcasts (`channel=`), subscribe/" +
 	"unsubscribe to channels, list channels, read channel or inbox history.";
 
 /** Dependencies the tool needs at call time. The extension supplies this via

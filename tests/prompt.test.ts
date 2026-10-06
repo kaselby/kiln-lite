@@ -7,6 +7,9 @@ import { join } from "node:path";
 import {
 	applyPrompt,
 	buildCustomPrompt,
+	renderToolList,
+	fillPlaceholders,
+	baselineVars,
 	loadBaseline,
 	loadIdentity,
 	renderSections,
@@ -66,10 +69,33 @@ test("renderToolRules: omits Pi's hard-coded rules", () => {
 	assert.equal(out, "");
 });
 
-test("buildCustomPrompt: identity → baseline → tool guidelines; skips empty parts", () => {
-	assert.equal(buildCustomPrompt("ID", "BASE", "- r"), "ID\n\nBASE\n\nTool guidelines:\n- r");
+test("buildCustomPrompt: identity → baseline → <tools> → <rules>; skips empty parts", () => {
+	assert.equal(buildCustomPrompt("ID", "BASE", "- r"), "ID\n\nBASE\n\n<rules>\n- r\n</rules>");
+	assert.equal(buildCustomPrompt("ID", "BASE", "- r", "- read: R"), "ID\n\nBASE\n\n<tools>\n- read: R\n</tools>\n\n<rules>\n- r\n</rules>");
 	assert.equal(buildCustomPrompt(null, "BASE", ""), "BASE");
 	assert.equal(buildCustomPrompt(null, null, ""), "");
+});
+
+test("renderToolList: active tools with a snippet, in order, Pi's format", () => {
+	assert.equal(renderToolList(["read", "bash", "plan"], { plan: "Track work", read: " Read files " }), "- read: Read files\n- plan: Track work");
+	assert.equal(renderToolList(["read"], undefined), "");
+});
+
+test("fillPlaceholders: known names filled; unknown or unresolved warn once and stay", () => {
+	const warnings: string[] = [];
+	const out = fillPlaceholders("a {{kl_docs}}/cli.md {{ pi_docs }} {{nope}} {{nope}} {{pi_readme}}", { kl_docs: "/kl/docs", pi_docs: "/pi/docs", pi_readme: null }, (m) => warnings.push(m));
+	assert.equal(out, "a /kl/docs/cli.md /pi/docs {{nope}} {{nope}} {{pi_readme}}");
+	assert.equal(warnings.length, 2);
+	assert.match(warnings.join("\n"), /\{\{nope\}\} is unknown/);
+	assert.match(warnings.join("\n"), /\{\{pi_readme\}\} could not be resolved/);
+});
+
+test("baselineVars: kl docs always; pi paths from the pi package dir", () => {
+	const v = baselineVars("/opt/pi");
+	assert.match(v.kl_docs!, /docs$/);
+	assert.equal(v.pi_docs, "/opt/pi/docs");
+	assert.equal(v.pi_readme, "/opt/pi/README.md");
+	assert.equal(baselineVars(null).pi_docs, null);
 });
 
 test("renderSessionSection: agent, session, model, home — no uuid, no cwd", () => {
@@ -91,7 +117,7 @@ test("applyPrompt: customPrompt = identity → baseline → tool rules from the 
 		promptGuidelines: ["G"],
 	});
 	applyPrompt(opts, parts(), SESSION, ["bash"]);
-	assert.equal(opts.customPrompt, "I am scout.\n\nkl baseline.\n\nTool guidelines:\n- B\n- G");
+	assert.equal(opts.customPrompt, "I am scout.\n\nkl baseline.\n\n<rules>\n- B\n- G\n</rules>");
 });
 
 test("applyPrompt: session section first, then agent sections in order, after pre-existing sections", () => {
@@ -243,12 +269,12 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 	);
 	const text: string = buildSystemPrompt(opts);
 
-	assert.ok(text.startsWith("I am scout.\n\nkl baseline.\n\nTool guidelines:\n- Use read to inspect files\n- Extension guideline"));
+	assert.ok(text.startsWith("I am scout.\n\nkl baseline.\n\n<tools>\n- read: Read files\n- bash: Run commands\n</tools>\n\n<rules>\n- Use read to inspect files\n- Extension guideline\n</rules>"), text.slice(0, 400));
 	// Pi's top block is gone.
 	assert.ok(!text.includes("expert coding assistant"));
 	assert.ok(!text.includes("Be concise in your responses"));
 	assert.ok(!text.includes("Pi documentation"));
-	assert.ok(!text.includes("<tools>"));
+	assert.equal(text.split("<tools>").length, 2, "exactly one <tools>, kl's");
 
 	const at = (needle: string) => {
 		const i = text.indexOf(needle);
@@ -256,7 +282,7 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 		return i;
 	};
 	const order = [
-		at("Tool guidelines:"),
+		at("<rules>"),
 		at("<addendum>"),
 		at("<project_context>"),
 		at("<skills>"),

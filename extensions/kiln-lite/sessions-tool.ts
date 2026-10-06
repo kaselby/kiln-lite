@@ -30,7 +30,7 @@ export function buildSessionsTool(deps: { getSelf: () => string | null }) {
 		name: "sessions",
 		label: "Sessions",
 		description: DESCRIPTION,
-		promptSnippet: "- **sessions** — list kl sessions (who is running, what each is doing), or show one in full.",
+		promptSnippet: "List kl sessions (who is running, what each is doing), or show one in full.",
 		parameters: SessionsParams,
 		async execute(_toolCallId, params): Promise<AgentToolResult<unknown>> {
 			if (params.name) {

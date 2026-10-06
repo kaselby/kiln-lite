@@ -76,7 +76,7 @@ function buildSubagentTool(deps: SubagentDeps) {
 		name: "subagent",
 		label: "Subagent",
 		description: buildDescription(listAgents()),
-		promptSnippet: "- **subagent**: launch a child session of an installed agent; it reports back by message.",
+		promptSnippet: "Launch a child session of an installed agent; it reports back by message.",
 		parameters: Type.Object({
 			agent: Type.String({ description: "Installed agent name (see the list in this tool's description)." }),
 			prompt: Type.String({ description: "The child's first message: what to do and what to send back." }),

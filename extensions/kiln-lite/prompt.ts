@@ -6,9 +6,11 @@
  * mutable `event.systemPromptOptions`, and Pi renders the rest:
  *
  *   preamble        = customPrompt = agent identity (SYSTEM.md / agent.yml
- *                     system_prompt) + kl baseline (prompts/kl-baseline.md)
- *                     + tool rules rendered from toolGuidelines /
- *                     promptGuidelines (Pi drops them once customPrompt is set)
+ *                     system_prompt) + kl baseline (prompts/kl-baseline.md,
+ *                     {{placeholders}} filled) + <tools> (active tools'
+ *                     snippets) + <rules> (their guidelines + promptGuidelines).
+ *                     Pi drops its own tools/rules/docs once customPrompt is
+ *                     set, so kl re-renders the first two in Pi's format.
  *   <addendum>        Pi: APPEND_SYSTEM.md / --append-system-prompt
  *   <project_context> Pi: AGENTS.md etc. (`project_context: false` empties it)
  *   <skills>          Pi
@@ -21,7 +23,7 @@
  * after /model) costs one section update, not a new prompt.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { isAbsolute, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +41,7 @@ export const KL_BASELINE_PATH = join(PACKAGE_ROOT, "prompts", "kl-baseline.md");
 export interface PromptOptionsLike {
 	customPrompt?: string;
 	selectedTools: string[];
+	toolSnippets?: Record<string, string>;
 	toolGuidelines: Record<string, string[]>;
 	promptGuidelines: string[];
 	sections: Record<string, string>;
@@ -92,9 +95,70 @@ export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): 
 	return text ? text : null;
 }
 
-export function loadBaseline(warn: (msg: string) => void, path = KL_BASELINE_PATH): string | null {
+export function loadBaseline(
+	warn: (msg: string) => void,
+	path = KL_BASELINE_PATH,
+	vars: Record<string, string | null> = baselineVars(),
+): string | null {
 	const text = readPromptFile(path, "kl baseline prompt", warn);
-	return text ? text : null;
+	return text ? fillPlaceholders(text, vars, warn) : null;
+}
+
+/**
+ * The pi package dir, for the {{pi_*}} placeholders. Prefer the running pi
+ * (walk up from process.argv[1], pi's cli.js), else PI_PACKAGE_DIR, else the
+ * copy in kl's own node_modules. null if none is found.
+ */
+export function findPiPackageDir(): string | null {
+	const isPi = (dir: string): boolean => {
+		try {
+			return JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).name === "@earendil-works/pi-coding-agent";
+		} catch {
+			return false;
+		}
+	};
+	try {
+		let dir = dirname(realpathSync(process.argv[1] ?? ""));
+		for (let i = 0; i < 6; i++, dir = dirname(dir)) if (isPi(dir)) return dir;
+	} catch {
+		// argv[1] missing or not a file
+	}
+	const env = process.env.PI_PACKAGE_DIR?.trim();
+	if (env && isPi(env)) return env;
+	const local = join(PACKAGE_ROOT, "node_modules", "@earendil-works", "pi-coding-agent");
+	return isPi(local) ? local : null;
+}
+
+/** Values for the baseline's {{placeholders}}: absolute doc paths. null = unknown. */
+export function baselineVars(piDir: string | null = findPiPackageDir()): Record<string, string | null> {
+	return {
+		kl_docs: join(PACKAGE_ROOT, "docs"),
+		pi_readme: piDir && join(piDir, "README.md"),
+		pi_docs: piDir && join(piDir, "docs"),
+		pi_examples: piDir && join(piDir, "examples"),
+	};
+}
+
+/** Replace {{name}} with vars[name]. Unknown or unresolved names warn and stay as written. */
+export function fillPlaceholders(text: string, vars: Record<string, string | null>, warn: (msg: string) => void): string {
+	const warned = new Set<string>();
+	return text.replace(/\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/g, (whole, name: string) => {
+		const v = vars[name];
+		if (typeof v === "string") return v;
+		if (!warned.has(name)) {
+			warned.add(name);
+			warn(`kiln-lite: baseline placeholder {{${name}}} ${name in vars ? "could not be resolved" : "is unknown"} — left as written`);
+		}
+		return whole;
+	});
+}
+
+/** The active tools with a snippet, in Pi's `<tools>` format: "- name: snippet". */
+export function renderToolList(selectedTools: string[], toolSnippets: Record<string, string> = {}): string {
+	return selectedTools
+		.filter((name) => toolSnippets[name]?.trim())
+		.map((name) => `- ${name}: ${toolSnippets[name].trim()}`)
+		.join("\n");
 }
 
 /**
@@ -126,11 +190,13 @@ export function buildCustomPrompt(
 	identity: string | null,
 	baseline: string | null,
 	toolRules: string,
+	toolList = "",
 ): string {
 	const parts: string[] = [];
 	if (identity) parts.push(identity);
 	if (baseline) parts.push(baseline);
-	if (toolRules) parts.push(`Tool guidelines:\n${toolRules}`);
+	if (toolList) parts.push(`<tools>\n${toolList}\n</tools>`);
+	if (toolRules) parts.push(`<rules>\n${toolRules}\n</rules>`);
 	return parts.join("\n\n");
 }
 
@@ -228,7 +294,8 @@ export function applyPrompt(
 	selectedTools: string[] = options.selectedTools,
 ): void {
 	const toolRules = renderToolRules(selectedTools, options.toolGuidelines, options.promptGuidelines);
-	options.customPrompt = buildCustomPrompt(parts.identity, parts.baseline, toolRules);
+	const toolList = renderToolList(selectedTools, options.toolSnippets);
+	options.customPrompt = buildCustomPrompt(parts.identity, parts.baseline, toolRules, toolList);
 
 	if (!parts.projectContext) options.contextFiles = [];
 

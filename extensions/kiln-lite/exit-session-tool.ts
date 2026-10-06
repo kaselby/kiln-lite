@@ -72,7 +72,7 @@ const EXIT_SESSION_DESCRIPTION =
 	"Do NOT call this during normal interactive conversation.";
 
 const EXIT_SESSION_PROMPT_SNIPPET =
-	"- **exit_session** — Exit the session, or with continue + handoff reset your context in place. " +
+	"Exit the session, or with continue + handoff reset your context in place. " +
 	"Only use when working autonomously, or when the user explicitly requests it.";
 
 export interface ExitSessionToolDeps {

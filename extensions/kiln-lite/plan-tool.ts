@@ -70,7 +70,7 @@ const PLAN_DESCRIPTION =
 	"- Adjust the plan when requirements change";
 
 const PLAN_PROMPT_SNIPPET =
-	"- **plan** — Create or update your working plan. " +
+	"Create or update your working plan. " +
 	"Break down complex tasks, mark progress, adjust as requirements change. " +
 	"Each call replaces the entire plan.";
 
