@@ -2,7 +2,8 @@
  * `kl message`: messaging from a shell (bin/kl runs this file with tsx).
  * Inside a session it acts as that session; agents normally use the
  * `message` tool, which calls the same library functions (messages.ts,
- * DaemonClient). Without SESSION_UUID it acts as the human, $USER.
+ * DaemonClient). Without SESSION_UUID it acts as the human: "user", or
+ * $KL_USER / `user_name:` in <kl root>/config.yml.
  *
  *   kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high]
  *   kl message subscribe <channel>
@@ -16,13 +17,14 @@
  * prints an object.
  *
  * Env (set by kl in every agent process):
- *   SESSION_UUID  this session's UUID (its identity). Unset: you are $USER.
+ *   SESSION_UUID  this session's UUID (its identity). Unset: you are the user.
  *   AGENT_ID      this session's name (required with SESSION_UUID)
  *   AGENT_NAME    agent name (optional; default: first segment of AGENT_ID)
  */
 
 import { readFileSync } from "node:fs";
 
+import { resolveUserName } from "../../extensions/kiln-lite/config.ts";
 import { inboxRoot } from "../sessions/paths.ts";
 import { DaemonClient } from "./index.ts";
 import {
@@ -60,8 +62,9 @@ Usage:
                prints one JSON object per message per line
 
 Inside a kl session you act as that session. From your own shell (no
-SESSION_UUID) you act as $USER: send works; subscribe and unsubscribe need
-a session.
+SESSION_UUID) you act as the user, named "user" unless $KL_USER or
+user_name in <kl root>/config.yml says otherwise. send works; subscribe
+and unsubscribe need a session.
 `;
 
 function die(msg: string): never {
@@ -69,10 +72,10 @@ function die(msg: string): never {
 	process.exit(2);
 }
 
-/** Outside a session: the human, $USER. No registry entry, so no from_session and no agent-mail disclaimer. */
+/** Outside a session: the human. No registry entry, so no from_session and no agent-mail disclaimer. */
 function humanClient(): DaemonClient {
-	const user = process.env.USER || process.env.LOGNAME || "user";
-	return new DaemonClient({ requester: { agent: "human", session: `human-${user}`, name: user } });
+	const user = resolveUserName((m) => process.stderr.write(`${m}\n`));
+	return new DaemonClient({ requester: { agent: "human", session: user, name: user } });
 }
 
 function makeClient(cmd: string): DaemonClient {

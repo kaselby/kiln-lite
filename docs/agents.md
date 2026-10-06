@@ -44,6 +44,7 @@ outright (`sections` is replaced as a whole list). Relative paths resolve
 against the folder of the file that sets them. Unknown keys warn.
 
 ```yaml
+user_name: sam               # config.yml only; sender name for messages from your shell (default "user"; $KL_USER wins)
 name: scout                     # agent.yml only; [a-z][a-z0-9_]*
 description: "reviews PRs"    # agent.yml only; shown by kl agents and the subagent tool
 model: openai-codex/gpt-5.6-luna

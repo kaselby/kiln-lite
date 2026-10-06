@@ -67,6 +67,8 @@
 #                           leases, inboxes), daemon/.
 #   KL_PI                   pi binary (default: the repo's node_modules/.bin/pi
 #                           if present, else pi on PATH).
+#   KL_USER                 Sender name for `kl message` from your own shell
+#                           (default: user_name in config.yml, else "user").
 #   KL_TMUX_SOCKET          Use a private tmux server (tmux -L <socket>) for
 #                           every tmux call. For isolated test runs.
 

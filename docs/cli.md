@@ -89,7 +89,8 @@ Env:
 Messaging from a shell, and the surface a UI can build on. Inside a session
 (where `SESSION_UUID` and `AGENT_ID` are set) it acts as that session;
 agents normally use the `message` tool, which calls the same code. From your
-own shell, with no `SESSION_UUID`, you act as yourself (`from: $USER`) and
+own shell, with no `SESSION_UUID`, you act as the user (`from: user`; set
+`user_name:` in `<kl root>/config.yml` or `KL_USER` to change the name) and
 the recipient gets no agent-mail disclaimer; `subscribe` and `unsubscribe`
 need a session.
 

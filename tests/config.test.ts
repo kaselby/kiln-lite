@@ -9,6 +9,7 @@ import {
 	parseSections,
 	parseTimestamps,
 	DEFAULT_TIMESTAMPS,
+	resolveUserName,
 } from "../extensions/kiln-lite/config.ts";
 
 function scratch(): { klRoot: string; agentHome: string } {
@@ -203,4 +204,29 @@ test("parseTimestamps: true / false / partial mapping / bad values", () => {
 	assert.equal(warnings.length, 2);
 	assert.equal(parseTimestamps("yes", "t", warn), undefined);
 	assert.equal(warnings.length, 3);
+});
+
+test("user name: KL_USER, else config.yml user_name, else \"user\"; invalid values warn and fall through", () => {
+	const { klRoot, agentHome } = scratch();
+	const saved = process.env.KL_USER;
+	try {
+		delete process.env.KL_USER;
+		assert.equal(resolveUserName(() => {}, klRoot), "user");
+		writeFileSync(join(klRoot, "config.yml"), "user_name: sam\n");
+		assert.equal(resolveUserName(() => {}, klRoot), "sam");
+		process.env.KL_USER = "kas";
+		assert.equal(resolveUserName(() => {}, klRoot), "kas");
+		const warnings: string[] = [];
+		process.env.KL_USER = "two words";
+		assert.equal(resolveUserName((m) => warnings.push(m), klRoot), "sam");
+		assert.equal(warnings.length, 1);
+		// user_name is global-only: in agent.yml it warns
+		const agentWarnings: string[] = [];
+		writeFileSync(join(agentHome, "agent.yml"), "user_name: x\n");
+		loadConfig({ agentHome, klRoot, warn: (m) => agentWarnings.push(m) });
+		assert.ok(agentWarnings.some((m) => m.includes("user_name") && m.includes("config.yml")));
+	} finally {
+		if (saved === undefined) delete process.env.KL_USER;
+		else process.env.KL_USER = saved;
+	}
 });

@@ -48,6 +48,7 @@ export const RESERVED_SECTIONS = new Set([
 export const DEFAULT_TIMESTAMPS: TimestampConfig = { per_turn: true, every_calls: 20, every_minutes: 10 };
 
 const KNOWN_KEYS = new Set([
+	"user_name",
 	"name",
 	"description",
 	"model",
@@ -63,6 +64,31 @@ const KNOWN_KEYS = new Set([
 
 /** Keys that only make sense per agent; ignored (with a warning) in the global file. */
 const AGENT_ONLY_KEYS = new Set(["name", "description"]);
+/** Keys that only mean something in <kl root>/config.yml. */
+const GLOBAL_ONLY_KEYS = new Set(["user_name"]);
+
+/** Sender name used for messages from outside any session (the human's shell). */
+export const DEFAULT_USER_NAME = "user";
+const USER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+/**
+ * The name messages from the human carry: $KL_USER, else `user_name:` in
+ * <kl root>/config.yml, else "user". An invalid value warns and falls through.
+ */
+export function resolveUserName(warn: (msg: string) => void = () => {}, klRoot = resolveKlRoot()): string {
+	const fromEnv = process.env.KL_USER?.trim();
+	if (fromEnv) {
+		if (USER_NAME_RE.test(fromEnv)) return fromEnv;
+		warn(`kiln-lite: KL_USER '${fromEnv}' is not a valid name (letters, digits, _ . -) — ignoring it`);
+	}
+	const global = readYamlMapping(join(klRoot, "config.yml"), "kl config.yml", warn);
+	const v = global?.user_name;
+	if (typeof v === "string" && v.trim()) {
+		if (USER_NAME_RE.test(v.trim())) return v.trim();
+		warn(`kiln-lite: config.yml user_name '${v}' is not a valid name (letters, digits, _ . -) — ignoring it`);
+	}
+	return DEFAULT_USER_NAME;
+}
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -163,6 +189,7 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	for (const key of Object.keys(obj)) {
 		if (!KNOWN_KEYS.has(key)) warn(`kiln-lite: ${label} has unknown field '${key}' — ignoring`);
 		else if (isGlobal && AGENT_ONLY_KEYS.has(key)) warn(`kiln-lite: ${label}: '${key}' is per-agent only — ignoring`);
+		else if (!isGlobal && GLOBAL_ONLY_KEYS.has(key)) warn(`kiln-lite: ${label}: '${key}' belongs in <kl root>/config.yml — ignoring`);
 	}
 
 	if (!isGlobal && has("name")) {
