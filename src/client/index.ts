@@ -208,18 +208,6 @@ export class DaemonClient {
         );
     }
 
-    async listSubscriptions(): Promise<string[]> {
-        const res = this.expect(await this.call(proto.listSubscriptions(this.requester)));
-        return Array.isArray(res.data.channels) ? (res.data.channels as string[]) : [];
-    }
-
-    async listSessions(filter: { agent?: string } = {}): Promise<Array<Record<string, unknown>>> {
-        const res = this.expect(await this.call(proto.listSessions(filter)));
-        return Array.isArray(res.data.sessions)
-            ? (res.data.sessions as Array<Record<string, unknown>>)
-            : [];
-    }
-
     async getStatus(): Promise<Record<string, unknown>> {
         const res = this.expect(await this.call(proto.getStatus()));
         return res.data as Record<string, unknown>;

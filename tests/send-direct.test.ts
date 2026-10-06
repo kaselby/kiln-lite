@@ -111,7 +111,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 		assert.match(text, /^to: rev-red-owl$/m);
 	});
 
-	it("a sender that is no registered session (kl-msg by a human) gets no from_session", async () => {
+	it("a sender that is no registered session (kl message by a human) gets no from_session", async () => {
 		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
 		const msg = proto.sendDirect("rev-red-owl", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" });
 		const res = await handleSendDirect(msg, daemon as never);

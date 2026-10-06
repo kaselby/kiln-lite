@@ -208,7 +208,7 @@ export async function handlePublish(
 /**
  * The sender's UUID for `from_session:`, only when the requester is a
  * registered kl session. The recipient shows the agent-mail disclaimer only
- * for mail with a from_session, so a human using kl-msg outside any session
+ * for mail with a from_session, so a human using `kl message` outside any session
  * (no registry entry) sends plain mail.
  */
 function agentSession(daemon: Daemon, req: proto.Requester): string | undefined {

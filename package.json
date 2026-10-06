@@ -8,8 +8,7 @@
     "pi-package"
   ],
   "bin": {
-    "kl": "./bin/kl",
-    "kl-msg": "./src/client/cli.ts"
+    "kl": "./bin/kl"
   },
   "pi": {
     "extensions": [

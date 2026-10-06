@@ -3,13 +3,12 @@
  *
  * Mirrors Kiln's Message tool shape (kiln/src/kiln/tools.py:1270-1310):
  *   - One tool with an `action` discriminator.
- *   - Actions: send | subscribe | unsubscribe.
+ *   - Actions: send | subscribe | unsubscribe | channels | history.
  *   - `send` is unified: `to=<session>` for DM, `channel=<name>` for broadcast.
  *
- * Execution is a thin dispatch onto the DaemonClient the extension already
- * holds. No new wire protocol, no new daemon state. Shell-side scripting
- * still lives in `kl-msg` (src/client/cli.ts); the builtin is the
- * agent-facing surface.
+ * A thin skin, like `kl message` (src/client/cli.ts): sending goes through
+ * the DaemonClient the extension holds, reading through src/client/messages.ts.
+ * Neither calls the other.
  *
  * Quoting hazards are gone — `body` is just a structured string param,
  * newlines/quotes/backticks all pass through untouched.
@@ -20,6 +19,15 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import type { DaemonClient } from "../../src/client/index.ts";
+import {
+	channelName,
+	formatChannels,
+	formatHistory,
+	listChannels,
+	readHistory,
+	resolveHistoryTarget,
+	ResolveError,
+} from "../../src/client/messages.ts";
 
 // --- Parameter schema ---------------------------------------------------------
 //
@@ -30,16 +38,22 @@ import type { DaemonClient } from "../../src/client/index.ts";
 
 const MessageParams = Type.Object({
 	action: Type.Union(
-		[Type.Literal("send"), Type.Literal("subscribe"), Type.Literal("unsubscribe")],
-		{ description: "The action: send, subscribe, or unsubscribe." },
+		[
+			Type.Literal("send"),
+			Type.Literal("subscribe"),
+			Type.Literal("unsubscribe"),
+			Type.Literal("channels"),
+			Type.Literal("history"),
+		],
+		{ description: "The action: send, subscribe, unsubscribe, channels, or history." },
 	),
 	to: Type.Optional(
-		Type.String({ description: "Recipient session name, e.g. reviewer-calm-fox, or name@<id-prefix> (for action=send, point-to-point). A session that is not running gets the message parked until it is resumed." }),
+		Type.String({ description: "Session name, e.g. reviewer-calm-fox, or name@<id-prefix>. For action=send: the recipient (a session that is not running gets the message parked until it is resumed). For action=history: whose inbox to read." }),
 	),
 	channel: Type.Optional(
 		Type.String({
 			description:
-				"Channel name (for subscribe/unsubscribe, or for action=send to broadcast).",
+				"Channel name (for subscribe/unsubscribe, for action=send to broadcast, or for action=history to read the channel).",
 		}),
 	),
 	summary: Type.Optional(
@@ -53,6 +67,9 @@ const MessageParams = Type.Object({
 			description: "Message priority (for action=send). Default normal.",
 		}),
 	),
+	limit: Type.Optional(
+		Type.Integer({ minimum: 1, description: "For action=history: how many of the newest messages to show. Default 20." }),
+	),
 });
 
 type MessageParamsType = Static<typeof MessageParams>;
@@ -61,16 +78,18 @@ const MESSAGE_DESCRIPTION =
 	"Send messages to agents and manage channel subscriptions.\n\n" +
 	"Actions:\n" +
 	"- **send**: Send a message to an agent (via `to`) or broadcast to a channel " +
-	"(via `channel`). Requires `summary` and `body`. A direct message (`to`) is " +
-	"only delivered to a currently-live session; messaging an offline or unknown " +
-	"agent fails. Channel broadcasts reach offline subscribers too (parked in " +
-	"their inbox).\n" +
+	"(via `channel`). Requires `summary` and `body`. A direct message to a session " +
+	"that isn't running is parked in its inbox until it is resumed; an unknown name " +
+	"fails. Channel broadcasts reach offline subscribers too (parked in their inbox).\n" +
 	"- **subscribe**: Subscribe to a channel to receive all messages sent to it.\n" +
-	"- **unsubscribe**: Unsubscribe from a channel.";
+	"- **unsubscribe**: Unsubscribe from a channel.\n" +
+	"- **channels**: List every channel with its subscribers and message count.\n" +
+	"- **history**: Read a channel's history (`channel`) or the mail in a session's " +
+	"inbox (`to`), newest `limit` messages (default 20), oldest first.";
 
 const MESSAGE_PROMPT_SNIPPET =
 	"- **message** — send DMs (`to=`) or broadcasts (`channel=`), subscribe/" +
-	"unsubscribe to channels. Messaging between sessions.";
+	"unsubscribe to channels, list channels, read channel or inbox history.";
 
 /** Dependencies the tool needs at call time. The extension supplies this via
  *  a getter so the tool can be registered at session_start even though the
@@ -100,6 +119,10 @@ export function buildMessageTool(deps: MessageToolDeps) {
 					return dispatchSubscribe(daemon, params);
 				case "unsubscribe":
 					return dispatchUnsubscribe(daemon, params);
+				case "channels":
+					return ok(formatChannels(listChannels({ self: daemon.requester.session })));
+				case "history":
+					return dispatchHistory(params);
 			}
 		},
 	});
@@ -166,6 +189,21 @@ async function dispatchUnsubscribe(
 	} catch (e) {
 		return err(`unsubscribe failed: ${(e as Error).message}`);
 	}
+}
+
+function dispatchHistory(params: MessageParamsType): AgentToolResult<unknown> {
+	const { to, channel } = params;
+	if (!to && !channel) return err("history requires either 'to' (session name) or 'channel'.");
+	if (to && channel) return err("history takes either 'to' OR 'channel', not both.");
+	let target;
+	try {
+		target = resolveHistoryTarget(to ?? `#${channelName(channel!)}`);
+	} catch (e) {
+		if (e instanceof ResolveError) return err(e.message);
+		throw e;
+	}
+	const text = formatHistory(target, readHistory(target, { limit: params.limit ?? 20 }));
+	return ok(target.kind === "session" && target.note ? `${target.note}\n${text}` : text);
 }
 
 function ok(text: string): AgentToolResult<unknown> {

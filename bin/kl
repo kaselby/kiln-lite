@@ -14,7 +14,9 @@
 #          [--wake park|auto] [pi-args...]
 #                           Start a new session of <agent> ($KL_AGENTS_DIR/<agent>;
 #                           default: $AGENT_HOME, else the starter "agent") and
-#                           attach to it.
+#                           attach to it. Inside a kl session (SESSION_UUID set)
+#                           run, resume and attach never attach: they act as
+#                           --detach and say so.
 #                           --detach (-d): don't attach; print the name on stdout:
 #                             name=$(kl run reviewer -d --prompt-file brief.md)
 #                           --prompt-file FILE: the initial prompt, read from a
@@ -32,9 +34,16 @@
 #                           session holds it). Mail parked while it was down is
 #                           delivered when it starts. --detach: start it if
 #                           needed, print the name, don't attach.
-#   kl sessions [-n N] [--all]
-#                           Recent sessions as parent/child trees; * = running.
+#   kl sessions [-n N] [--all] [--json]
+#                           Recent sessions as parent/child trees; * = running,
+#                           with what each is doing (its plan's goal).
+#   kl sessions <session> [--json]
+#                           One session in full: state, parent and children,
+#                           cwd, transcript, plan, status.
 #   kl inbox <session>      A session's inbox dir and messages ("new" = unread).
+#   kl message <command>    Send and read messages: send, subscribe,
+#                           unsubscribe, channels, history, status.
+#                           kl message --help for details.
 #   kl agents               Installed agents under $KL_AGENTS_DIR.
 #   kl init <name> [--full] Create an agent at $KL_AGENTS_DIR/<name>. Compact
 #                           (default): agent.yml + SYSTEM.md. --full adds
@@ -437,11 +446,6 @@ cmd_doctor() {
     else
         say_fail "tmux not on PATH"
     fi
-    if command -v kl-msg >/dev/null 2>&1; then
-        say_ok "kl-msg: $(command -v kl-msg)"
-    else
-        say_fail "kl-msg not on PATH (run $REPO_ROOT/install.sh)"
-    fi
     echo
 
     # 3. Pi packages in the kl pi dir, listed by the pi kl runs. kl loads its
@@ -470,17 +474,15 @@ cmd_doctor() {
     echo "  socket     $sock"
     if [ -S "$sock" ]; then
         say_ok "socket file exists"
-        if command -v kl-msg >/dev/null 2>&1; then
-            # Minimal ping — status call returns quickly if the daemon is up.
-            # No SESSION_UUID: kl-msg runs as the human, no identity needed.
-            if env -u SESSION_UUID kl-msg status >/dev/null 2>&1; then
-                say_ok "daemon responds to status"
-            else
-                say_warn "daemon socket present but 'kl-msg status' failed — stale socket?"
-            fi
+        # Minimal ping: status returns quickly if the daemon is up. No
+        # SESSION_UUID: kl message runs as the human, no identity needed.
+        if env -u SESSION_UUID "$(tsx_path)" "$REPO_ROOT/src/client/cli.ts" status >/dev/null 2>&1; then
+            say_ok "daemon responds to status"
+        else
+            say_warn "daemon socket present but 'kl message status' failed — stale socket?"
         fi
     else
-        say_warn "no daemon socket (will autostart on first kl-msg call)"
+        say_warn "no daemon socket (it starts on first use)"
     fi
     echo
 
@@ -558,6 +560,7 @@ main() {
     case "${1:-}" in
         run) shift; cmd_run "$@" ;;
         resume|attach|sessions|inbox) sessions_cli "$@" ;;
+        message) shift; exec "$(tsx_path)" "$REPO_ROOT/src/client/cli.ts" "$@" ;;
         agents) shift; cmd_agents "$@" ;;
         init|new) shift; cmd_init "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;

@@ -193,7 +193,7 @@ export function deliveredIdsFromEntries(entries: readonly unknown[]): Set<string
  * as a user turn, so the model must be told it isn't the user speaking.
  * Only mail carrying a `from_session` other than our own gets it: the daemon
  * writes `from_session` only for senders that are registered kl sessions, so
- * self-delivered schedule wakes (no from_session) and kl-msg sends by a human
+ * self-delivered schedule wakes (no from_session) and `kl message` sends by a human
  * (no session) go without.
  */
 export const AGENT_MESSAGE_DISCLAIMER =
@@ -560,7 +560,7 @@ function parseMessage(path: string): ParsedMessage | null {
 }
 
 /**
- * Tiny YAML-frontmatter parser — handles the flat scalar shape that kl-msg
+ * Tiny YAML-frontmatter parser — handles the flat scalar shape that the daemon
  * writes (see src/daemon/inbox.ts). Anything more exotic falls through to
  * the body-only path.
  */
