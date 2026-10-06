@@ -5,19 +5,21 @@
  * `forceSystemPrompt`. From a `before_agent_start` handler it edits Pi's
  * mutable `event.systemPromptOptions`, and Pi renders the rest:
  *
- *   preamble        = customPrompt = agent identity (SYSTEM.md / agent.yml
- *                     system_prompt, else defaultIdentity) + <harness>: the
- *                     baseline (prompts/kl-baseline.md or harness_prompt,
- *                     {{placeholders}} filled), <tools> (active tools'
- *                     snippets), <rules> (their guidelines + promptGuidelines).
- *                     Pi drops its own tools/rules/docs once customPrompt is
- *                     set, so kl re-renders the first two in Pi's format.
+ *   preamble        = customPrompt = agent identity (prompt.identity, else
+ *                     IDENTITY.md, else defaultIdentity) + <harness>: the
+ *                     baseline (prompts/kl-baseline.md, {{placeholders}}
+ *                     filled), <tools> (active tools' snippets), <rules>
+ *                     (their guidelines + promptGuidelines). Pi drops its own
+ *                     tools/rules/docs once customPrompt is set, so kl
+ *                     re-renders the first two in Pi's format.
+ *                     `include_kl_prompt: false` drops the whole <harness>.
  *   <addendum>        Pi: APPEND_SYSTEM.md / --append-system-prompt
- *   <project_context> Pi: AGENTS.md etc. (`project_context: false` empties it)
+ *                     (`include_appended_prompt: false` empties it)
+ *   <project_context> Pi: AGENTS.md etc. (`include_project_context: false` empties it)
  *   <skills>          Pi
  *   <cwd>             Pi (always rendered)
  *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
- *   <name>…           agent.yml `sections:`, rendered once at session start
+ *   <name>…           `prompt.extra_sections`, rendered once at session start
  *
  * Pi records sections in the transcript and sends later changes as deltas,
  * so sections other extensions add survive, and a changed `session` (e.g.
@@ -31,7 +33,7 @@ import { fileURLToPath } from "node:url";
 
 import type { AgentConfig, SectionEntry } from "./types.ts";
 
-/** Hard caps for `sections:` commands (carried over from context_injection). */
+/** Hard caps for `extra_sections` commands (carried over from context_injection). */
 export const SECTION_COMMAND_TIMEOUT_MS = 1000;
 export const SECTION_COMMAND_MAX_BYTES = 64 * 1024;
 
@@ -47,6 +49,7 @@ export interface PromptOptionsLike {
 	promptGuidelines: string[];
 	sections: Record<string, string>;
 	contextFiles: Array<{ path: string; content: string }>;
+	appendSystemPrompt?: string;
 }
 
 /** Everything resolved once at session start. */
@@ -55,8 +58,13 @@ export interface PromptParts {
 	identity: string | null;
 	/** kl baseline text, or null if the file couldn't be read. */
 	baseline: string | null;
-	/** Rendered agent.yml sections, in order. */
+	/** Rendered `prompt.extra_sections`, in order. */
 	sections: Array<{ name: string; content: string }>;
+	/** false: no <harness> block (baseline, <tools>, <rules>). */
+	klPrompt: boolean;
+	/** false: no <addendum>. */
+	appendedPrompt: boolean;
+	/** false: no <project_context>. */
 	projectContext: boolean;
 }
 
@@ -88,24 +96,33 @@ function readPromptFile(path: string, label: string, warn: (msg: string) => void
 	}
 }
 
-/** Identity for an agent with no system_prompt and no SYSTEM.md: Pi's default, with the agent's name. */
+/** The built-in identity: Pi's default, with the agent's name. */
 export function defaultIdentity(name: string): string {
 	return `You are ${name} - an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.`;
 }
 
-/** Agent identity from config.system_prompt (SYSTEM.md is defaulted in by loadConfig), else the default. */
+/**
+ * Agent identity from config.prompt.identity (IDENTITY.md is defaulted in by
+ * loadConfig). Missing (warns) or empty file: the built-in identity.
+ */
 export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): string {
-	if (!config.system_prompt) return defaultIdentity(config.name);
-	const path = resolvePath(config.system_prompt_base, config.system_prompt);
-	const text = readPromptFile(path, "system_prompt", warn);
+	const { identity, identity_base } = config.prompt;
+	if (!identity) return defaultIdentity(config.name);
+	const text = readPromptFile(resolvePath(identity_base, identity), "identity file", warn);
 	return text ? text : defaultIdentity(config.name);
 }
 
-/** The baseline for this agent: harness_prompt if set (false = none), else kl's. Placeholders filled. */
-export function loadAgentBaseline(config: AgentConfig, warn: (msg: string) => void): string | null {
-	if (config.harness_prompt === false) return null;
-	if (config.harness_prompt) return loadBaseline(warn, resolvePath(config.harness_prompt_base ?? "", config.harness_prompt));
-	return loadBaseline(warn);
+/** Everything applyPrompt needs, read once at session start. */
+export function loadPromptParts(config: AgentConfig, env: Record<string, string>, warn: (msg: string) => void): PromptParts {
+	const p = config.prompt;
+	return {
+		identity: loadIdentity(config, warn),
+		baseline: p.include_kl_prompt ? loadBaseline(warn) : null,
+		sections: renderSections(p.extra_sections, env, warn),
+		klPrompt: p.include_kl_prompt,
+		appendedPrompt: p.include_appended_prompt,
+		projectContext: p.include_project_context,
+	};
 }
 
 export function loadBaseline(
@@ -226,7 +243,7 @@ export function renderSessionSection(info: SessionInfo): string {
 }
 
 /**
- * Render agent.yml `sections:` once. Each failure (missing file, failing or
+ * Render `prompt.extra_sections` once. Each failure (missing file, failing or
  * slow command, oversized output) warns and drops that section; the caller
  * routes warnings to the UI so they're visible at startup.
  */
@@ -308,10 +325,15 @@ export function applyPrompt(
 	session: SessionInfo,
 	selectedTools: string[] = options.selectedTools,
 ): void {
-	const toolRules = renderToolRules(selectedTools, options.toolGuidelines, options.promptGuidelines);
-	const toolList = renderToolList(selectedTools, options.toolSnippets);
-	options.customPrompt = buildCustomPrompt(parts.identity, parts.baseline, toolRules, toolList);
+	if (parts.klPrompt) {
+		const toolRules = renderToolRules(selectedTools, options.toolGuidelines, options.promptGuidelines);
+		const toolList = renderToolList(selectedTools, options.toolSnippets);
+		options.customPrompt = buildCustomPrompt(parts.identity, parts.baseline, toolRules, toolList);
+	} else {
+		options.customPrompt = buildCustomPrompt(parts.identity, null, "");
+	}
 
+	if (!parts.appendedPrompt) options.appendSystemPrompt = "";
 	if (!parts.projectContext) options.contextFiles = [];
 
 	delete options.sections.session;

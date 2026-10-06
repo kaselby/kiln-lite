@@ -1,15 +1,21 @@
 /**
  * `kl migrate [agent-home…]`: convert an old kiln-lite agent home to the
  * current schema, in place (migrate the data, keep no compat
- * code). With no arguments, every agent under $KL_AGENTS_DIR.
+ * code). With no arguments, <kl root>/config.yml and every agent under
+ * $KL_AGENTS_DIR.
  *
  * agent.yml (a copy goes to agent.yml.bak first):
- *   context_injection → sections ({name: slug of label, path}); `dynamic` dropped (warn)
+ *   system_prompt, harness_prompt, sections, project_context → inside `prompt:`
+ *     (identity, include_kl_prompt, extra_sections, include_project_context).
+ *     system_prompt naming a missing file is dropped (warn); harness_prompt
+ *     naming a file is dropped (warn), false becomes include_kl_prompt: false.
+ *   context_injection → prompt.extra_sections ({name: slug of label, path}); `dynamic` dropped (warn)
  *   startup, tools_dir, sessions_dir, inbox_dir → removed (warn)
- *   system_prompt → removed if the file it names is missing (warn), else kept
  *   cleanup → {summary_path} becomes memory/sessions/<date>-<session name>.md
  *             wording; any other {placeholder} warns (kl expands none)
- * Files: harness/pre-launch → hooks/pre-launch.
+ * Files: harness/pre-launch → hooks/pre-launch; SYSTEM.md → IDENTITY.md when
+ * it is the identity file in use.
+ * config.yml (config.yml.bak first): the same prompt keys move into `prompt:`.
  *
  * Edits are line-based so comments elsewhere survive: a removed key takes
  * its own lines, its indented body and the comment block directly above it.
@@ -17,10 +23,10 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import yaml from "js-yaml";
 
-import { RESERVED_SECTIONS, SECTION_NAME } from "../extensions/kiln-lite/config.ts";
+import { DEFAULT_IDENTITY_FILE, RESERVED_SECTIONS, SECTION_NAME, resolveKlRoot } from "../extensions/kiln-lite/config.ts";
 import { agentsDir, listAgents } from "./sessions/agents.ts";
 
 const DROPPED: Record<string, string> = {
@@ -29,6 +35,14 @@ const DROPPED: Record<string, string> = {
 	sessions_dir: "session ids live in the kl registry; summaries go to memory/sessions/",
 	inbox_dir: "inboxes live at <kl root>/run/inbox/<uuid>/",
 };
+
+/** Top-level keys that now live inside `prompt:`. */
+const OLD_PROMPT_KEYS = ["system_prompt", "harness_prompt", "sections", "project_context"];
+const PROMPT_KEY_ORDER = ["identity", "include_kl_prompt", "include_appended_prompt", "include_project_context", "extra_sections"];
+const PROMPT_COMMENT = "# System prompt: identity file, which parts to include, extra sections.";
+
+/** null = remove the key (and the comment block above it); otherwise replace it with `lines`. */
+type Edit = { lines: string[]; keepComments: boolean } | null;
 
 export const SUMMARY_WORDING = "memory/sessions/<date>-<session name>.md (date as YYYY-MM-DD)";
 
@@ -75,6 +89,18 @@ function dumpKey(key: string, value: unknown): string[] {
 	return yaml.dump({ [key]: value }, { lineWidth: -1 }).replace(/\n$/, "").split("\n");
 }
 
+/** The commented `prompt:` example `kl init` writes (keep in step with bin/kl). */
+export const INIT_PROMPT_COMMENTS = [
+	"# prompt:",
+	"#   identity: IDENTITY.md          # the default; a missing or empty file gives the built-in identity",
+	"#   include_kl_prompt: true        # false drops kl's <harness> block (baseline, <tools>, <rules>)",
+	"#   include_appended_prompt: true  # false drops APPEND_SYSTEM.md / --append-system-prompt",
+	"#   include_project_context: true  # false drops AGENTS.md / CLAUDE.md",
+	"#   extra_sections:                # rendered once at session start, after <session>",
+	"#     - {name: notes, path: notes.md}",
+	'#     - {name: today, command: "date +%A"}',
+].join("\n");
+
 /**
  * Comments from older kl templates that describe behaviour kl no longer has.
  * Exact-text rewrites, so a user's own comments are never touched.
@@ -82,7 +108,12 @@ function dumpKey(key: string, value: unknown): string[] {
 const STALE_COMMENTS: Array<[RegExp, string]> = [
 	[
 		/^# Optional: path \(relative to \$AGENT_HOME\) of a file that replaces Pi's\n# built-in system prompt\. Omit to use Pi's default\.$/m,
-		"# Identity prompt: opens the system prompt, before the kl baseline.\n# Default: SYSTEM.md in this folder if present. Relative to this file.",
+		"# Identity prompt (prompt.identity): opens the system prompt.\n# Default: IDENTITY.md in this folder if present. Relative to this file.",
+	],
+	[
+		// `kl init`'s commented examples before the prompt: block.
+		/^# project_context: true     # false drops AGENTS.md\/CLAUDE.md from the prompt\n(# timestamps: true .*\n)# sections:                 # rendered once at session start, after <session>\n#   - \{name: notes, path: notes.md\}\n#   - \{name: today, command: "date \+%A"\}$/m,
+		`$1${INIT_PROMPT_COMMENTS}`,
 	],
 	[/^# Cleanup turn dispatched when the session wraps via \/exit or \/wrapup\.$/m, "# Cleanup turn on /exit and the exit_session tool (also before a continue reset)."],
 	[/^# Supports template vars: \{today\} \{agent_id\} \{session_uuid\} \{summary_path\}$/m, "# Plain text: kl expands no {placeholders}."],
@@ -105,7 +136,150 @@ export function migrateCleanupText(text: string): { text: string; others: string
 	return { text: out, others };
 }
 
-export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): MigrateResult {
+function isMapping(v: unknown): v is Record<string, unknown> {
+	return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function readDoc(path: string): Record<string, unknown> | null {
+	if (!existsSync(path)) return null;
+	try {
+		const raw = yaml.load(readFileSync(path, "utf8"));
+		return isMapping(raw) ? raw : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The identity file <kl root>/config.yml sets, under the old or the new key. */
+function globalIdentity(klRoot: string): string | undefined {
+	const g = readDoc(join(klRoot, "config.yml"));
+	if (!g) return undefined;
+	if (typeof g.system_prompt === "string" && g.system_prompt.trim()) return g.system_prompt;
+	if (isMapping(g.prompt) && typeof g.prompt.identity === "string" && g.prompt.identity.trim()) return g.prompt.identity;
+	return undefined;
+}
+
+/**
+ * Build the `prompt:` block from the old top-level keys (system_prompt is
+ * the caller's: it passes the resolved `identity`), any existing `prompt:`
+ * (its keys win), and sections converted from context_injection.
+ * Returns null when there is nothing to write.
+ */
+function buildPromptBlock(
+	doc: Record<string, unknown>,
+	identity: string | undefined,
+	addSections: Array<{ name: string; path: string }>,
+	res: MigrateResult,
+): Record<string, unknown> | null {
+	const moved: Record<string, unknown> = {};
+	if (identity !== undefined) moved.identity = identity;
+	if ("harness_prompt" in doc) {
+		const h = doc.harness_prompt;
+		if (h === false || h === "") {
+			moved.include_kl_prompt = false;
+			res.report.push("harness_prompt: false → prompt.include_kl_prompt: false");
+		} else {
+			res.report.push("harness_prompt → removed");
+			res.warnings.push(
+				`harness_prompt dropped (${JSON.stringify(h)}): kl's prompt can't be swapped for another file. ` +
+					"To replace it, move that text into the identity file and set prompt.include_kl_prompt: false",
+			);
+		}
+	}
+	if ("project_context" in doc) {
+		moved.include_project_context = doc.project_context;
+		res.report.push("project_context → prompt.include_project_context");
+	}
+	if ("sections" in doc) {
+		if (Array.isArray(doc.sections)) {
+			moved.extra_sections = doc.sections;
+			res.report.push("sections → prompt.extra_sections");
+		} else res.warnings.push(`sections dropped (${JSON.stringify(doc.sections)}): not a list`);
+	}
+
+	// Nothing to move in: leave the file's prompt: (or its absence) alone.
+	if (Object.keys(moved).length === 0 && !addSections.length) return null;
+	const existing = isMapping(doc.prompt) ? doc.prompt : {};
+	if ("prompt" in doc && !isMapping(doc.prompt)) res.warnings.push(`prompt was not a mapping (${JSON.stringify(doc.prompt)}): replaced`);
+	const merged: Record<string, unknown> = { ...moved };
+	for (const [k, v] of Object.entries(existing)) {
+		if (k in moved) res.warnings.push(`prompt.${k} is already set: kept it, dropped the old key's value`);
+		merged[k] = v;
+	}
+	if (addSections.length) {
+		const list = Array.isArray(merged.extra_sections) ? merged.extra_sections : [];
+		merged.extra_sections = [...list, ...addSections];
+	}
+	const ordered: Record<string, unknown> = {};
+	for (const k of PROMPT_KEY_ORDER) if (k in merged) ordered[k] = merged[k];
+	for (const k of Object.keys(merged)) if (!(k in ordered)) ordered[k] = merged[k];
+	return ordered;
+}
+
+/**
+ * Remove `remove` keys; write `block` as `prompt:` (in place of an existing
+ * prompt:, else where the first removed key was, else at the end).
+ */
+function promptEdits(
+	lines: string[],
+	doc: Record<string, unknown>,
+	remove: string[],
+	block: Record<string, unknown> | null,
+	edits: Map<string, Edit>,
+): string[] | null {
+	for (const k of remove) edits.set(k, null);
+	if (!block) return null;
+	const dumped = dumpKey("prompt", block);
+	if ("prompt" in doc) {
+		edits.set("prompt", { lines: dumped, keepComments: true });
+		return null;
+	}
+	const blocks = keyBlocks(lines);
+	const first = remove.filter((k) => blocks.has(k)).sort((a, b) => blocks.get(a)![0] - blocks.get(b)![0])[0];
+	if (first) {
+		edits.set(first, { lines: [PROMPT_COMMENT, ...dumped], keepComments: false });
+		return null;
+	}
+	return [PROMPT_COMMENT, ...dumped];
+}
+
+/**
+ * Apply edits bottom-up, reword stale comments, append `append`. Throws if
+ * a removed key survived or the result doesn't parse.
+ */
+function rewrite(original: string, edits: Map<string, Edit>, append: string[] | null, path: string): string {
+	const lines = original.split("\n");
+	const blocks = keyBlocks(lines);
+	const ordered = [...edits.entries()]
+		.filter(([k]) => blocks.has(k))
+		.sort((a, b) => blocks.get(b[0])![0] - blocks.get(a[0])![0]);
+	for (const [key, edit] of ordered) {
+		const [start, end] = blocks.get(key)!;
+		const keyLine = lines.slice(start, end).findIndex((l) => l.startsWith(key)) + start;
+		if (edit === null) lines.splice(start, end - start);
+		else if (!edit.keepComments) lines.splice(start, end - start, ...edit.lines);
+		else {
+			lines.splice(keyLine, end - keyLine, ...edit.lines);
+			// Drop comment lines above it that document the old placeholders.
+			for (let i = keyLine - 1; i >= start; i--) if (/template vars|\{summary_path\}/.test(lines[i])) lines.splice(i, 1);
+		}
+	}
+	let out = refreshComments(lines.join("\n")).replace(/\n{3,}/g, "\n\n");
+	if (append) out = `${out.replace(/\n*$/, "\n")}\n${append.join("\n")}\n`;
+	const check = (yaml.load(out) ?? {}) as Record<string, unknown>;
+	for (const [k, v] of edits) if ((v === null || !v.keepComments) && k !== "prompt" && k in check) throw new Error(`migrate: failed to remove ${k} from ${path}`);
+	return out;
+}
+
+function writeWithBackup(path: string, text: string): string {
+	let bak = `${path}.bak`;
+	for (let i = 1; existsSync(bak); i++) bak = `${path}.bak.${i}`;
+	copyFileSync(path, bak);
+	writeFileSync(path, text);
+	return bak;
+}
+
+export function migrateHome(homeArg: string, opts: { dryRun?: boolean; klRoot?: string } = {}): MigrateResult {
 	const home = resolve(homeArg);
 	const res: MigrateResult = { home, changed: false, report: [], warnings: [] };
 	const ymlPath = join(home, "agent.yml");
@@ -117,23 +291,24 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 	let doc: Record<string, unknown>;
 	try {
 		const raw = yaml.load(original);
-		doc = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+		doc = isMapping(raw) ? raw : {};
 	} catch (e) {
 		res.warnings.push(`agent.yml is not valid YAML, not touched: ${(e as Error).message}`);
 		return res;
 	}
 
-	let lines = original.split("\n");
-	// Edits keyed by top-level key: null = remove, string[] = replace with these lines.
-	const edits = new Map<string, string[] | null>();
-	let appendSections: string[] | null = null;
+	const lines = original.split("\n");
+	const edits = new Map<string, Edit>();
 
-	// context_injection → sections
+	// context_injection → prompt.extra_sections
+	const ciSections: Array<{ name: string; path: string }> = [];
 	if ("context_injection" in doc) {
 		const ci = Array.isArray(doc.context_injection) ? doc.context_injection : [];
-		const existing = Array.isArray(doc.sections) ? (doc.sections as Array<Record<string, unknown>>) : [];
+		const existing = [
+			...(Array.isArray(doc.sections) ? doc.sections : []),
+			...(isMapping(doc.prompt) && Array.isArray(doc.prompt.extra_sections) ? doc.prompt.extra_sections : []),
+		] as Array<Record<string, unknown>>;
 		const taken = new Set(existing.map((s) => String(s?.name ?? "")));
-		const added: Array<{ name: string; path: string }> = [];
 		for (const [i, e] of ci.entries()) {
 			const entry = (e ?? {}) as Record<string, unknown>;
 			const path = typeof entry.path === "string" ? entry.path : "";
@@ -148,21 +323,12 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 			for (let k = 2; taken.has(n); k++) n = `${name}-${k}`;
 			taken.add(n);
 			if (entry.dynamic) res.warnings.push(`context_injection '${label}': dynamic dropped (sections render once at session start)`);
-			added.push({ name: n, path });
+			ciSections.push({ name: n, path });
 		}
-		if (added.length === 0) {
+		if (ciSections.length === 0) {
 			res.report.push(ci.length === 0 ? "context_injection: [] → removed (nothing to inject)" : "context_injection → removed (no usable entries)");
-			edits.set("context_injection", null);
 		} else {
-			const merged = [...existing, ...added];
-			res.report.push(`context_injection → sections: ${added.map((a) => `${a.name} (${a.path})`).join(", ")}`);
-			if ("sections" in doc) {
-				edits.set("sections", dumpKey("sections", merged));
-				edits.set("context_injection", null);
-			} else {
-				edits.set("context_injection", null);
-				appendSections = dumpKey("sections", merged);
-			}
+			res.report.push(`context_injection → prompt.extra_sections: ${ciSections.map((a) => `${a.name} (${a.path})`).join(", ")}`);
 		}
 	}
 
@@ -175,22 +341,56 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 		if (!empty || key !== "startup") res.warnings.push(`${key} dropped (${JSON.stringify(v)}): ${why}`);
 	}
 
+	// Identity: system_prompt → prompt.identity; SYSTEM.md → IDENTITY.md when it's the one in use.
+	const systemMd = join(home, "SYSTEM.md");
+	const identityMd = join(home, DEFAULT_IDENTITY_FILE);
+	let identity: string | undefined;
+	let renameSystemMd = false;
 	if (typeof doc.system_prompt === "string") {
-		const p = isAbsolute(doc.system_prompt) ? doc.system_prompt : join(home, doc.system_prompt);
-		if (existsSync(p)) res.report.push(`system_prompt: ${doc.system_prompt} → kept (file exists)`);
-		else {
-			edits.set("system_prompt", null);
-			res.report.push(`system_prompt → removed`);
-			res.warnings.push(`system_prompt dropped: ${p} does not exist (SYSTEM.md in the agent folder is used if present)`);
+		const p = resolve(home, doc.system_prompt);
+		if (!existsSync(p)) {
+			res.report.push("system_prompt → removed");
+			res.warnings.push(`system_prompt dropped: ${p} does not exist (${DEFAULT_IDENTITY_FILE} in the agent folder is used if present)`);
+		} else if (p === systemMd) {
+			renameSystemMd = true;
+			identity = DEFAULT_IDENTITY_FILE;
+		} else {
+			identity = doc.system_prompt;
+			res.report.push(`system_prompt → prompt.identity: ${identity}`);
+		}
+	} else if (!("system_prompt" in doc) && !(isMapping(doc.prompt) && "identity" in doc.prompt) && existsSync(systemMd)) {
+		const klRoot = opts.klRoot ?? resolveKlRoot();
+		if (globalIdentity(klRoot) !== undefined) {
+			res.report.push(`SYSTEM.md → left as is (not in use: ${join(klRoot, "config.yml")} sets the identity)`);
+		} else renameSystemMd = true;
+	}
+	if (renameSystemMd) {
+		if (existsSync(identityMd)) {
+			identity = "SYSTEM.md";
+			res.report.push("system_prompt → prompt.identity: SYSTEM.md");
+			res.warnings.push(`both SYSTEM.md and ${DEFAULT_IDENTITY_FILE} exist: left both, prompt.identity: SYSTEM.md keeps the one in use`);
+		} else {
+			if (!opts.dryRun) {
+				renameSync(systemMd, identityMd);
+				const text = readFileSync(identityMd, "utf8");
+				const fixed = text.replace(/an empty file means no identity prompt\./, "an empty file gives the built-in identity.");
+				if (fixed !== text) writeFileSync(identityMd, fixed);
+			}
+			res.changed = true;
+			res.report.push(`SYSTEM.md → ${DEFAULT_IDENTITY_FILE}${identity ? ` (prompt.identity: ${identity})` : ""}`);
 		}
 	}
+
+	const remove = [...OLD_PROMPT_KEYS, "context_injection"].filter((k) => k in doc);
+	const block = buildPromptBlock(doc, identity, ciSections, res);
+	const append = promptEdits(lines, doc, remove, block, edits);
 
 	if ("cleanup" in doc) {
 		const c = doc.cleanup;
 		if (typeof c === "string") {
 			const { text, others } = migrateCleanupText(c);
 			if (text !== c) {
-				edits.set("cleanup", dumpKey("cleanup", text));
+				edits.set("cleanup", { lines: dumpKey("cleanup", text), keepComments: true });
 				res.report.push(`cleanup: {summary_path} → "${SUMMARY_WORDING}"`);
 			} else res.report.push("cleanup → kept");
 			if (others.length) res.warnings.push(`cleanup still has ${others.join(" ")}: kl expands no placeholders; reword them`);
@@ -213,36 +413,10 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 	}
 
 	const commentsStale = refreshComments(original) !== original;
-	if (edits.size > 0 || appendSections || commentsStale) {
-		const blocks = keyBlocks(lines);
-		// Apply bottom-up so earlier ranges stay valid.
-		const ordered = [...edits.entries()]
-			.filter(([k]) => blocks.has(k))
-			.sort((a, b) => blocks.get(b[0])![0] - blocks.get(a[0])![0]);
-		for (const [key, repl] of ordered) {
-			const [start, end] = blocks.get(key)!;
-			const keyLine = lines.slice(start, end).findIndex((l) => l.startsWith(key)) + start;
-			// Replacements keep the comment block above the key; removals take it.
-			if (repl === null) lines.splice(start, end - start);
-			else {
-				lines.splice(keyLine, end - keyLine, ...repl);
-				// Drop comment lines above it that document the old placeholders.
-				for (let i = keyLine - 1; i >= start; i--) if (/template vars|\{summary_path\}/.test(lines[i])) lines.splice(i, 1);
-			}
-		}
-		let out = refreshComments(lines.join("\n")).replace(/\n{3,}/g, "\n\n");
+	if (edits.size > 0 || append || commentsStale) {
+		const out = rewrite(original, edits, append, ymlPath);
 		if (commentsStale) res.report.push("comments from the old template → reworded");
-		if (appendSections) out = `${out.replace(/\n*$/, "\n")}\n# Files rendered into the system prompt at session start (kl migrate).\n${appendSections.join("\n")}\n`;
-		// Must still parse, and every edit must have taken.
-		const check = yaml.load(out) as Record<string, unknown>;
-		for (const [k, v] of edits) if (v === null && k in (check ?? {})) throw new Error(`migrate: failed to remove ${k} from ${ymlPath}`);
-		if (!opts.dryRun) {
-			let bak = `${ymlPath}.bak`;
-			for (let i = 1; existsSync(bak); i++) bak = `${ymlPath}.bak.${i}`;
-			copyFileSync(ymlPath, bak);
-			writeFileSync(ymlPath, out);
-			res.backup = bak;
-		}
+		if (!opts.dryRun) res.backup = writeWithBackup(ymlPath, out);
 		res.changed = true;
 	}
 
@@ -264,26 +438,71 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean } = {}): M
 	return res;
 }
 
+/** Move the old prompt keys in <kl root>/config.yml into `prompt:`. Null when there's no config.yml. */
+export function migrateGlobalConfig(klRoot: string, opts: { dryRun?: boolean } = {}): MigrateResult | null {
+	const path = join(klRoot, "config.yml");
+	if (!existsSync(path)) return null;
+	const res: MigrateResult = { home: path, changed: false, report: [], warnings: [] };
+	const original = readFileSync(path, "utf8");
+	let doc: Record<string, unknown>;
+	try {
+		const raw = yaml.load(original);
+		doc = isMapping(raw) ? raw : {};
+	} catch (e) {
+		res.warnings.push(`config.yml is not valid YAML, not touched: ${(e as Error).message}`);
+		return res;
+	}
+	let identity: string | undefined;
+	if (typeof doc.system_prompt === "string") {
+		identity = doc.system_prompt;
+		res.report.push(`system_prompt → prompt.identity: ${identity}`);
+	}
+	const remove = OLD_PROMPT_KEYS.filter((k) => k in doc);
+	if (remove.length === 0) {
+		res.report.push("nothing to migrate");
+		return res;
+	}
+	const edits = new Map<string, Edit>();
+	const block = buildPromptBlock(doc, identity, [], res);
+	const append = promptEdits(original.split("\n"), doc, remove, block, edits);
+	const out = rewrite(original, edits, append, path);
+	if (!opts.dryRun) res.backup = writeWithBackup(path, out);
+	res.changed = true;
+	return res;
+}
+
+function printResult(r: MigrateResult, dryRun: boolean): void {
+	process.stdout.write(`${r.home}${dryRun ? " (dry run)" : ""}\n`);
+	for (const l of r.report) process.stdout.write(`  ${l}\n`);
+	for (const w of r.warnings) process.stdout.write(`  warning: ${w}\n`);
+	if (r.backup) process.stdout.write(`  backup: ${r.backup}\n`);
+}
+
 function main(argv: string[]): number {
 	const dryRun = argv.includes("--dry-run") || argv.includes("-n");
 	const args = argv.filter((a) => a !== "--dry-run" && a !== "-n");
 	if (args.some((a) => a === "-h" || a === "--help")) {
-		process.stdout.write("usage: kl migrate [--dry-run] [agent-home…]   (default: every agent in $KL_AGENTS_DIR)\n");
+		process.stdout.write("usage: kl migrate [--dry-run] [agent-home…]   (default: <kl root>/config.yml and every agent in $KL_AGENTS_DIR)\n");
 		return 0;
+	}
+	let failed = 0;
+	if (args.length === 0) {
+		try {
+			const g = migrateGlobalConfig(resolveKlRoot(), { dryRun });
+			if (g) printResult(g, dryRun);
+		} catch (e) {
+			failed++;
+			process.stderr.write(`kl migrate: config.yml: ${(e as Error).message}\n`);
+		}
 	}
 	const homes = args.length ? args : listAgents().map((a) => join(agentsDir(), a.name));
 	if (homes.length === 0) {
 		process.stderr.write(`kl migrate: no agents in ${agentsDir()}\n`);
 		return 1;
 	}
-	let failed = 0;
 	for (const h of homes) {
 		try {
-			const r = migrateHome(h, { dryRun });
-			process.stdout.write(`${r.home}${dryRun ? " (dry run)" : ""}\n`);
-			for (const l of r.report) process.stdout.write(`  ${l}\n`);
-			for (const w of r.warnings) process.stdout.write(`  warning: ${w}\n`);
-			if (r.backup) process.stdout.write(`  backup: ${r.backup}\n`);
+			printResult(migrateHome(h, { dryRun }), dryRun);
 		} catch (e) {
 			failed++;
 			process.stderr.write(`kl migrate: ${h}: ${(e as Error).message}\n`);

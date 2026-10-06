@@ -17,13 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
-import {
-	applyPrompt,
-	loadAgentBaseline,
-	loadIdentity,
-	renderSections,
-	type PromptParts,
-} from "../prompt.ts";
+import { applyPrompt, loadPromptParts, type PromptParts } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildSessionsTool } from "../sessions-tool.ts";
@@ -151,12 +145,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 		// Prompt parts: read once, cached for the session. Warnings surface now,
 		// at startup, where the user can see them.
-		promptParts = {
-			identity: loadIdentity(config, warn),
-			baseline: loadAgentBaseline(config, warn),
-			sections: renderSections(config.sections, env, warn),
-			projectContext: config.project_context,
-		};
+		promptParts = loadPromptParts(config, env, warn);
 
 		periodicTime =
 			config.timestamps === false

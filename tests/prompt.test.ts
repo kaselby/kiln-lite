@@ -12,7 +12,7 @@ import {
 	loadBaseline,
 	loadIdentity,
 	defaultIdentity,
-	loadAgentBaseline,
+	loadPromptParts,
 	renderSections,
 	renderSessionSection,
 	renderToolRules,
@@ -21,7 +21,7 @@ import {
 	type PromptParts,
 } from "../extensions/kiln-lite/prompt.ts";
 import { defaultConfig } from "../extensions/kiln-lite/config.ts";
-import type { SectionEntry } from "../extensions/kiln-lite/types.ts";
+import type { AgentConfig, SectionEntry } from "../extensions/kiln-lite/types.ts";
 
 // Pi's renderer is not in the package exports; import it by file path.
 // Dynamic import: tsx runs this file as CJS, and pi-ai is ESM-only.
@@ -47,7 +47,7 @@ function options(over: Partial<PromptOptionsLike> = {}): PromptOptionsLike {
 }
 
 function parts(over: Partial<PromptParts> = {}): PromptParts {
-	return { identity: "I am scout.", baseline: "kl baseline.", sections: [], projectContext: true, ...over };
+	return { identity: "I am scout.", baseline: "kl baseline.", sections: [], klPrompt: true, appendedPrompt: true, projectContext: true, ...over };
 }
 
 // --- renderToolRules ---
@@ -131,7 +131,7 @@ test("applyPrompt: idempotent across turns", () => {
 	assert.equal(JSON.stringify(opts), first);
 });
 
-test("applyPrompt: project_context false empties contextFiles; true leaves them", () => {
+test("applyPrompt: include_project_context false empties contextFiles; true leaves them", () => {
 	const files = [{ path: "/p/AGENTS.md", content: "x" }];
 	const off = options({ contextFiles: [...files] });
 	applyPrompt(off, parts({ projectContext: false }), SESSION);
@@ -149,28 +149,42 @@ test("applyPrompt: never sets forceSystemPrompt", () => {
 
 // --- identity / baseline ---
 
-test("loadIdentity reads system_prompt relative to its base; missing file warns", () => {
+function withPrompt(dir: string, over: Partial<AgentConfig["prompt"]> = {}): AgentConfig {
+	const config = defaultConfig(dir);
+	return { ...config, prompt: { ...config.prompt, ...over } };
+}
+
+test("loadIdentity: reads prompt.identity against its base; missing or empty file → built-in identity", () => {
 	const dir = mkdtempSync(join(tmpdir(), "kl-prompt-test-"));
-	writeFileSync(join(dir, "SYSTEM.md"), "<!-- human note -->\nI am scout.\n");
-	const config = { ...defaultConfig(dir), system_prompt: "SYSTEM.md", system_prompt_base: dir };
+	writeFileSync(join(dir, "IDENTITY.md"), "<!-- human note -->\nI am scout.\n");
+	writeFileSync(join(dir, "EMPTY.md"), "<!-- only a note -->\n");
 	const warnings: string[] = [];
-	assert.equal(loadIdentity(config, (m) => warnings.push(m)), "I am scout.");
-	const dflt = defaultIdentity(config.name);
-	assert.equal(loadIdentity({ ...config, system_prompt: "nope.md" }, (m) => warnings.push(m)), dflt, "missing file → warn, default");
-	assert.equal(warnings.length, 1);
-	assert.equal(loadIdentity(defaultConfig(dir), (m) => warnings.push(m)), dflt, "no system_prompt → default, no warning");
-	assert.equal(warnings.length, 1);
+	const warn = (m: string) => warnings.push(m);
+	const dflt = defaultIdentity("scout");
+	const config = withPrompt(join(dir), { identity: "IDENTITY.md", identity_base: dir });
+	config.name = "scout";
+	assert.equal(loadIdentity(config, warn), "I am scout.");
+	assert.deepEqual(warnings, []);
+	assert.equal(loadIdentity({ ...config, prompt: { ...config.prompt, identity: "nope.md" } }, warn), dflt, "missing file → built-in");
+	assert.equal(warnings.length, 1, "missing file warns");
+	assert.equal(loadIdentity({ ...config, prompt: { ...config.prompt, identity: "EMPTY.md" } }, warn), dflt, "empty file → built-in");
+	assert.equal(loadIdentity({ ...config, prompt: { ...config.prompt, identity: undefined } }, warn), dflt, "unset → built-in");
+	assert.equal(warnings.length, 1, "empty or unset doesn't warn");
 });
 
-test("loadAgentBaseline: harness_prompt replaces kl's (relative to its base); false drops it", () => {
+test("loadPromptParts: include_kl_prompt false skips the baseline; switches carry through", () => {
 	const dir = mkdtempSync(join(tmpdir(), "kl-prompt-test-"));
-	writeFileSync(join(dir, "mine.md"), "<!-- x -->\nMy harness. Docs: {{kl_docs}}\n");
-	const config = defaultConfig(dir);
 	const warnings: string[] = [];
-	const own = loadAgentBaseline({ ...config, harness_prompt: "mine.md", harness_prompt_base: dir }, (m) => warnings.push(m))!;
-	assert.match(own, /^My harness\. Docs: \/.*docs$/);
-	assert.equal(loadAgentBaseline({ ...config, harness_prompt: false }, (m) => warnings.push(m)), null);
-	assert.ok(loadAgentBaseline(config, (m) => warnings.push(m))!.includes("kiln_lite"), "unset → kl's baseline");
+	const on = loadPromptParts(withPrompt(dir), {}, (m) => warnings.push(m));
+	assert.ok(on.baseline && on.baseline.length > 0);
+	assert.equal(on.klPrompt && on.appendedPrompt && on.projectContext, true);
+	const off = loadPromptParts(
+		withPrompt(dir, { include_kl_prompt: false, include_appended_prompt: false, include_project_context: false }),
+		{},
+		(m) => warnings.push(m),
+	);
+	assert.equal(off.baseline, null);
+	assert.deepEqual([off.klPrompt, off.appendedPrompt, off.projectContext], [false, false, false]);
 	assert.deepEqual(warnings, []);
 });
 
@@ -303,7 +317,7 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 	assert.ok(text.includes("<session>\nagent: scout\nsession: scout-quiet-fox\nmodel: openai-codex/gpt-5.6-luna\nhome: /agents/scout\n</session>"));
 });
 
-test("Pi integration: project_context false drops the <project_context> section", async () => {
+test("Pi integration: include_project_context false drops the <project_context> section", async () => {
 	const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await piRenderer();
 	const opts = normalizeBuildSystemPromptOptions({
 		cwd: "/w",
@@ -313,4 +327,43 @@ test("Pi integration: project_context false drops the <project_context> section"
 	const text: string = buildSystemPrompt(opts);
 	assert.ok(!text.includes("<project_context>"));
 	assert.ok(!text.includes("PROJECT RULES"));
+});
+
+test("Pi integration: include_kl_prompt false drops <harness>, <tools> and <rules>; identity opens the prompt; the rest stays", async () => {
+	const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await piRenderer();
+	const opts = normalizeBuildSystemPromptOptions({
+		selectedTools: ["read", "bash"],
+		toolSnippets: { read: "Read files", bash: "Run commands" },
+		toolGuidelines: { read: ["Use read to inspect files"] },
+		promptGuidelines: ["Extension guideline"],
+		appendSystemPrompt: "ADDENDUM TEXT",
+		cwd: "/w",
+		contextFiles: [{ path: "/w/AGENTS.md", content: "PROJECT RULES" }],
+	});
+	applyPrompt(
+		opts as unknown as PromptOptionsLike,
+		parts({ klPrompt: false, baseline: null, sections: [{ name: "notes", content: "NOTES" }] }),
+		SESSION,
+	);
+	const text: string = buildSystemPrompt(opts);
+	assert.ok(text.startsWith("I am scout."), text.slice(0, 200));
+	for (const gone of ["<harness>", "<tools>", "<rules>", "Use read to inspect files", "Extension guideline", "expert coding assistant", "Pi documentation"]) {
+		assert.ok(!text.includes(gone), `${gone} should be gone:\n${text}`);
+	}
+	for (const kept of ["<addendum>", "<project_context>", "<cwd>", "<session>", "<notes>"]) {
+		assert.ok(text.includes(kept), `${kept} should stay:\n${text}`);
+	}
+});
+
+test("Pi integration: include_appended_prompt false drops <addendum>; true keeps it", async () => {
+	const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await piRenderer();
+	const render = (appendedPrompt: boolean) => {
+		const opts = normalizeBuildSystemPromptOptions({ cwd: "/w", appendSystemPrompt: "ADDENDUM TEXT" });
+		applyPrompt(opts as unknown as PromptOptionsLike, parts({ appendedPrompt }), SESSION);
+		return buildSystemPrompt(opts) as string;
+	};
+	const off = render(false);
+	assert.ok(!off.includes("<addendum>") && !off.includes("ADDENDUM TEXT"), off);
+	assert.ok(off.includes("<harness>"), "kl's prompt unaffected");
+	assert.ok(render(true).includes("<addendum>\nADDENDUM TEXT"));
 });

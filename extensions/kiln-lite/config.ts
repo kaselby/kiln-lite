@@ -5,14 +5,15 @@
  *   1. `<kl root>/config.yml`   — global defaults for every kl agent
  *                                 (kl root = $KL_ROOT or ~/.kl)
  *   2. `<agent home>/agent.yml` — per agent; any top-level key it sets
- *                                 replaces the global value outright
+ *                                 replaces the global value outright, except
+ *                                 `prompt:`, merged one level down
  *
- * Relative paths (`system_prompt`, `sections[].path`) resolve against the
- * dir of the file that declared them, so a global section can point into
- * ~/.kl and an agent's into its own folder.
+ * Relative paths (`prompt.identity`, `prompt.extra_sections[].path`) resolve
+ * against the dir of the file that declared them, so a global section can
+ * point into ~/.kl and an agent's into its own folder.
  *
- * Minimal schema: name, description, model, thinking, system_prompt,
- * sections, project_context, timestamps. A few more keys are recognized for
+ * Minimal schema: name, description, model, thinking, prompt, timestamps.
+ * A few more keys are recognized for
  * modules outside the core slice (cleanup,
  * session_state_interval) and by the launcher (pi_extensions); anything else
  * warns and is ignored.
@@ -23,7 +24,7 @@ import { homedir } from "node:os";
 import { basename, resolve, join } from "node:path";
 import yaml from "js-yaml";
 
-import type { AgentConfig, SectionEntry, TimestampConfig } from "./types.ts";
+import type { AgentConfig, PromptConfig, SectionEntry, TimestampConfig } from "./types.ts";
 import { parsePromptSource } from "./prompt-source.ts";
 
 /** Pi rejects section names outside this grammar (system-prompt.js). */
@@ -45,6 +46,9 @@ export const RESERVED_SECTIONS = new Set([
 	"session",
 ]);
 
+/** Identity file used when no `prompt.identity` is set, if it exists in the agent folder. */
+export const DEFAULT_IDENTITY_FILE = "IDENTITY.md";
+
 export const DEFAULT_TIMESTAMPS: TimestampConfig = { per_turn: true, every_calls: 20, every_minutes: 10 };
 
 const KNOWN_KEYS = new Set([
@@ -53,10 +57,7 @@ const KNOWN_KEYS = new Set([
 	"description",
 	"model",
 	"thinking",
-	"system_prompt",
-	"harness_prompt",
-	"sections",
-	"project_context",
+	"prompt",
 	"timestamps",
 	"cleanup",
 	"session_state_interval",
@@ -116,9 +117,13 @@ export function resolveKlRoot(): string {
 export function defaultConfig(agentHome: string): AgentConfig {
 	return {
 		name: basename(agentHome) || "agent",
-		system_prompt_base: agentHome,
-		sections: [],
-		project_context: true,
+		prompt: {
+			identity_base: agentHome,
+			include_kl_prompt: true,
+			include_appended_prompt: true,
+			include_project_context: true,
+			extra_sections: [],
+		},
 		timestamps: { ...DEFAULT_TIMESTAMPS },
 		cleanup: "",
 		session_state_interval: 15,
@@ -169,9 +174,9 @@ export function loadConfig(opts: LoadConfigOptions): AgentConfig {
 	const agent = readYamlMapping(agentPath, "agent.yml", warn);
 	if (agent) applyLayer(config, agent, { baseDir: agentHome, label: agentPath, isGlobal: false, warn });
 
-	if (config.system_prompt === undefined && existsSync(join(agentHome, "SYSTEM.md"))) {
-		config.system_prompt = "SYSTEM.md";
-		config.system_prompt_base = agentHome;
+	if (config.prompt.identity === undefined && existsSync(join(agentHome, DEFAULT_IDENTITY_FILE))) {
+		config.prompt.identity = DEFAULT_IDENTITY_FILE;
+		config.prompt.identity_base = agentHome;
 	}
 	return config;
 }
@@ -184,7 +189,7 @@ interface LayerOptions {
 }
 
 function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: LayerOptions): void {
-	const { baseDir, label, isGlobal, warn } = layer;
+	const { label, isGlobal, warn } = layer;
 	const has = (k: string) => Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined;
 
 	for (const key of Object.keys(obj)) {
@@ -212,33 +217,7 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 		if (v && THINKING_LEVELS.includes(v)) config.thinking = v;
 		else warn(`kiln-lite: ${label}: thinking must be one of ${THINKING_LEVELS.join(", ")} — ignoring`);
 	}
-	if (has("system_prompt")) {
-		const v = str(obj.system_prompt);
-		if (v) {
-			config.system_prompt = v;
-			config.system_prompt_base = baseDir;
-		} else warn(`kiln-lite: ${label}: system_prompt must be a path string — ignoring`);
-	}
-	if (has("harness_prompt")) {
-		const raw = obj.harness_prompt;
-		if (raw === false || raw === "") {
-			config.harness_prompt = false;
-		} else {
-			const v = str(raw);
-			if (v) {
-				config.harness_prompt = v;
-				config.harness_prompt_base = baseDir;
-			} else warn(`kiln-lite: ${label}: harness_prompt must be a path string or false — ignoring`);
-		}
-	}
-	if (has("sections")) {
-		const parsed = parseSections(obj.sections, baseDir, label, warn);
-		if (parsed) config.sections = parsed;
-	}
-	if (has("project_context")) {
-		if (typeof obj.project_context === "boolean") config.project_context = obj.project_context;
-		else warn(`kiln-lite: ${label}: project_context must be true or false — ignoring`);
-	}
+	if (has("prompt")) applyPromptLayer(config.prompt, obj.prompt, layer);
 	if (has("timestamps")) {
 		const t = parseTimestamps(obj.timestamps, label, warn);
 		if (t !== undefined) config.timestamps = t;
@@ -258,11 +237,44 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	}
 }
 
+const PROMPT_SWITCHES = ["include_kl_prompt", "include_appended_prompt", "include_project_context"] as const;
+const PROMPT_KEYS = new Set<string>(["identity", ...PROMPT_SWITCHES, "extra_sections"]);
+
+/** Merge one file's `prompt:` block into `prompt`, key by key. */
+function applyPromptLayer(prompt: PromptConfig, raw: unknown, layer: LayerOptions): void {
+	const { baseDir, label, warn } = layer;
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		warn(`kiln-lite: ${label}: prompt must be a mapping — ignoring`);
+		return;
+	}
+	const obj = raw as Record<string, unknown>;
+	const has = (k: string) => Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined;
+	for (const key of Object.keys(obj)) {
+		if (!PROMPT_KEYS.has(key)) warn(`kiln-lite: ${label} has unknown field 'prompt.${key}' — ignoring`);
+	}
+	if (has("identity")) {
+		const v = str(obj.identity);
+		if (v) {
+			prompt.identity = v;
+			prompt.identity_base = baseDir;
+		} else warn(`kiln-lite: ${label}: prompt.identity must be a path string — ignoring`);
+	}
+	for (const key of PROMPT_SWITCHES) {
+		if (!has(key)) continue;
+		if (typeof obj[key] === "boolean") prompt[key] = obj[key] as boolean;
+		else warn(`kiln-lite: ${label}: prompt.${key} must be true or false — ignoring`);
+	}
+	if (has("extra_sections")) {
+		const parsed = parseSections(obj.extra_sections, baseDir, label, warn);
+		if (parsed) prompt.extra_sections = parsed;
+	}
+}
+
 function str(v: unknown): string | undefined {
 	return typeof v === "string" ? v.trim() : undefined;
 }
 
-/** Parse `sections:`. Returns undefined (keep the lower layer) when the value isn't a list. */
+/** Parse `prompt.extra_sections`. Returns undefined (keep the lower layer) when the value isn't a list. */
 export function parseSections(
 	raw: unknown,
 	baseDir: string,
@@ -270,13 +282,13 @@ export function parseSections(
 	warn: (msg: string) => void,
 ): SectionEntry[] | undefined {
 	if (!Array.isArray(raw)) {
-		warn(`kiln-lite: ${label}: sections must be a list of {name, path} or {name, command} — ignoring`);
+		warn(`kiln-lite: ${label}: prompt.extra_sections must be a list of {name, path} or {name, command} — ignoring`);
 		return undefined;
 	}
 	const out: SectionEntry[] = [];
 	const seen = new Set<string>();
 	for (const [i, e] of raw.entries()) {
-		const where = `${label}: sections[${i}]`;
+		const where = `${label}: prompt.extra_sections[${i}]`;
 		if (e === null || typeof e !== "object" || Array.isArray(e)) {
 			warn(`kiln-lite: ${where} is not a mapping — skipping`);
 			continue;
