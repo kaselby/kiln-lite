@@ -68,9 +68,11 @@ transcript, then attach. Starting it again:
 - runs in the session's recorded working directory, or the agent folder if
   that's gone;
 - passes the model and thinking level recorded when the session was first
-  launched, unless you pass `--model` or `--thinking`; everything else
-  (prompt, extensions, sections) is rebuilt from the agent folder as it is
-  now;
+  launched, unless you pass `--model` or `--thinking`;
+- keeps the identity, baseline and extra sections the transcript recorded
+  ([agents.md](agents.md#the-system-prompt)); everything else (config,
+  extensions, Pi's project context and skills) comes from the agent folder
+  as it is now;
 - runs the pre-launch hook, and waits up to 20 s for the new process to
   write its lease;
 - gives the first turn a hidden note that the session was resumed and time
@@ -133,10 +135,11 @@ until the reset is done).
 of exiting. After the cleanup turn (if any), the model sees only the system
 prompt, the `handoff` text, and whatever comes next. `handoff` is text, or
 an absolute or `~/` path to a file whose contents are used. With
-`autonomous: true` the session starts working on the handoff right away;
-otherwise it waits for the next message. The session keeps its name, UUID,
-transcript, inbox, plan and children. The system prompt isn't rebuilt, so
-`sections:` keep the content they had at session start.
+`autonomous: true` the session starts a new turn right away, with a short
+note telling the model to carry on from the handoff; otherwise it waits for
+the next message. The session keeps its name, UUID, transcript, inbox, plan
+and children. The reset rereads the identity, baseline and extra sections,
+so the new context sees what the cleanup turn wrote.
 
 ## What a session is doing
 

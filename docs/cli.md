@@ -99,7 +99,7 @@ with `*` on running ones:
 `agent.yml`), each with its number of sessions and its description.
 
 **init** (alias **new**) creates `$KL_AGENTS_DIR/<name>` with `agent.yml`
-and `SYSTEM.md`. `--full` adds `memory/`, `scratch/`, `extensions/`,
+and `IDENTITY.md`. `--full` adds `memory/`, `scratch/`, `extensions/`,
 `skills/`, `prompts/`, a cleanup prompt and a memory section, and runs
 `git init`. Names match `[a-z][a-z0-9_]*`. See [agents.md](agents.md).
 

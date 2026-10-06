@@ -27,75 +27,103 @@ function load(klRoot: string, agentHome: string) {
 	return { config, warnings };
 }
 
-test("defaults: no files → name from dir, project_context on, default timestamps, no sections", () => {
+test("defaults: no files → name from dir, every prompt part on, default timestamps, no extra sections", () => {
 	const { klRoot, agentHome } = scratch();
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.equal(config.name, "scout");
-	assert.equal(config.project_context, true);
+	assert.equal(config.prompt.include_kl_prompt, true);
+	assert.equal(config.prompt.include_appended_prompt, true);
+	assert.equal(config.prompt.include_project_context, true);
 	assert.deepEqual(config.timestamps, DEFAULT_TIMESTAMPS);
-	assert.deepEqual(config.sections, []);
-	assert.equal(config.system_prompt, undefined);
+	assert.deepEqual(config.prompt.extra_sections, []);
+	assert.equal(config.prompt.identity, undefined);
 	assert.equal(config.model, undefined);
 	assert.deepEqual(warnings, []);
 });
 
 test("global config.yml applies; agent.yml overrides key by key", () => {
 	const { klRoot, agentHome } = scratch();
-	writeFileSync(
-		join(klRoot, "config.yml"),
-		"model: openai-codex/gpt-5.6-luna\nthinking: low\nproject_context: false\ntimestamps: false\n",
-	);
+	writeFileSync(join(klRoot, "config.yml"), "model: openai-codex/gpt-5.6-luna\nthinking: low\ntimestamps: false\n");
 	writeFileSync(join(agentHome, "agent.yml"), "thinking: high\n");
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.equal(config.model, "openai-codex/gpt-5.6-luna", "global model kept");
 	assert.equal(config.thinking, "high", "agent overrides thinking");
-	assert.equal(config.project_context, false, "global project_context kept");
 	assert.equal(config.timestamps, false);
 	assert.deepEqual(warnings, []);
 });
 
-test("sections: agent list replaces the global list wholesale (no deep merge)", () => {
+test("prompt: merges key by key across config.yml and agent.yml", () => {
 	const { klRoot, agentHome } = scratch();
-	writeFileSync(join(klRoot, "config.yml"), "sections:\n  - {name: house, path: house.md}\n");
-	writeFileSync(join(agentHome, "agent.yml"), "sections:\n  - {name: notes, path: notes.md}\n");
+	writeFileSync(
+		join(klRoot, "config.yml"),
+		"prompt:\n  identity: house.md\n  include_project_context: false\n  include_appended_prompt: false\n  extra_sections:\n    - {name: house, path: house.md}\n",
+	);
+	writeFileSync(join(agentHome, "agent.yml"), "prompt:\n  include_kl_prompt: false\n  include_appended_prompt: true\n");
+	const { config, warnings } = load(klRoot, agentHome);
+	assert.deepEqual(warnings, []);
+	assert.equal(config.prompt.identity, "house.md", "global identity kept");
+	assert.equal(config.prompt.include_project_context, false, "global switch kept");
+	assert.equal(config.prompt.include_appended_prompt, true, "agent overrides one switch");
+	assert.equal(config.prompt.include_kl_prompt, false, "agent sets another");
+	assert.deepEqual(config.prompt.extra_sections.map((s) => s.name), ["house"], "global sections kept when the agent sets none");
+});
+
+test("prompt.extra_sections: agent list replaces the global list wholesale", () => {
+	const { klRoot, agentHome } = scratch();
+	writeFileSync(join(klRoot, "config.yml"), "prompt:\n  extra_sections:\n    - {name: house, path: house.md}\n");
+	writeFileSync(join(agentHome, "agent.yml"), "prompt:\n  extra_sections:\n    - {name: notes, path: notes.md}\n");
 	const { config } = load(klRoot, agentHome);
-	assert.deepEqual(config.sections.map((s) => s.name), ["notes"]);
+	assert.deepEqual(config.prompt.extra_sections.map((s) => s.name), ["notes"]);
 });
 
 test("relative paths resolve against the dir of the declaring file", () => {
 	const { klRoot, agentHome } = scratch();
 	writeFileSync(
 		join(klRoot, "config.yml"),
-		"system_prompt: prompts/house.md\nsections:\n  - {name: house, path: house.md}\n",
+		"prompt:\n  identity: prompts/house.md\n  extra_sections:\n    - {name: house, path: house.md}\n",
 	);
 	let { config } = load(klRoot, agentHome);
-	assert.equal(config.system_prompt, "prompts/house.md");
-	assert.equal(config.system_prompt_base, klRoot);
-	assert.equal(config.sections[0].baseDir, klRoot);
+	assert.equal(join(config.prompt.identity_base, config.prompt.identity!), join(klRoot, "prompts/house.md"));
+	assert.equal(config.prompt.extra_sections[0].baseDir, klRoot);
 
-	writeFileSync(join(agentHome, "agent.yml"), "system_prompt: me.md\nsections:\n  - {name: today, command: date}\n");
+	writeFileSync(join(agentHome, "agent.yml"), "prompt:\n  identity: me.md\n  extra_sections:\n    - {name: today, command: date}\n");
 	({ config } = load(klRoot, agentHome));
-	assert.equal(config.system_prompt, "me.md");
-	assert.equal(config.system_prompt_base, agentHome);
-	assert.equal(config.sections[0].baseDir, agentHome);
-	assert.equal(config.sections[0].command, "date");
+	assert.equal(join(config.prompt.identity_base, config.prompt.identity!), join(agentHome, "me.md"));
+	assert.equal(config.prompt.extra_sections[0].baseDir, agentHome);
+	assert.equal(config.prompt.extra_sections[0].command, "date");
 });
 
-test("SYSTEM.md in the agent dir is the default system_prompt", () => {
+test("IDENTITY.md in the agent dir is the default identity", () => {
 	const { klRoot, agentHome } = scratch();
-	writeFileSync(join(agentHome, "SYSTEM.md"), "I am scout.\n");
+	writeFileSync(join(agentHome, "IDENTITY.md"), "I am scout.\n");
 	const { config } = load(klRoot, agentHome);
-	assert.equal(config.system_prompt, "SYSTEM.md");
-	assert.equal(config.system_prompt_base, agentHome);
+	assert.equal(join(config.prompt.identity_base, config.prompt.identity!), join(agentHome, "IDENTITY.md"));
 });
 
-test("explicit system_prompt wins over SYSTEM.md (global or agent)", () => {
+test("an explicit prompt.identity (global or agent) wins over IDENTITY.md", () => {
+	const { klRoot, agentHome } = scratch();
+	writeFileSync(join(agentHome, "IDENTITY.md"), "I am scout.\n");
+	writeFileSync(join(klRoot, "config.yml"), "prompt:\n  identity: house.md\n");
+	const { config } = load(klRoot, agentHome);
+	assert.equal(join(config.prompt.identity_base, config.prompt.identity!), join(klRoot, "house.md"));
+});
+
+test("the old top-level prompt keys get the plain unknown-key warning and do nothing", () => {
 	const { klRoot, agentHome } = scratch();
 	writeFileSync(join(agentHome, "SYSTEM.md"), "I am scout.\n");
-	writeFileSync(join(klRoot, "config.yml"), "system_prompt: house.md\n");
-	const { config } = load(klRoot, agentHome);
-	assert.equal(config.system_prompt, "house.md");
-	assert.equal(config.system_prompt_base, klRoot);
+	writeFileSync(
+		join(agentHome, "agent.yml"),
+		"system_prompt: SYSTEM.md\nharness_prompt: false\nproject_context: false\nsections:\n  - {name: notes, path: notes.md}\n",
+	);
+	const { config, warnings } = load(klRoot, agentHome);
+	for (const key of ["system_prompt", "harness_prompt", "project_context", "sections"]) {
+		assert.ok(warnings.some((w) => w.includes(`unknown field '${key}'`)), key);
+	}
+	assert.equal(warnings.length, 4);
+	assert.equal(config.prompt.identity, undefined, "SYSTEM.md is not picked up");
+	assert.equal(config.prompt.include_kl_prompt, true);
+	assert.equal(config.prompt.include_project_context, true);
+	assert.deepEqual(config.prompt.extra_sections, []);
 });
 
 test("name/description are agent-only: ignored with a warning in the global file", () => {
@@ -119,12 +147,13 @@ test("unknown keys warn and are ignored (e.g. retired context_injection)", () =>
 test("invalid values warn and keep the lower layer", () => {
 	const { klRoot, agentHome } = scratch();
 	writeFileSync(join(klRoot, "config.yml"), "thinking: low\n");
-	writeFileSync(join(agentHome, "agent.yml"), "thinking: turbo\nproject_context: nope\nname: Bad-Name\n");
+	writeFileSync(join(agentHome, "agent.yml"), "thinking: turbo\nprompt:\n  include_project_context: nope\n  identity: 3\n  nope: 1\nname: Bad-Name\n");
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.equal(config.thinking, "low");
-	assert.equal(config.project_context, true);
+	assert.equal(config.prompt.include_project_context, true);
+	assert.equal(config.prompt.identity, undefined);
 	assert.equal(config.name, "scout");
-	assert.equal(warnings.length, 3);
+	assert.equal(warnings.length, 5);
 });
 
 test("malformed YAML warns and is ignored", () => {
@@ -231,17 +260,11 @@ test("user name: KL_USER, else config.yml user_name, else \"user\"; invalid valu
 	}
 });
 
-test("harness_prompt: a path resolves against its file's dir; false drops the baseline; other values warn", () => {
+test("prompt: that isn't a mapping warns and keeps the lower layer", () => {
 	const { klRoot, agentHome } = scratch();
-	writeFileSync(join(klRoot, "config.yml"), "harness_prompt: shared.md\n");
-	let { config } = load(klRoot, agentHome);
-	assert.equal(config.harness_prompt, "shared.md");
-	assert.equal(config.harness_prompt_base, klRoot);
-	writeFileSync(join(agentHome, "agent.yml"), "harness_prompt: false\n");
-	({ config } = load(klRoot, agentHome));
-	assert.equal(config.harness_prompt, false);
-	writeFileSync(join(agentHome, "agent.yml"), "harness_prompt: 3\n");
-	const r = load(klRoot, agentHome);
-	assert.equal(r.config.harness_prompt, "shared.md", "bad value ignored, global kept");
-	assert.ok(r.warnings.some((w) => w.includes("harness_prompt")));
+	writeFileSync(join(klRoot, "config.yml"), "prompt:\n  include_kl_prompt: false\n");
+	writeFileSync(join(agentHome, "agent.yml"), "prompt: off\n");
+	const { config, warnings } = load(klRoot, agentHome);
+	assert.equal(config.prompt.include_kl_prompt, false);
+	assert.equal(warnings.length, 1);
 });

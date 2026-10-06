@@ -3,7 +3,7 @@
  */
 
 /**
- * One agent.yml `sections:` entry. Rendered once at session start into a
+ * One `prompt.extra_sections` entry. Rendered once at session start into a
  * named Pi system-prompt section (`<name>…</name>`), appended after kl's
  * `session` section in listed order.
  */
@@ -26,6 +26,27 @@ export interface PromptFileSource {
 /** Prompt text supplied inline or loaded from a file when it is used. */
 export type PromptSource = string | PromptFileSource;
 
+/**
+ * The `prompt:` block, merged key by key across config.yml and agent.yml.
+ */
+export interface PromptConfig {
+	/**
+	 * Identity file, resolved against `identity_base`. Unset: IDENTITY.md in
+	 * the agent folder if present, else the built-in identity.
+	 */
+	identity?: string;
+	/** Dir `identity` resolves against (dir of the config file that set it). */
+	identity_base: string;
+	/** false drops kl's whole <harness> block: baseline, <tools>, <rules>. */
+	include_kl_prompt: boolean;
+	/** false drops Pi's <addendum> (APPEND_SYSTEM.md / --append-system-prompt). */
+	include_appended_prompt: boolean;
+	/** false drops Pi's <project_context> (AGENTS.md / CLAUDE.md). */
+	include_project_context: boolean;
+	/** Named sections rendered once at session start, after <session>. */
+	extra_sections: SectionEntry[];
+}
+
 /** Timestamp settings. `timestamps: false` in config disables both kinds. */
 export interface TimestampConfig {
 	/** Inject a hidden `[time: …]` message at the start of every user turn. */
@@ -38,7 +59,8 @@ export interface TimestampConfig {
 
 /**
  * Merged kl configuration: `~/.kl/config.yml` (global) with the agent's
- * `agent.yml` overriding it key by key (top-level keys replace; no deep merge).
+ * `agent.yml` overriding it key by key. Top-level keys replace, except
+ * `prompt:`, which merges key by key one level down.
  */
 export interface AgentConfig {
 	/** Agent name — first component of <name>-<adj>-<noun> session ids. agent.yml only. */
@@ -48,24 +70,8 @@ export interface AgentConfig {
 	model?: string;
 	/** Default thinking level for `kl run`. */
 	thinking?: string;
-	/**
-	 * Agent identity prompt file. Default: `SYSTEM.md` in the agent dir if it
-	 * exists. Resolved against `system_prompt_base`.
-	 */
-	system_prompt?: string;
-	/** Dir `system_prompt` resolves against (dir of the config file that set it). */
-	system_prompt_base: string;
-	/**
-	 * Replaces kl's baseline prompt (prompts/kl-baseline.md): a path, resolved
-	 * against `harness_prompt_base`. false = no baseline. Unset = kl's.
-	 */
-	harness_prompt?: string | false;
-	/** Dir `harness_prompt` resolves against (dir of the config file that set it). */
-	harness_prompt_base?: string;
-	/** Named prompt sections rendered once at session start. */
-	sections: SectionEntry[];
-	/** false empties Pi's contextFiles (AGENTS.md / CLAUDE.md). Default true. */
-	project_context: boolean;
+	/** The `prompt:` block: what goes into the system prompt. */
+	prompt: PromptConfig;
 	timestamps: TimestampConfig | false;
 
 	// --- Keys read by modules outside this slice (messaging / lifecycle). ---

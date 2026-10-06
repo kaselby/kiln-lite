@@ -5,7 +5,7 @@
 kl is a Pi extension plus a launcher. It doesn't replace anything Pi does. It adds:
 
 - **Agents.** An agent is a folder (`~/.kl/agents/<name>/`) with an
-  `agent.yml` and a `SYSTEM.md`. kl builds the system prompt from it and
+  `agent.yml` and an `IDENTITY.md`. kl builds the system prompt from it and
   passes the agent's own Pi extensions and skills to Pi.
 - **Names.** Every session gets a name like `scout-bright-raven`. You can
   attach to it, resume it, or send it mail by that name, even while it isn't
@@ -36,9 +36,9 @@ are in [docs/install.md](docs/install.md).
 ## First agent
 
 ```bash
-kl init scout              # agent.yml + SYSTEM.md
+kl init scout              # agent.yml + IDENTITY.md
 kl init scout --full       # also memory/, a cleanup prompt, extensions/, skills/, git
-$EDITOR ~/.kl/agents/scout/SYSTEM.md
+$EDITOR ~/.kl/agents/scout/IDENTITY.md
 kl run scout               # starts scout-<adj>-<noun> in tmux and attaches
 ```
 

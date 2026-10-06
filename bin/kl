@@ -45,7 +45,7 @@
 #                           kl message --help for details.
 #   kl agents               Installed agents under $KL_AGENTS_DIR.
 #   kl init <name> [--full] Create an agent at $KL_AGENTS_DIR/<name>. Compact
-#                           (default): agent.yml + SYSTEM.md. --full adds
+#                           (default): agent.yml + IDENTITY.md. --full adds
 #                           memory/ scratch/ extensions/ skills/ prompts/, a
 #                           cleanup prompt, a memory section, and git init.
 #                           (`kl new` is an alias.)
@@ -56,7 +56,8 @@
 #                           the package loads for every kl agent.
 #   kl migrate [--dry-run] [<agent-home>...]
 #                           Convert old agent homes in place (agent.yml.bak
-#                           kept). Default: every agent in $KL_AGENTS_DIR.
+#                           kept). Default: <kl root>/config.yml and every
+#                           agent in $KL_AGENTS_DIR.
 #   kl -h | --help          Show this help.
 #
 # Env:
@@ -291,17 +292,21 @@ description: ""
 # Everything below is optional; ~/.kl/config.yml supplies defaults.
 # model: openai-codex/gpt-5.6-luna
 # thinking: medium
-# project_context: true     # false drops AGENTS.md/CLAUDE.md from the prompt
 # timestamps: true          # false, or {per_turn, every_calls, every_minutes}
-# sections:                 # rendered once at session start, after <session>
-#   - {name: notes, path: notes.md}
-#   - {name: today, command: "date +%A"}
+# prompt:
+#   identity: IDENTITY.md          # the default; a missing or empty file gives the built-in identity
+#   include_kl_prompt: true        # false drops kl's <harness> block (baseline, <tools>, <rules>)
+#   include_appended_prompt: true  # false drops APPEND_SYSTEM.md / --append-system-prompt
+#   include_project_context: true  # false drops AGENTS.md / CLAUDE.md
+#   extra_sections:                # rendered once at session start, after <session>
+#     - {name: notes, path: notes.md}
+#     - {name: today, command: "date +%A"}
 YML
-    cat > "$target/SYSTEM.md" <<MD
+    cat > "$target/IDENTITY.md" <<MD
 <!--
   Identity prompt for $name: who this agent is and how it works.
-  It opens the system prompt, before the kl baseline. HTML comments like
-  this one are stripped; an empty file means no identity prompt.
+  It opens the system prompt, before kl's prompt. HTML comments like
+  this one are stripped; an empty file gives the built-in identity.
 -->
 MD
 
@@ -317,8 +322,9 @@ MD
 
 # Cleanup turn on /exit and exit_session; memory injected every session.
 cleanup: { path: prompts/cleanup.md }
-sections:
-  - {name: memory, path: memory/MEMORY.md}
+prompt:
+  extra_sections:
+    - {name: memory, path: memory/MEMORY.md}
 YML
         # Empty until the agent writes to it; sections skip empty output.
         : > "$target/memory/MEMORY.md"

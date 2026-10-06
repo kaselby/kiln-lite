@@ -18,7 +18,7 @@
  *
  * Flow (when the configured cleanup source resolves to non-empty text):
  *   1. Resolve inline text or read the configured file path
- *   2. Strip HTML comments (authoring notes, like SYSTEM.md's)
+ *   2. Strip HTML comments (authoring notes, like IDENTITY.md's)
  *   3. Embed a unique sentinel in the prompt (so we can identify completion)
  *   4. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
  *   5. Core's agent_end handler watches for the sentinel in agent_end messages;

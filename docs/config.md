@@ -92,9 +92,9 @@ and all channel history. Piece by piece:
 
 `config.yml` takes every `agent.yml` key except `name` and `description`;
 the values are defaults that an agent's own `agent.yml` overrides key by
-key. The keys and their defaults are in [agents.md](agents.md#agentyml).
-Relative `system_prompt` and `sections` paths here are relative to the kl
-folder (a `cleanup` path is always relative to the agent folder).
+key (`prompt:` merges one level down). The keys and their defaults are in
+[agents.md](agents.md#agentyml). Relative `prompt.identity` and
+`prompt.extra_sections` paths here are relative to the kl folder (a `cleanup` path is always relative to the agent folder).
 
 One key belongs only here:
 
@@ -105,6 +105,7 @@ One key belongs only here:
 ```yaml
 user_name: sam
 model: openai-codex/gpt-5.6-luna
-sections:
-  - {name: house_rules, path: house-rules.md}   # ~/.kl/house-rules.md
+prompt:
+  extra_sections:
+    - {name: house_rules, path: house-rules.md}   # ~/.kl/house-rules.md
 ```

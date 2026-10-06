@@ -17,13 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
-import {
-	applyPrompt,
-	loadAgentBaseline,
-	loadIdentity,
-	renderSections,
-	type PromptParts,
-} from "../prompt.ts";
+import { applyPrompt, loadPromptParts, startPromptParts, PROMPT_ENTRY, type PromptParts } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildSessionsTool } from "../sessions-tool.ts";
@@ -55,6 +49,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
 	let originReminderSent = false;
+	let warn: (msg: string) => void = console.warn;
 	const timestamps = createTimestampInjector();
 	let periodicTime: PeriodicTimestamp | null = null;
 
@@ -67,7 +62,16 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
-	const lifecycle = installLifecycle(pi);
+	// A reset (exit_session continue) rebuilds the prompt from the files, as a
+	// fresh start would; the new parts are recorded after the reset entry.
+	const lifecycle = installLifecycle(pi, {
+		onReset: () => {
+			if (!state) return [];
+			promptParts = loadPromptParts(loadConfig({ agentHome: state.agentHome, warn }), state.env, warn);
+			return [{ type: "custom", customType: PROMPT_ENTRY, data: promptParts }];
+		},
+		afterReset: () => watcher?.dispatchIdle(),
+	});
 	let cwd = process.cwd();
 	installSubagent(pi, {
 		getSelf: () => (state ? { uuid: state.sessionUuid, name: state.agentId, inboxDir: state.env.KL_INBOX, cwd } : null),
@@ -76,7 +80,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	registerScheduleTool(pi, { getDaemon: () => daemon, getUuid: () => state?.sessionUuid ?? null });
 
 	pi.on("session_start", async (event, ctx) => {
-		const warn = (msg: string) => {
+		warn = (msg: string) => {
 			console.warn(msg);
 			if (ctx.hasUI) ctx.ui.notify(msg, "warning");
 		};
@@ -149,14 +153,22 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		};
 		lifecycle.start(state, warn);
 
-		// Prompt parts: read once, cached for the session. Warnings surface now,
-		// at startup, where the user can see them.
-		promptParts = {
-			identity: loadIdentity(config, warn),
-			baseline: loadAgentBaseline(config, warn),
-			sections: renderSections(config.sections, env, warn),
-			projectContext: config.project_context,
-		};
+		// Prompt parts. A resume or fork keeps the parts its transcript recorded,
+		// so the prompt is what it was even if the files changed since. Otherwise
+		// read them now (warnings surface at startup) and record them.
+		const start = startPromptParts(
+			sessionOrigin !== undefined,
+			() => ctx.sessionManager.getBranch(),
+			() => loadPromptParts(config, env, warn),
+		);
+		promptParts = start.parts;
+		if (start.record) {
+			try {
+				pi.appendEntry(PROMPT_ENTRY, promptParts);
+			} catch (err) {
+				warn(`kiln-lite: could not append ${PROMPT_ENTRY} entry: ${(err as Error).message}`);
+			}
+		}
 
 		periodicTime =
 			config.timestamps === false

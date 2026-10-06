@@ -11,9 +11,20 @@
  * compaction entry with summary = the handoff and firstKeptEntryId = null,
  * so the model's context restarts from the system prompt plus that summary.
  * Same session id, transcript, inbox and children.
+ *
+ * The system prompt is rebuilt at a reset (hooks.onReset), so the run that
+ * commits the reset ends there: Pi applies prompt changes only when a new run
+ * starts (before_agent_start), not when a run continues. Inbox messages that
+ * arrive meanwhile are held back, and once the run settles an autonomous reset
+ * starts a new run with RESET_KICKOFF, then hooks.afterReset delivers them.
  */
 
-import type { CompactionEntryDraft, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	CompactionEntryDraft,
+	ExtensionAPI,
+	ExtensionContext,
+	SessionBoundaryDraft,
+} from "@earendil-works/pi-coding-agent";
 
 import { createCleanupDispatcher, registerExitCommands, type CleanupDispatcher } from "./cleanup.ts";
 import { buildExitSessionTool, type ResetRequest } from "./exit-session-tool.ts";
@@ -24,13 +35,24 @@ export const RESET_SOURCE = "kl-reset";
 
 const EMPTY_HANDOFF = "(The previous context was reset without a handoff.)";
 
+/** The user turn that starts an autonomous reset's new run. */
+export const RESET_KICKOFF = "<system-reminder>Your context was reset. Carry on from the handoff above.</system-reminder>";
+
+export interface LifecycleHooks {
+	/** A reset is committing. Returns entries to append after the reset's compaction. */
+	onReset?(ctx: ExtensionContext): SessionBoundaryDraft[];
+	/** The run that committed a reset has settled. Deliver what agent_end held back. */
+	afterReset?(): void;
+}
+
 export interface Lifecycle {
 	/** Create the dispatcher for this session. Call from core's session_start. */
 	start(state: SessionState, warn: (msg: string) => void): void;
 	/**
 	 * Call from core's agent_end, before the inbox drain. Returns true when
-	 * the session is about to shut down, so the drain should be skipped
-	 * (queued turns would never run).
+	 * the drain should be skipped: the session is about to shut down (queued
+	 * turns would never run), or a reset is about to commit (they'd run on
+	 * the old prompt; afterReset delivers them).
 	 */
 	handleAgentEnd(ctx: ExtensionContext, messages: unknown[]): boolean;
 	/** A cleanup turn, exit or reset is pending or running. */
@@ -48,13 +70,16 @@ export function resetEntry(handoff: string): CompactionEntryDraft {
 	};
 }
 
-export function installLifecycle(pi: ExtensionAPI): Lifecycle {
+export function installLifecycle(pi: ExtensionAPI, hooks: LifecycleHooks = {}): Lifecycle {
 	let dispatcher: CleanupDispatcher | null = null;
 	/** Requested by exit_session continue; waiting for the exit path to finish. */
 	let armed: ResetRequest | null = null;
 	/** The exit path finished with a reset armed; commit at the next agent_before_settle. */
 	let ready: ResetRequest | null = null;
+	/** Committed at agent_before_settle; acted on at agent_settled. */
+	let committed: ResetRequest | null = null;
 	let shuttingDown = false;
+	let warn: (msg: string) => void = console.warn;
 
 	const finish = (ctx: ExtensionContext) => {
 		if (armed) {
@@ -97,16 +122,34 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 		if (!ready) return;
 		const req = ready;
 		ready = null;
+		committed = req;
+		let extra: SessionBoundaryDraft[] = [];
+		try {
+			extra = hooks.onReset?.(ctx) ?? [];
+		} catch (err) {
+			warn(`kiln-lite: rebuilding the prompt at reset failed: ${(err as Error).message}`);
+		}
 		if (ctx.hasUI) ctx.ui.notify("kiln-lite: context reset; the handoff carries on", "info");
 		// Pi hands each handler the drafts so far and takes `entries` as the new full list.
-		return { entries: [...event.entries, resetEntry(req.handoff)], continue: req.autonomous };
+		return { entries: [...event.entries, resetEntry(req.handoff), ...extra], continue: false };
+	});
+
+	pi.on("agent_settled", async () => {
+		if (!committed) return;
+		const req = committed;
+		committed = null;
+		// Sent from agent_settled, Pi starts these as new runs once the settle finishes.
+		if (req.autonomous) pi.sendUserMessage(RESET_KICKOFF);
+		hooks.afterReset?.();
 	});
 
 	return {
-		start(state, warn) {
+		start(state, warnFn) {
 			armed = null;
 			ready = null;
+			committed = null;
 			shuttingDown = false;
+			warn = warnFn;
 			dispatcher = createCleanupDispatcher(pi, state, warn, finish);
 		},
 		handleAgentEnd(ctx, messages) {
@@ -114,7 +157,7 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 			// an exit is pending: don't queue inbox turns behind it.
 			const wasInFlight = facade.inProgress();
 			facade.handleAgentEnd(ctx, messages);
-			if (shuttingDown) return true;
+			if (shuttingDown || ready) return true;
 			return wasInFlight && facade.inProgress();
 		},
 		busy() {
@@ -124,6 +167,7 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 			dispatcher = null;
 			armed = null;
 			ready = null;
+			committed = null;
 		},
 	};
 }
