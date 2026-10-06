@@ -149,6 +149,9 @@ export class Daemon {
 
     async start(): Promise<void> {
         mkdirSync(this.config.stateDir, { recursive: true });
+        // The socket's dir ($XDG_RUNTIME_DIR or the fallback) may not exist yet
+        // on a fresh machine or in a sandbox; listen() would fail with EACCES.
+        mkdirSync(dirname(this.config.socketPath), { recursive: true, mode: 0o700 });
         this.log.open();
 
         // Claim the socket: if a stale file is there with no listener, remove it.

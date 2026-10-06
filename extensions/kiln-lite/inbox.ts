@@ -70,6 +70,8 @@ import { basename, join, resolve } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { inboxFiles } from "../../src/client/messages.ts";
+
 export interface InboxWatcher {
 	/** Stop the watcher — called from session_shutdown. */
 	stop(): void;
@@ -392,10 +394,10 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	// (no turn in flight yet), so queue everything then dispatch as user
 	// turns — each becomes a real user message the agent sees at startup.
 	try {
-		for (const name of readdirSync(inboxDir)) {
-			if (!name.endsWith(".md")) continue;
-			enqueue(name);
-		}
+		// Oldest first. Names are <second>-<random hex>, so a plain readdir
+		// can put mail from the same second in any order; inboxFiles sorts
+		// by second, then mtime.
+		for (const name of inboxFiles(inboxDir)) enqueue(name);
 	} catch {
 		// Inbox missing — ok.
 	}
