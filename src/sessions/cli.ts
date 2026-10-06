@@ -6,7 +6,6 @@
  *   resume <target> [--detach|-d] [pi args...]
  *   attach <target> [--detach|-d]
  *   sessions [<target>] [-n N] [--all] [--json]
- *   inbox <target>
  *
  * <target> is anything resolve.ts takes: a name, name@<id-prefix>, @<id-prefix>.
  * resume and attach are the same thing: resolve, wake if nothing is live,
@@ -17,12 +16,10 @@
  * its own terminal.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 import { launchNew, wake } from "./launch.ts";
-import { parseFrontmatter } from "../client/messages.ts";
-import { inboxDir, UUID_RE } from "./paths.ts";
+import { UUID_RE } from "./paths.ts";
 import { readEntry } from "./registry.ts";
 import { knownUuids, resolveTarget, ResolveError, shortId } from "./resolve.ts";
 import { enter, guardDetach } from "./tmux.ts";
@@ -181,36 +178,6 @@ function cmdSessions(args: string[]): void {
 	console.log(json ? JSON.stringify(list, null, 2) : formatSessionList(list));
 }
 
-function cmdInbox(args: string[]): void {
-	const target = args[0];
-	if (!target) die("inbox needs a session name");
-	let r;
-	try {
-		r = resolveTarget(target);
-	} catch (e) {
-		if (e instanceof ResolveError) die(e.message);
-		throw e;
-	}
-	if (r.note) info(r.note);
-	const dir = inboxDir(r.uuid);
-	console.log(`${r.name} (${shortId(r.uuid, knownUuids())}${r.lease ? ", running" : ", not running"}): ${dir}`);
-	let files: string[] = [];
-	try {
-		files = readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
-	} catch {
-		// no inbox yet
-	}
-	if (files.length === 0) {
-		console.log("(empty)");
-		return;
-	}
-	for (const f of files) {
-		const fm = parseFrontmatter(readFileSync(join(dir, f), "utf8")).fields;
-		const read = existsSync(join(dir, `${f.slice(0, -3)}.read`));
-		console.log(`${read ? "    " : "new "} ${f}  from ${fm.from ?? "?"}: ${fm.summary ?? ""}`);
-	}
-}
-
 function main(argv: string[]): void {
 	const [cmd, ...rest] = argv;
 	switch (cmd) {
@@ -221,8 +188,6 @@ function main(argv: string[]): void {
 			return cmdResume(cmd, rest);
 		case "sessions":
 			return cmdSessions(rest);
-		case "inbox":
-			return cmdInbox(rest);
 		default:
 			die(`unknown session command '${cmd ?? ""}'`);
 	}

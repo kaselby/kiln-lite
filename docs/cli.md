@@ -30,7 +30,6 @@ kl resume <session> [-d] [pi args...]
 kl attach <session> [-d]
 kl sessions [-n N] [--all] [--json]
 kl sessions <session> [--json]
-kl inbox <session>
 kl message <command>          see below
 kl agents
 kl init <name> [--full]       (kl new is an alias)

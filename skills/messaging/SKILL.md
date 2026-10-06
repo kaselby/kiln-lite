@@ -75,7 +75,7 @@ ls -t "$KL_INBOX"                          # newest first (all)
 ls "$KL_INBOX"/*.md 2>/dev/null             # every message (read or unread)
 # unread = .md with no .read sibling; one-liner:
 for f in "$KL_INBOX"/*.md; do [ -e "${f%.md}.read" ] || echo "$f"; done
-kl inbox <session name>                    # any session's inbox, "new" = unread
+kl message history <session name>          # any session's mail, "new" = unread
 ```
 
 ### Peer discovery + daemon status

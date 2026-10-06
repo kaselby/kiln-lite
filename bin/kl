@@ -40,7 +40,6 @@
 #   kl sessions <session> [--json]
 #                           One session in full: state, parent and children,
 #                           cwd, transcript, plan, status.
-#   kl inbox <session>      A session's inbox dir and messages ("new" = unread).
 #   kl message <command>    Send and read messages: send, subscribe,
 #                           unsubscribe, channels, history, status.
 #                           kl message --help for details.
@@ -559,7 +558,7 @@ cmd_doctor() {
 main() {
     case "${1:-}" in
         run) shift; cmd_run "$@" ;;
-        resume|attach|sessions|inbox) sessions_cli "$@" ;;
+        resume|attach|sessions) sessions_cli "$@" ;;
         message) shift; exec "$(tsx_path)" "$REPO_ROOT/src/client/cli.ts" "$@" ;;
         agents) shift; cmd_agents "$@" ;;
         init|new) shift; cmd_init "$@" ;;

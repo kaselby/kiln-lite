@@ -52,7 +52,7 @@ quits. `/fq` quits immediately.
 kl sessions              # recent sessions as parent/child trees; * = running
 kl resume scout-bright-raven   # start it again (if needed) and attach
 kl run reviewer -d --prompt-file brief.md   # detached; prints the new name
-kl inbox scout-bright-raven    # a session's inbox
+kl message history scout-bright-raven   # a session's mail; "new" = unread
 kl agents                # installed agents
 kl doctor                # diagnostics
 ```

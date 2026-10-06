@@ -53,7 +53,7 @@ priority: normal
 PARKED-BODY
 ```
 
-Messages with no `.read` sibling are unread. `kl inbox <session>` lists them.
+Messages with no `.read` sibling are unread. `kl message history <session>` marks them "new".
 Files are written to a temp name and renamed, so a reader never sees half a
 message.
 
