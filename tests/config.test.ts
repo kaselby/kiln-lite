@@ -230,3 +230,18 @@ test("user name: KL_USER, else config.yml user_name, else \"user\"; invalid valu
 		else process.env.KL_USER = saved;
 	}
 });
+
+test("harness_prompt: a path resolves against its file's dir; false drops the baseline; other values warn", () => {
+	const { klRoot, agentHome } = scratch();
+	writeFileSync(join(klRoot, "config.yml"), "harness_prompt: shared.md\n");
+	let { config } = load(klRoot, agentHome);
+	assert.equal(config.harness_prompt, "shared.md");
+	assert.equal(config.harness_prompt_base, klRoot);
+	writeFileSync(join(agentHome, "agent.yml"), "harness_prompt: false\n");
+	({ config } = load(klRoot, agentHome));
+	assert.equal(config.harness_prompt, false);
+	writeFileSync(join(agentHome, "agent.yml"), "harness_prompt: 3\n");
+	const r = load(klRoot, agentHome);
+	assert.equal(r.config.harness_prompt, "shared.md", "bad value ignored, global kept");
+	assert.ok(r.warnings.some((w) => w.includes("harness_prompt")));
+});

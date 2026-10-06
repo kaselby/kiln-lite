@@ -6,9 +6,10 @@
  * mutable `event.systemPromptOptions`, and Pi renders the rest:
  *
  *   preamble        = customPrompt = agent identity (SYSTEM.md / agent.yml
- *                     system_prompt) + kl baseline (prompts/kl-baseline.md,
- *                     {{placeholders}} filled) + <tools> (active tools'
- *                     snippets) + <rules> (their guidelines + promptGuidelines).
+ *                     system_prompt, else defaultIdentity) + <harness>: the
+ *                     baseline (prompts/kl-baseline.md or harness_prompt,
+ *                     {{placeholders}} filled), <tools> (active tools'
+ *                     snippets), <rules> (their guidelines + promptGuidelines).
  *                     Pi drops its own tools/rules/docs once customPrompt is
  *                     set, so kl re-renders the first two in Pi's format.
  *   <addendum>        Pi: APPEND_SYSTEM.md / --append-system-prompt
@@ -87,12 +88,24 @@ function readPromptFile(path: string, label: string, warn: (msg: string) => void
 	}
 }
 
-/** Agent identity from config.system_prompt (SYSTEM.md is defaulted in by loadConfig). */
-export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): string | null {
-	if (!config.system_prompt) return null;
+/** Identity for an agent with no system_prompt and no SYSTEM.md: Pi's default, with the agent's name. */
+export function defaultIdentity(name: string): string {
+	return `You are ${name} - an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.`;
+}
+
+/** Agent identity from config.system_prompt (SYSTEM.md is defaulted in by loadConfig), else the default. */
+export function loadIdentity(config: AgentConfig, warn: (msg: string) => void): string {
+	if (!config.system_prompt) return defaultIdentity(config.name);
 	const path = resolvePath(config.system_prompt_base, config.system_prompt);
 	const text = readPromptFile(path, "system_prompt", warn);
-	return text ? text : null;
+	return text ? text : defaultIdentity(config.name);
+}
+
+/** The baseline for this agent: harness_prompt if set (false = none), else kl's. Placeholders filled. */
+export function loadAgentBaseline(config: AgentConfig, warn: (msg: string) => void): string | null {
+	if (config.harness_prompt === false) return null;
+	if (config.harness_prompt) return loadBaseline(warn, resolvePath(config.harness_prompt_base ?? "", config.harness_prompt));
+	return loadBaseline(warn);
 }
 
 export function loadBaseline(
@@ -192,11 +205,13 @@ export function buildCustomPrompt(
 	toolRules: string,
 	toolList = "",
 ): string {
+	const harness: string[] = [];
+	if (baseline) harness.push(baseline);
+	if (toolList) harness.push(`<tools>\n${toolList}\n</tools>`);
+	if (toolRules) harness.push(`<rules>\n${toolRules}\n</rules>`);
 	const parts: string[] = [];
 	if (identity) parts.push(identity);
-	if (baseline) parts.push(baseline);
-	if (toolList) parts.push(`<tools>\n${toolList}\n</tools>`);
-	if (toolRules) parts.push(`<rules>\n${toolRules}\n</rules>`);
+	if (harness.length) parts.push(`<harness>\n${harness.join("\n\n")}\n</harness>`);
 	return parts.join("\n\n");
 }
 

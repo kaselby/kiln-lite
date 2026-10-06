@@ -55,6 +55,13 @@ export interface AgentConfig {
 	system_prompt?: string;
 	/** Dir `system_prompt` resolves against (dir of the config file that set it). */
 	system_prompt_base: string;
+	/**
+	 * Replaces kl's baseline prompt (prompts/kl-baseline.md): a path, resolved
+	 * against `harness_prompt_base`. false = no baseline. Unset = kl's.
+	 */
+	harness_prompt?: string | false;
+	/** Dir `harness_prompt` resolves against (dir of the config file that set it). */
+	harness_prompt_base?: string;
 	/** Named prompt sections rendered once at session start. */
 	sections: SectionEntry[];
 	/** false empties Pi's contextFiles (AGENTS.md / CLAUDE.md). Default true. */

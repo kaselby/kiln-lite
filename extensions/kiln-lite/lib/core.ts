@@ -19,7 +19,7 @@ import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
 import {
 	applyPrompt,
-	loadBaseline,
+	loadAgentBaseline,
 	loadIdentity,
 	renderSections,
 	type PromptParts,
@@ -153,7 +153,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		// at startup, where the user can see them.
 		promptParts = {
 			identity: loadIdentity(config, warn),
-			baseline: loadBaseline(warn),
+			baseline: loadAgentBaseline(config, warn),
 			sections: renderSections(config.sections, env, warn),
 			projectContext: config.project_context,
 		};

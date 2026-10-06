@@ -9,9 +9,10 @@ import {
 	buildCustomPrompt,
 	renderToolList,
 	fillPlaceholders,
-	baselineVars,
 	loadBaseline,
 	loadIdentity,
+	defaultIdentity,
+	loadAgentBaseline,
 	renderSections,
 	renderSessionSection,
 	renderToolRules,
@@ -69,10 +70,11 @@ test("renderToolRules: omits Pi's hard-coded rules", () => {
 	assert.equal(out, "");
 });
 
-test("buildCustomPrompt: identity → baseline → <tools> → <rules>; skips empty parts", () => {
-	assert.equal(buildCustomPrompt("ID", "BASE", "- r"), "ID\n\nBASE\n\n<rules>\n- r\n</rules>");
-	assert.equal(buildCustomPrompt("ID", "BASE", "- r", "- read: R"), "ID\n\nBASE\n\n<tools>\n- read: R\n</tools>\n\n<rules>\n- r\n</rules>");
-	assert.equal(buildCustomPrompt(null, "BASE", ""), "BASE");
+test("buildCustomPrompt: identity, then <harness> holding baseline → <tools> → <rules>; skips empty parts", () => {
+	assert.equal(buildCustomPrompt("ID", "BASE", "- r"), "ID\n\n<harness>\nBASE\n\n<rules>\n- r\n</rules>\n</harness>");
+	assert.equal(buildCustomPrompt("ID", "BASE", "- r", "- read: R"), "ID\n\n<harness>\nBASE\n\n<tools>\n- read: R\n</tools>\n\n<rules>\n- r\n</rules>\n</harness>");
+	assert.equal(buildCustomPrompt(null, "BASE", ""), "<harness>\nBASE\n</harness>");
+	assert.equal(buildCustomPrompt("ID", null, ""), "ID");
 	assert.equal(buildCustomPrompt(null, null, ""), "");
 });
 
@@ -88,14 +90,6 @@ test("fillPlaceholders: known names filled; unknown or unresolved warn once and 
 	assert.equal(warnings.length, 2);
 	assert.match(warnings.join("\n"), /\{\{nope\}\} is unknown/);
 	assert.match(warnings.join("\n"), /\{\{pi_readme\}\} could not be resolved/);
-});
-
-test("baselineVars: kl docs always; pi paths from the pi package dir", () => {
-	const v = baselineVars("/opt/pi");
-	assert.match(v.kl_docs!, /docs$/);
-	assert.equal(v.pi_docs, "/opt/pi/docs");
-	assert.equal(v.pi_readme, "/opt/pi/README.md");
-	assert.equal(baselineVars(null).pi_docs, null);
 });
 
 test("renderSessionSection: agent, session, model, home — no uuid, no cwd", () => {
@@ -117,7 +111,7 @@ test("applyPrompt: customPrompt = identity → baseline → tool rules from the 
 		promptGuidelines: ["G"],
 	});
 	applyPrompt(opts, parts(), SESSION, ["bash"]);
-	assert.equal(opts.customPrompt, "I am scout.\n\nkl baseline.\n\n<rules>\n- B\n- G\n</rules>");
+	assert.equal(opts.customPrompt, "I am scout.\n\n<harness>\nkl baseline.\n\n<rules>\n- B\n- G\n</rules>\n</harness>");
 });
 
 test("applyPrompt: session section first, then agent sections in order, after pre-existing sections", () => {
@@ -161,16 +155,30 @@ test("loadIdentity reads system_prompt relative to its base; missing file warns"
 	const config = { ...defaultConfig(dir), system_prompt: "SYSTEM.md", system_prompt_base: dir };
 	const warnings: string[] = [];
 	assert.equal(loadIdentity(config, (m) => warnings.push(m)), "I am scout.");
-	assert.equal(loadIdentity({ ...config, system_prompt: "nope.md" }, (m) => warnings.push(m)), null);
+	const dflt = defaultIdentity(config.name);
+	assert.equal(loadIdentity({ ...config, system_prompt: "nope.md" }, (m) => warnings.push(m)), dflt, "missing file → warn, default");
 	assert.equal(warnings.length, 1);
-	assert.equal(loadIdentity(defaultConfig(dir), (m) => warnings.push(m)), null, "no system_prompt → null, no warning");
+	assert.equal(loadIdentity(defaultConfig(dir), (m) => warnings.push(m)), dflt, "no system_prompt → default, no warning");
 	assert.equal(warnings.length, 1);
 });
 
-test("loadBaseline loads the shipped placeholder", () => {
+test("loadAgentBaseline: harness_prompt replaces kl's (relative to its base); false drops it", () => {
+	const dir = mkdtempSync(join(tmpdir(), "kl-prompt-test-"));
+	writeFileSync(join(dir, "mine.md"), "<!-- x -->\nMy harness. Docs: {{kl_docs}}\n");
+	const config = defaultConfig(dir);
+	const warnings: string[] = [];
+	const own = loadAgentBaseline({ ...config, harness_prompt: "mine.md", harness_prompt_base: dir }, (m) => warnings.push(m))!;
+	assert.match(own, /^My harness\. Docs: \/.*docs$/);
+	assert.equal(loadAgentBaseline({ ...config, harness_prompt: false }, (m) => warnings.push(m)), null);
+	assert.ok(loadAgentBaseline(config, (m) => warnings.push(m))!.includes("kiln_lite"), "unset → kl's baseline");
+	assert.deepEqual(warnings, []);
+});
+
+test("loadBaseline loads the shipped baseline: placeholders filled, comments stripped, no warnings", () => {
 	const warnings: string[] = [];
 	const text = loadBaseline((m) => warnings.push(m));
-	assert.ok(text && text.includes("kl baseline prompt"));
+	assert.ok(text && text.length > 0);
+	assert.ok(!text!.includes("{{"), "every placeholder filled");
 	assert.ok(!text!.includes("<!--"), "comments stripped");
 	assert.deepEqual(warnings, []);
 });
@@ -269,7 +277,7 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 	);
 	const text: string = buildSystemPrompt(opts);
 
-	assert.ok(text.startsWith("I am scout.\n\nkl baseline.\n\n<tools>\n- read: Read files\n- bash: Run commands\n</tools>\n\n<rules>\n- Use read to inspect files\n- Extension guideline\n</rules>"), text.slice(0, 400));
+	assert.ok(text.startsWith("I am scout.\n\n<harness>\nkl baseline.\n\n<tools>\n- read: Read files\n- bash: Run commands\n</tools>\n\n<rules>\n- Use read to inspect files\n- Extension guideline\n</rules>"), text.slice(0, 400));
 	// Pi's top block is gone.
 	assert.ok(!text.includes("expert coding assistant"));
 	assert.ok(!text.includes("Be concise in your responses"));
