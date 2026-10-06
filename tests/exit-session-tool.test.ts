@@ -7,7 +7,7 @@ import { tmpdir, homedir } from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { resolveHandoff } from "../extensions/kiln-lite/exit-session-tool.ts";
-import { installLifecycle, resetEntry, RESET_SOURCE } from "../extensions/kiln-lite/lifecycle.ts";
+import { installLifecycle, resetEntry, RESET_SOURCE, RESET_KICKOFF, type LifecycleHooks } from "../extensions/kiln-lite/lifecycle.ts";
 import { defaultConfig } from "../extensions/kiln-lite/config.ts";
 import type { PromptSource, SessionState } from "../extensions/kiln-lite/types.ts";
 
@@ -135,6 +135,25 @@ async function settle(f: ReturnType<typeof fakePi>, ctx: ExtensionContext) {
 	return (f.handlers.get("agent_before_settle") ?? [])[0]?.({ type: "agent_before_settle", entries: [], continue: false, outcome: "completed" }, ctx);
 }
 
+async function settled(f: ReturnType<typeof fakePi>, ctx: ExtensionContext) {
+	for (const h of f.handlers.get("agent_settled") ?? []) await h({ type: "agent_settled" }, ctx);
+}
+
+/** Hooks that count their calls; onReset returns one marker entry. */
+function countingHooks() {
+	const calls = { onReset: 0, afterReset: 0 };
+	const hooks: LifecycleHooks = {
+		onReset: () => {
+			calls.onReset++;
+			return [{ type: "custom", customType: "rebuilt", data: calls.onReset }];
+		},
+		afterReset: () => {
+			calls.afterReset++;
+		},
+	};
+	return { calls, hooks };
+}
+
 async function callExit(f: ReturnType<typeof fakePi>, ctx: ExtensionContext, params: Record<string, unknown>) {
 	return f.tools.get("exit_session")!.execute("id", params, undefined, undefined, ctx);
 }
@@ -166,34 +185,53 @@ test("lifecycle: no cleanup prompt → exit_session shuts down plainly", async (
 test("lifecycle: continue + skip_cleanup → no shutdown; next settle appends the reset", async () => {
 	const home = makeTmpDir();
 	const f = fakePi();
-	const lc = installLifecycle(f.pi);
+	const { calls, hooks } = countingHooks();
+	const lc = installLifecycle(f.pi, hooks);
 	lc.start(lifecycleState(home, "wrap up"), () => {});
 	const { ctx, shutdowns } = fakeCtx();
 	await callExit(f, ctx, { continue: true, skip_cleanup: true, handoff: "HANDOFF-1" });
 	assert.equal(shutdowns(), 0);
 	assert.equal(f.sent.length, 0, "cleanup skipped");
-	assert.equal(lc.handleAgentEnd(ctx, []), false, "drain allowed after a reset");
-	assert.deepEqual(await settle(f, ctx), { entries: [resetEntry("HANDOFF-1")], continue: false });
+	assert.equal(lc.handleAgentEnd(ctx, []), true, "inbox drain held until the reset settles");
+	assert.deepEqual(await settle(f, ctx), {
+		entries: [resetEntry("HANDOFF-1"), { type: "custom", customType: "rebuilt", data: 1 }],
+		continue: false,
+	});
+	assert.equal(calls.onReset, 1, "prompt rebuilt at the reset");
+	await settled(f, ctx);
+	assert.equal(f.sent.length, 0, "not autonomous: no new run");
+	assert.equal(calls.afterReset, 1, "held-back inbox delivered");
 	assert.equal(await settle(f, ctx), undefined, "reset is one-shot");
+	await settled(f, ctx);
+	assert.deepEqual(calls, { onReset: 1, afterReset: 1 });
 	rmSync(home, { recursive: true });
 });
 
-test("lifecycle: continue with a cleanup prompt → cleanup turn first, then reset (autonomous continues)", async () => {
+test("lifecycle: continue with a cleanup prompt → cleanup turn first, then reset; autonomous starts a new run", async () => {
 	const home = makeTmpDir();
 	const f = fakePi();
-	const lc = installLifecycle(f.pi);
+	const { calls, hooks } = countingHooks();
+	const lc = installLifecycle(f.pi, hooks);
 	lc.start(lifecycleState(home, "wrap up"), () => {});
 	const { ctx, shutdowns } = fakeCtx();
 	await callExit(f, ctx, { continue: true, autonomous: true, handoff: "H2" });
 	assert.equal(f.sent.length, 1);
 	assert.match(f.sent[0], /^wrap up/);
 	assert.equal(await settle(f, ctx), undefined, "no reset before the cleanup turn ends");
+	await settled(f, ctx);
+	assert.equal(calls.onReset, 0, "the prompt is rebuilt after the cleanup turn, not before");
 	// A run that ends without the cleanup sentinel: exit pending, drain skipped.
 	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: "other" }]), true);
 	// The cleanup turn's run ends.
-	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: f.sent[0] }]), false);
+	assert.equal(lc.handleAgentEnd(ctx, [{ role: "user", content: f.sent[0] }]), true, "inbox drain held until the reset settles");
 	assert.equal(shutdowns(), 0);
-	assert.deepEqual(await settle(f, ctx), { entries: [resetEntry("H2")], continue: true });
+	// The run ends at the reset; the new run starts once it settles, so Pi
+	// builds its prompt afresh (before_agent_start) from the rebuilt parts.
+	assert.deepEqual(await settle(f, ctx), { entries: [resetEntry("H2"), { type: "custom", customType: "rebuilt", data: 1 }], continue: false });
+	assert.equal(f.sent.length, 1, "nothing sent before the run settles");
+	await settled(f, ctx);
+	assert.deepEqual(f.sent.slice(1), [RESET_KICKOFF]);
+	assert.equal(calls.afterReset, 1);
 	rmSync(home, { recursive: true });
 });
 

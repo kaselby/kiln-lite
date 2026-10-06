@@ -157,6 +157,14 @@ use them for notes to yourself. kl edits Pi's prompt options rather than
 replacing the prompt, which is why other extensions' sections survive.
 `<session>` is refreshed every turn, so a `/model` change shows up there.
 
+**When it's read.** kl reads the identity, the baseline and the extra
+sections at session start and again at each reset (`exit_session` with
+`continue`), so a cleanup turn's edits to them show up after the reset. A
+resumed or forked session keeps what its transcript last recorded, so its
+prompt reads as it did even if the files have changed since. `<tools>`,
+`<rules>`, `<session>` and Pi's own sections always follow the session as
+it is now.
+
 **Baseline placeholders.** The baseline can use `{{kl_docs}}` (this
 `docs/` folder), `{{pi_readme}}`, `{{pi_docs}}` and `{{pi_examples}}` (in
 the Pi install that's running). Each becomes an absolute path. An unknown
@@ -172,8 +180,6 @@ prompt:
     - {name: today, command: "date +%A"}
 ```
 
-- Sections are rendered once, at session start. Edits to the file show up
-  in the next session, not after a reset.
 - A command runs in the folder of the file that declared it, with the
   session's [environment](sessions.md#environment), a 1 s timeout and a
   64 KiB output limit.

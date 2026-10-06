@@ -17,6 +17,9 @@ import {
 	renderSessionSection,
 	renderToolRules,
 	stripComments,
+	recordedPromptParts,
+	startPromptParts,
+	PROMPT_ENTRY,
 	type PromptOptionsLike,
 	type PromptParts,
 } from "../extensions/kiln-lite/prompt.ts";
@@ -366,4 +369,51 @@ test("Pi integration: include_appended_prompt false drops <addendum>; true keeps
 	assert.ok(!off.includes("<addendum>") && !off.includes("ADDENDUM TEXT"), off);
 	assert.ok(off.includes("<harness>"), "kl's prompt unaffected");
 	assert.ok(render(true).includes("<addendum>\nADDENDUM TEXT"));
+});
+
+// --- recorded prompt parts: resume/fork keep the prompt, a fresh start reads the files ---
+
+/** A transcript entry as Pi stores it (JSON round trip). */
+function entry(customType: string, data: unknown): unknown {
+	return JSON.parse(JSON.stringify({ type: "custom", id: "x", parentId: null, timestamp: "t", customType, data }));
+}
+
+test("recordedPromptParts: the last valid kl-prompt entry wins; other entries and malformed data are skipped", () => {
+	const entries = [
+		entry(PROMPT_ENTRY, parts({ identity: "FIRST", sections: [{ name: "memory", content: "M" }] })),
+		{ type: "message", message: { role: "user", content: "hi" } },
+		entry(PROMPT_ENTRY, parts({ identity: "SECOND", sections: [{ name: "memory", content: "M" }] })),
+		entry("kl-name", { name: "scout" }),
+		entry(PROMPT_ENTRY, { identity: 3 }),
+	];
+	assert.equal(recordedPromptParts(entries)?.identity, "SECOND");
+	assert.equal(recordedPromptParts([entry("kl-name", {})]), null);
+	assert.equal(recordedPromptParts([]), null);
+});
+
+test("startPromptParts: a resume reuses the recorded parts even after the files changed; a fresh start reads them", () => {
+	const dir = mkdtempSync(join(tmpdir(), "kl-start-parts-"));
+	writeFileSync(join(dir, "IDENTITY.md"), "OLD SELF");
+	const config = withPrompt(dir, { identity: "IDENTITY.md", identity_base: dir });
+	const load = () => loadPromptParts(config, {}, () => {});
+
+	const first = startPromptParts(false, () => [], load);
+	assert.equal(first.parts.identity, "OLD SELF");
+	assert.equal(first.record, true);
+	const transcript = [entry(PROMPT_ENTRY, first.parts)];
+
+	writeFileSync(join(dir, "IDENTITY.md"), "NEW SELF");
+	const resumed = startPromptParts(true, () => transcript, load);
+	assert.deepEqual(resumed, { parts: first.parts, record: false });
+	// The resumed prompt renders exactly as the original did.
+	const a = options();
+	const b = options();
+	applyPrompt(a, first.parts, SESSION);
+	applyPrompt(b, resumed.parts, SESSION);
+	assert.deepEqual(b, a);
+
+	assert.equal(startPromptParts(false, () => transcript, load).parts.identity, "NEW SELF", "fresh start reads the files");
+	const unrecorded = startPromptParts(true, () => [], load);
+	assert.equal(unrecorded.parts.identity, "NEW SELF", "resume with nothing recorded reads the files");
+	assert.equal(unrecorded.record, true);
 });
