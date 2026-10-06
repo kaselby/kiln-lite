@@ -1,17 +1,9 @@
 /**
- * Pure helpers for /spawn (and the subagent tool): no value imports from
+ * Pure helpers for /spawn: no value imports from
  * pi-coding-agent, so the CJS test runner can load them.
  */
 
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
-
-/** This repo's kl launcher ($KL_BIN overrides). Never a `kl` from PATH: it may be another install. */
-export function klBin(): string {
-	return process.env.KL_BIN || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "bin", "kl");
-}
 
 /**
  * Write the fork transcript: root up to (not including) `beforeEntryId`.

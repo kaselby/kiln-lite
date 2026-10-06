@@ -1,8 +1,8 @@
 /**
  * Session registry: one YAML file per Pi session UUID (the UUID is
- * the identity; names are handles). Written by kl at launch and on rename,
- * never at exit. Liveness is NOT here (see lease.ts); "last seen" is the
- * transcript's mtime.
+ * the identity; names are handles). Written by the session's own process
+ * at each start (extensions/kiln-lite/session.ts), never at exit. Liveness
+ * is NOT here (see lease.ts); "last seen" is the transcript's mtime.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -33,10 +33,6 @@ export interface RegistryEntry {
 	/** Parent session's UUID (never its name). */
 	parent?: string;
 	created: string;
-	/** What mail does when nothing is live. Only `park` is acted on today. */
-	wake: "park" | "auto";
-	/** Frozen at first launch; everything else is re-derived from home + agent.yml at wake. */
-	launch: { model?: string; thinking?: string };
 }
 
 export function entryPath(uuid: string, root = klRoot()): string {
@@ -70,7 +66,6 @@ export function parseEntry(text: string): RegistryEntry | null {
 				.filter((n) => typeof n.name === "string")
 				.map((n) => ({ name: n.name as string, bound: asIso(n.bound) }))
 		: [];
-	const launch = (r.launch && typeof r.launch === "object" ? r.launch : {}) as Record<string, unknown>;
 	return {
 		uuid: r.uuid,
 		agent: String(r.agent ?? ""),
@@ -81,11 +76,6 @@ export function parseEntry(text: string): RegistryEntry | null {
 		cwd: String(r.cwd ?? ""),
 		parent: typeof r.parent === "string" && r.parent ? r.parent : undefined,
 		created: asIso(r.created),
-		wake: r.wake === "auto" ? "auto" : "park",
-		launch: {
-			model: typeof launch.model === "string" ? launch.model : undefined,
-			thinking: typeof launch.thinking === "string" ? launch.thinking : undefined,
-		},
 	};
 }
 
@@ -108,11 +98,7 @@ export function formatEntry(e: RegistryEntry): string {
 		`cwd: ${q(e.cwd)}`,
 	];
 	if (e.parent) lines.push(`parent: ${e.parent}`);
-	lines.push(`created: ${q(e.created)}`, `wake: ${e.wake}`);
-	const launch: string[] = [];
-	if (e.launch.model) launch.push(`model: ${q(e.launch.model)}`);
-	if (e.launch.thinking) launch.push(`thinking: ${q(e.launch.thinking)}`);
-	lines.push(`launch: {${launch.join(", ")}}`);
+	lines.push(`created: ${q(e.created)}`);
 	return `${lines.join("\n")}\n`;
 }
 

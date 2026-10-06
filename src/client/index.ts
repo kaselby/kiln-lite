@@ -33,6 +33,16 @@ function defaultStateDir(): string {
     return join(root ? resolve(root) : join(homedir(), ".kl"), "daemon");
 }
 
+export interface DirectSendResult {
+    message: string;
+    /** Recipient UUID. */
+    session: string;
+    name: string;
+    live: boolean;
+    /** Set when name resolution skipped other matches. */
+    note?: string;
+}
+
 export interface DaemonClientOptions {
     requester: proto.Requester;
     socketPath?: string;
@@ -183,18 +193,28 @@ export class DaemonClient {
             : 0;
     }
 
+    /**
+     * A DM by name. `message` is the daemon's reply text ("sent to X" or
+     * "parked: ...", plus any resolution note); `live` says whether the
+     * recipient was running. client/send.ts adds --wake on top.
+     */
     async sendDirect(
         to: string,
         summary: string,
         body: string,
         priority: "normal" | "high" = "normal",
-    ): Promise<string> {
+    ): Promise<DirectSendResult> {
         const res = this.expect(
             await this.call(proto.sendDirect(to, summary, body, priority, this.requester)),
         );
-        // The daemon's reply text: "sent to X" or "parked: ...", plus any
-        // resolution note. Callers show it as-is.
-        return typeof res.data.message === "string" ? (res.data.message as string) : `sent to ${to}`;
+        const d = res.data;
+        return {
+            message: typeof d.message === "string" ? d.message : `sent to ${to}`,
+            session: typeof d.session === "string" ? d.session : "",
+            name: typeof d.name === "string" ? d.name : to,
+            live: d.live === true,
+            note: typeof d.note === "string" ? d.note : undefined,
+        };
     }
 
     /** Deliver to this requester's inbox without registering live presence. */

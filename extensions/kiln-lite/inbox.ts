@@ -468,8 +468,9 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			for (const name of pendingIds) {
 				const full = join(inboxDir, name);
 				const parsed = parseMessage(full);
-				if (parsed && parsed.fromSession !== "" && parsed.fromSession !== selfSession) agentMail = true;
-				const header = parsed ? formatMessageSource(parsed) : `AGENT MESSAGE | source: kiln-lite`;
+				const fromAgent = !!parsed && parsed.fromSession !== "" && parsed.fromSession !== selfSession;
+				if (fromAgent) agentMail = true;
+				const header = parsed ? formatMessageSource(parsed, fromAgent) : `MESSAGE | source: kiln-lite`;
 				blocks.push(`[Notification | ${header}]\n${full}`);
 				touchMarker(inboxDir, name, warn);
 				seen.add(name);
@@ -639,14 +640,13 @@ function parseMessageText(text: string, path: string): ParsedMessage | null {
 }
 
 /**
- * Build the inner header for a [Notification | …] block. Mirrors kiln's
- * format_message_source() but always emits `source: kiln-lite/...` — kiln-lite
- * currently only carries agent messages (no gateway bridge yet). If/when we
- * add a gateway, extend this the same way kiln does.
+ * The inner header for a [Notification | …] block: "AGENT MESSAGE from X"
+ * for mail from another agent session (the same test as the disclaimer),
+ * "MESSAGE from X" for the rest (the user, a self-wake).
  */
-function formatMessageSource(msg: ParsedMessage): string {
+export function formatMessageSource(msg: Pick<ParsedMessage, "from" | "channel" | "priority" | "timestamp">, fromAgent: boolean): string {
 	const sender = msg.from || "unknown";
-	const parts: string[] = [`AGENT MESSAGE from ${sender}`];
+	const parts: string[] = [`${fromAgent ? "AGENT MESSAGE" : "MESSAGE"} from ${sender}`];
 
 	if (msg.channel) {
 		const ch = msg.channel.startsWith("#") ? msg.channel : `#${msg.channel}`;

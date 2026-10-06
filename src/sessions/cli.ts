@@ -2,7 +2,7 @@
  * The session half of `kl`, called by bin/kl (which resolves the agent home;
  * launchNew runs the pre-launch hook):
  *
- *   run --home <home> [--detach|-d] [--prompt-file F] [--parent <name|uuid>] [--wake park|auto] [--] [pi args...]
+ *   run --home <home> [--detach|-d] [--prompt-file F] [--parent <name|uuid>] [--] [pi args...]
  *   resume <target> [--detach|-d] [pi args...]
  *   attach <target> [--detach|-d]
  *   sessions [<target>] [-n N] [--all] [--json]
@@ -51,7 +51,6 @@ function cmdRun(args: string[]): void {
 	let detach = false;
 	let promptFile = "";
 	let parent = "";
-	let wakeMode: "park" | "auto" | undefined;
 	const piArgs: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
@@ -65,11 +64,7 @@ function cmdRun(args: string[]): void {
 		else if (a.startsWith("--prompt-file=")) promptFile = a.slice("--prompt-file=".length);
 		else if (a === "--parent") parent = val(a);
 		else if (a.startsWith("--parent=")) parent = a.slice("--parent=".length);
-		else if (a === "--wake" || a.startsWith("--wake=")) {
-			const v = a === "--wake" ? val(a) : a.slice("--wake=".length);
-			if (v !== "park" && v !== "auto") die(`--wake must be park or auto, not '${v}'`);
-			wakeMode = v;
-		} else if (a === "--") {
+		else if (a === "--") {
 			piArgs.push(...args.slice(i + 1));
 			break;
 		} else piArgs.push(a);
@@ -86,7 +81,7 @@ function cmdRun(args: string[]): void {
 	const parentUuid = parent ? resolveParent(parent) : undefined;
 	let name: string;
 	try {
-		name = launchNew({ home, piArgs, parent: parentUuid, wake: wakeMode, warn: (w) => info(w) });
+		name = launchNew({ home, piArgs, parent: parentUuid, warn: (w) => info(w) });
 	} catch (e) {
 		die((e as Error).message);
 	}
@@ -100,7 +95,7 @@ function cmdRun(args: string[]): void {
 }
 
 /** resume and attach: resolve → wake if not live → attach (or print the name with --detach). */
-function cmdResume(verb: string, args: string[]): void {
+async function cmdResume(verb: string, args: string[]): Promise<void> {
 	let detach = false;
 	let target = "";
 	const piArgs: string[] = [];
@@ -130,9 +125,9 @@ function cmdResume(verb: string, args: string[]): void {
 	if (r.lease) {
 		if (piArgs.length) info(`${name} is already running; ignoring pi args`);
 	} else {
-		if (!r.entry) die(`${target} has a live lease but no registry entry`);
+		if (!r.entry) die(`${target} is not running and has no registry entry`);
 		try {
-			const w = wake(r.uuid, { piArgs, log: info });
+			const w = await wake(r.uuid, { piArgs, log: info });
 			name = w.name;
 			info(w.started ? `woke ${name} (${shortId(r.uuid, knownUuids())})` : `${name} was already running`);
 		} catch (e) {
@@ -178,7 +173,7 @@ function cmdSessions(args: string[]): void {
 	console.log(json ? JSON.stringify(list, null, 2) : formatSessionList(list));
 }
 
-function main(argv: string[]): void {
+async function main(argv: string[]): Promise<void> {
 	const [cmd, ...rest] = argv;
 	switch (cmd) {
 		case "run":
@@ -193,4 +188,4 @@ function main(argv: string[]): void {
 	}
 }
 
-main(process.argv.slice(2));
+void main(process.argv.slice(2));

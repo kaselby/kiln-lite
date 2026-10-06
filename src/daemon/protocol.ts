@@ -40,6 +40,24 @@ export const RESULT = "result";
 export const ERROR = "error";
 
 // ---------------------------------------------------------------------------
+// Channel names
+// ---------------------------------------------------------------------------
+
+/**
+ * A channel name: letters, digits, '.', '_' and '-', not starting with '.',
+ * '_' or '-'. It names a directory under channels/ and goes on the
+ * `channel:` line of inbox files, so nothing else is allowed.
+ */
+export function validChannel(name: string): boolean {
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name);
+}
+
+/** "#name" or "name" → "name". */
+export function channelName(s: string): string {
+    return s.startsWith("#") ? s.slice(1) : s;
+}
+
+// ---------------------------------------------------------------------------
 // Envelope
 // ---------------------------------------------------------------------------
 

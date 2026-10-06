@@ -9,7 +9,7 @@
  *
  * Lifecycle:
  *   - On startup: claim socket path (remove stale if unused), write pidfile,
- *     load persisted subscriptions, start tmux-reconcile loop, listen.
+ *     load persisted subscriptions, start the reconcile loop, listen.
  *   - On shutdown: clean up socket + pidfile, wait up to 2s for in-flight
  *     requests, exit.
  *   - Auto-exit: when the last session deregisters, schedule a 30-second
@@ -25,17 +25,17 @@
  */
 
 import {
+    chmodSync,
     closeSync,
     existsSync,
     mkdirSync,
     openSync,
     readFileSync,
     rmSync,
-    statSync,
     writeFileSync,
     writeSync,
 } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -155,7 +155,7 @@ export class Daemon {
         this.log.open();
 
         // Claim the socket: if a stale file is there with no listener, remove it.
-        this.clearStaleSocket();
+        await this.clearStaleSocket();
 
         // Pidfile — only one daemon per machine. If one's already running,
         // bail gracefully — the client can use the existing one.
@@ -207,30 +207,22 @@ export class Daemon {
         this.maybeScheduleShutdown();
     }
 
-    private clearStaleSocket(): void {
+    /** Remove a socket file nobody answers on; throw if a daemon answers. */
+    private async clearStaleSocket(): Promise<void> {
         if (!existsSync(this.config.socketPath)) return;
-        try {
-            // Try connecting — if it succeeds, another daemon owns it.
-            const probe = require("node:net").createConnection(this.config.socketPath);
-            probe.on("connect", () => {
+        const answered = await new Promise<boolean>((resolve) => {
+            const probe = createConnection(this.config.socketPath);
+            probe.once("connect", () => {
                 probe.destroy();
-                throw new Error(`socket ${this.config.socketPath} is in use`);
+                resolve(true);
             });
-            probe.on("error", () => {
+            probe.once("error", () => {
                 probe.destroy();
-                try {
-                    rmSync(this.config.socketPath, { force: true });
-                } catch {
-                    /* noop */
-                }
+                resolve(false);
             });
-        } catch {
-            try {
-                rmSync(this.config.socketPath, { force: true });
-            } catch {
-                /* noop */
-            }
-        }
+        });
+        if (answered) throw new Error(`socket ${this.config.socketPath} is in use`);
+        rmSync(this.config.socketPath, { force: true });
     }
 
     private alreadyRunning(): boolean {
@@ -263,8 +255,7 @@ export class Daemon {
                 // Socket permissions: user-only. No one else on the box
                 // should be able to spoof requests into this daemon.
                 try {
-                    statSync(this.config.socketPath);
-                    require("node:fs").chmodSync(this.config.socketPath, 0o600);
+                    chmodSync(this.config.socketPath, 0o600);
                 } catch {
                     /* noop */
                 }
@@ -338,7 +329,7 @@ export class Daemon {
     }
 
     private runReconcile(): void {
-        const result = reconcile(this.state);
+        const result = reconcile(this.state, this.config.klRoot);
         if (result.pruned.length > 0) {
             this.log.log(`reconcile pruned ${result.pruned.length} dead sessions: ${result.pruned.join(", ")}`);
             this.maybeScheduleShutdown();

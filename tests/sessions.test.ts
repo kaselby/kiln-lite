@@ -34,8 +34,6 @@ function entry(uuid: string, name: string, bound: string, extra: Partial<Registr
 		transcript: `/t/${uuid}.jsonl`,
 		cwd: "/w",
 		created: bound,
-		wake: "park",
-		launch: { model: "p/m", thinking: "medium" },
 		...extra,
 	};
 }
@@ -46,7 +44,7 @@ function deadPid(): number {
 	return Number(r.stdout.trim());
 }
 
-test("registry: write/read round trip keeps strings, parent, launch", () => {
+test("registry: write/read round trip keeps strings and parent", () => {
 	const root = freshRoot();
 	const e = entry(U1, "rev-calm-fox", "2026-10-05T19:14:06Z", { parent: U2, cwd: "/w/with: colon" });
 	writeEntry(e, root);

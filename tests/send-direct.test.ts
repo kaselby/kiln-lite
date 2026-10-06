@@ -76,8 +76,6 @@ function regEntry(uuid: string, name: string, bound: string): RegistryEntry {
 		transcript: join(dir, `${uuid}.jsonl`),
 		cwd: "/w",
 		created: bound,
-		wake: "park",
-		launch: {},
 	};
 }
 

@@ -27,7 +27,7 @@ function entry(root: string, uuid: string, name: string, extra: Partial<Registry
 	writeFileSync(transcript, "{}\n"); // has a transcript: listed
 	const e: RegistryEntry = {
 		uuid, agent: "rev", name, names: [{ name, bound: "2026-10-05T10:00:00Z" }], home: "/h/rev",
-		transcript, cwd: "/w", created: "2026-10-05T10:00:00Z", wake: "park", launch: {}, ...extra,
+		transcript, cwd: "/w", created: "2026-10-05T10:00:00Z", ...extra,
 	};
 	writeEntry(e, root);
 	return e;

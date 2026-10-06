@@ -19,6 +19,7 @@ import { liveLeases } from "../sessions/lease.ts";
 import { daemonDir, inboxDir, klRoot } from "../sessions/paths.ts";
 import { listEntries } from "../sessions/registry.ts";
 import { resolveTarget, ResolveError } from "../sessions/resolve.ts";
+import { channelName, validChannel } from "../daemon/protocol.ts";
 
 export { ResolveError };
 
@@ -58,15 +59,7 @@ export type HistoryTarget =
 	| { kind: "channel"; channel: string }
 	| { kind: "session"; uuid: string; name: string; running: boolean; note?: string };
 
-/** A channel name that is safe as a directory name under channels/. */
-export function validChannel(name: string): boolean {
-	return !!name && !name.includes("/") && !name.startsWith(".") && name !== "..";
-}
-
-/** "#name" or "name" → "name". */
-export function channelName(s: string): string {
-	return s.startsWith("#") ? s.slice(1) : s;
-}
+export { channelName, validChannel };
 
 /** uuid → current name: live lease first, then registry. */
 function nameLookup(root: string): (uuid: string) => string {

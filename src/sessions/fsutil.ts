@@ -46,50 +46,71 @@ export interface LockOptions {
  * Returns a release function; throws on timeout.
  */
 export function acquireLock(lockPath: string, opts: LockOptions = {}): () => void {
+	const attempt = lockAttempt(lockPath, opts);
+	for (;;) {
+		const release = attempt();
+		if (release) return release;
+		sleepMs(opts.pollMs ?? 50);
+	}
+}
+
+/** acquireLock that waits without blocking the event loop. */
+export async function acquireLockAsync(lockPath: string, opts: LockOptions = {}): Promise<() => void> {
+	const attempt = lockAttempt(lockPath, opts);
+	for (;;) {
+		const release = attempt();
+		if (release) return release;
+		await new Promise((r) => setTimeout(r, opts.pollMs ?? 50));
+	}
+}
+
+/** One try at the lock per call: the release function, or null to wait and call again. Throws on timeout. */
+function lockAttempt(lockPath: string, opts: LockOptions): () => (() => void) | null {
 	const timeoutMs = opts.timeoutMs ?? 20000;
-	const pollMs = opts.pollMs ?? 50;
 	const deadline = Date.now() + timeoutMs;
 	mkdirSync(dirname(lockPath), { recursive: true });
 	let waited = false;
 	let noPidSince: number | null = null;
-	for (;;) {
-		try {
-			mkdirSync(lockPath);
-			writeFileSync(join(lockPath, "pid"), String(process.pid));
-			return () => releaseLock(lockPath);
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-		}
-		let holder = NaN;
-		try {
-			holder = Number(readFileSync(join(lockPath, "pid"), "utf8").trim());
-		} catch {
-			// holder hasn't written its pid yet
-		}
-		if (Number.isFinite(holder) && holder > 0) {
-			noPidSince = null;
-			if (!pidAlive(holder)) {
-				opts.onBreak?.(holder);
-				releaseLock(lockPath);
-				continue;
+	return () => {
+		for (;;) {
+			try {
+				mkdirSync(lockPath);
+				writeFileSync(join(lockPath, "pid"), String(process.pid));
+				return () => releaseLock(lockPath);
+			} catch (err) {
+				if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
 			}
-			if (!waited) {
-				waited = true;
-				opts.onWait?.(holder);
+			let holder = NaN;
+			try {
+				holder = Number(readFileSync(join(lockPath, "pid"), "utf8").trim());
+			} catch {
+				// holder hasn't written its pid yet
 			}
-		} else {
-			noPidSince ??= Date.now();
-			if (Date.now() - noPidSince > 1000) {
-				opts.onBreak?.(0);
-				releaseLock(lockPath);
-				continue;
+			if (Number.isFinite(holder) && holder > 0) {
+				noPidSince = null;
+				if (!pidAlive(holder)) {
+					opts.onBreak?.(holder);
+					releaseLock(lockPath);
+					continue;
+				}
+				if (!waited) {
+					waited = true;
+					opts.onWait?.(holder);
+				}
+			} else {
+				noPidSince ??= Date.now();
+				if (Date.now() - noPidSince > 1000) {
+					opts.onBreak?.(0);
+					releaseLock(lockPath);
+					continue;
+				}
 			}
+			if (Date.now() > deadline) {
+				throw new Error(`lock ${lockPath} still held by pid ${Number.isFinite(holder) ? holder : "?"} after ${timeoutMs}ms`);
+			}
+			return null;
 		}
-		if (Date.now() > deadline) {
-			throw new Error(`lock ${lockPath} still held by pid ${Number.isFinite(holder) ? holder : "?"} after ${timeoutMs}ms`);
-		}
-		sleepMs(pollMs);
-	}
+	};
 }
 
 function releaseLock(lockPath: string): void {
