@@ -136,7 +136,7 @@ an absolute or `~/` path to a file whose contents are used. With
 `autonomous: true` the session starts working on the handoff right away;
 otherwise it waits for the next message. The session keeps its name, UUID,
 transcript, inbox, plan and children. The system prompt isn't rebuilt, so
-`sections:` keep the content they had at session start.
+`prompt.extra_sections` keep the content they had at session start.
 
 ## What a session is doing
 

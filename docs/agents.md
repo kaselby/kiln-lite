@@ -10,7 +10,8 @@ An agent is a folder at `$KL_AGENTS_DIR/<name>/` (default
 Agents differ only in what their folder holds.
 
 kl has no persistence code. A "persistent" agent is an agent whose folder
-has memory files, a `sections:` entry that puts them in the prompt, and a
+has memory files, a `prompt.extra_sections` entry that puts them in the
+prompt, and a
 cleanup prompt that asks it to update them before it exits. `kl init
 --full` sets that up; everything else is the same as for any agent.
 
@@ -19,7 +20,7 @@ cleanup prompt that asks it to update them before it exits. `kl init
 | path | what it is |
 |---|---|
 | `agent.yml` | config (below). `kl agents` and the `subagent` tool only list folders that have one. |
-| `SYSTEM.md` | identity prompt, used when `system_prompt` isn't set |
+| `IDENTITY.md` | identity prompt, used when `prompt.identity` isn't set |
 | `extensions/` | the agent's own Pi extensions |
 | `skills/` | the agent's own skills; see [skills.md](skills.md) |
 | `hooks/pre-launch` | optional executable run before every launch |
@@ -38,7 +39,7 @@ agent by folder name, so keep the two the same.
 
 `kl init <name>` creates `$KL_AGENTS_DIR/<name>/` with an `agent.yml`
 (`name`, an empty `description`, and the optional keys commented out) and a
-`SYSTEM.md` holding only an HTML comment, so the agent has the default
+`IDENTITY.md` holding only an HTML comment, so the agent has the built-in
 identity until you write one. It refuses a name that's taken.
 `kl new` is the same command.
 
@@ -58,8 +59,9 @@ and adds to `agent.yml`:
 
 ```yaml
 cleanup: { path: prompts/cleanup.md }
-sections:
-  - {name: memory, path: memory/MEMORY.md}
+prompt:
+  extra_sections:
+    - {name: memory, path: memory/MEMORY.md}
 ```
 
 The cleanup prompt asks the agent to write a summary to
@@ -70,9 +72,10 @@ that should outlast the session, then stop.
 
 Settings come from two files: `<kl root>/config.yml` (defaults for every
 agent; see [config.md](config.md)), then the agent's `agent.yml`. A
-top-level key in `agent.yml` replaces the global value outright, so
-`sections:` in `agent.yml` replaces the global list rather than adding to
-it. An unknown key, or a value of the wrong type, prints a warning and is
+top-level key in `agent.yml` replaces the global value outright. The
+exception is `prompt:`, which merges one level down: `agent.yml` can set
+`include_kl_prompt` and keep the global `identity`. A list inside it, like
+`extra_sections`, still replaces the global list. An unknown key, or a value of the wrong type, prints a warning and is
 ignored (the lower layer's value stands). Warnings show on `kl run`'s
 stderr and in the session's UI.
 
@@ -82,17 +85,14 @@ stderr and in the session's UI.
 | `description` | agent.yml only | none | one line shown by `kl agents` and in the `subagent` tool's agent list |
 | `model` | both | Pi's | `provider/id`, optionally with a `:<thinking>` suffix |
 | `thinking` | both | Pi's | `off` `minimal` `low` `medium` `high` `xhigh` `max` |
-| `system_prompt` | both | `SYSTEM.md`, if the agent folder has one | the identity prompt file |
-| `harness_prompt` | both | kl's baseline | a file that replaces kl's baseline prompt; `false` drops it |
-| `project_context` | both | `true` | `false` drops `AGENTS.md`/`CLAUDE.md` from the prompt |
-| `sections` | both | none | extra prompt sections (below) |
+| `prompt` | both | below | what goes into the system prompt |
 | `cleanup` | both | none | the cleanup prompt: inline text, or `{path: ...}` |
 | `timestamps` | both | on | `false`, `true`, or a mapping (below) |
 | `session_state_interval` | both | `15` | tool calls between `[Session state]` lines; `0` turns them off |
 | `pi_extensions` | both | `true` | load base Pi's global extensions (`~/.pi/agent/extensions/`) too |
 | `user_name` | config.yml only | `user` | see [config.md](config.md) |
 
-**Paths.** `system_prompt`, `harness_prompt` and `sections[].path` are
+**Paths.** `prompt.identity` and `prompt.extra_sections[].path` are
 relative to the folder of the file that sets them, so a global section can
 point into the kl folder and an agent's into its own. A `cleanup` path is
 always relative to the agent folder, even when set in `config.yml`.
@@ -118,43 +118,58 @@ missing cleanup prompt means no cleanup turn. How the turn runs is in
 
 ## The system prompt
 
+```yaml
+prompt:
+  identity: IDENTITY.md          # default: IDENTITY.md in the agent folder if present
+  include_kl_prompt: true        # kl's <harness> block
+  include_appended_prompt: true  # Pi's <addendum>
+  include_project_context: true  # Pi's <project_context>
+  extra_sections:                # none by default
+    - {name: memory, path: memory/MEMORY.md}
+```
+
 kl writes the top of the prompt and leaves the rest to Pi. In order:
 
-1. The identity prompt (`system_prompt`, usually `SYSTEM.md`). If there
-   is none, or it's empty once comments are stripped, the agent gets
-   "You are <name> - an expert coding assistant operating inside pi..."
+1. The identity prompt: the `identity` file. If there is none, the file is
+   missing (that warns), or it's empty once comments are stripped, the
+   agent gets "You are <name> - an expert coding assistant operating
+   inside pi..."
 2. `<harness>`, holding three parts:
-   - the baseline: `prompts/kl-baseline.md` in the repo, or the
-     `harness_prompt` file;
+   - the baseline, `prompts/kl-baseline.md` in the repo;
    - `<tools>`: one line per active tool that has a prompt snippet;
    - `<rules>`: the active tools' guidelines, deduplicated. Pi's own
      built-in rules are not included.
+
+   `include_kl_prompt: false` drops the whole block, `<tools>` and
+   `<rules>` included. The identity then stands alone at the top, so
+   that plus your own identity file is how you replace kl's prompt.
 3. Pi's sections: `<addendum>` (`APPEND_SYSTEM.md` in the kl Pi dir, or
-   `--append-system-prompt`), `<project_context>` (`AGENTS.md` and
-   similar from the working directory), `<skills>`, `<cwd>`, and any
-   sections other extensions add.
+   `--append-system-prompt`; `include_appended_prompt: false` drops it),
+   `<project_context>` (`AGENTS.md` and similar from the working
+   directory; `include_project_context: false` drops it), `<skills>`,
+   `<cwd>`, and any sections other extensions add.
 4. `<session>`: the agent name, session name, model, agent folder and
    inbox path.
-5. One `<name>` block per `sections:` entry, in order.
+5. One `<name>` block per `extra_sections` entry, in order.
 
 HTML comments are stripped from the identity prompt and the baseline, so
 use them for notes to yourself. kl edits Pi's prompt options rather than
 replacing the prompt, which is why other extensions' sections survive.
 `<session>` is refreshed every turn, so a `/model` change shows up there.
 
-**Baseline placeholders.** The baseline (kl's or a `harness_prompt` file)
-can use `{{kl_docs}}` (this `docs/` folder), `{{pi_readme}}`, `{{pi_docs}}`
-and `{{pi_examples}}` (in the Pi install that's running). Each becomes an
-absolute path. An unknown or unresolvable placeholder warns and is left as
-written.
+**Baseline placeholders.** The baseline can use `{{kl_docs}}` (this
+`docs/` folder), `{{pi_readme}}`, `{{pi_docs}}` and `{{pi_examples}}` (in
+the Pi install that's running). Each becomes an absolute path. An unknown
+or unresolvable placeholder warns and is left as written.
 
-**sections.** Each entry is `{name, path}` (the file's contents) or
+**extra_sections.** Each entry is `{name, path}` (the file's contents) or
 `{name, command}` (the command's stdout):
 
 ```yaml
-sections:
-  - {name: memory, path: memory/MEMORY.md}
-  - {name: today, command: "date +%A"}
+prompt:
+  extra_sections:
+    - {name: memory, path: memory/MEMORY.md}
+    - {name: today, command: "date +%A"}
 ```
 
 - Sections are rendered once, at session start. Edits to the file show up

@@ -47,16 +47,27 @@ global extensions folder is different: kl loads it unless an agent sets
 
 ```bash
 kl migrate --dry-run          # show what would change
-kl migrate                    # every agent in $KL_AGENTS_DIR
+kl migrate                    # config.yml and every agent in $KL_AGENTS_DIR
 kl migrate ~/old/agent-home   # or specific folders
 ```
 
 It rewrites each `agent.yml` in place, keeping the original as
-`agent.yml.bak`: `context_injection` becomes `sections`; `startup`,
-`tools_dir`, `sessions_dir` and `inbox_dir` are removed; `system_prompt` is
-removed if the file it names is missing; `{summary_path}` in `cleanup`
-becomes plain wording. `harness/pre-launch` moves to `hooks/pre-launch`. It
-prints one line per key.
+`agent.yml.bak`:
+
+- `system_prompt`, `sections` and `project_context` move into `prompt:` as
+  `identity`, `extra_sections` and `include_project_context`;
+  `context_injection` becomes `extra_sections` too.
+- `harness_prompt: false` becomes `prompt.include_kl_prompt: false`. A
+  `harness_prompt` file is dropped with a warning: to replace kl's prompt,
+  put that text in the identity file and set `include_kl_prompt: false`.
+- `system_prompt` is dropped if the file it names is missing.
+- `startup`, `tools_dir`, `sessions_dir` and `inbox_dir` are removed.
+- `{summary_path}` in `cleanup` becomes plain wording.
+
+`SYSTEM.md` is renamed `IDENTITY.md` when it's the identity file in use.
+`harness/pre-launch` moves to `hooks/pre-launch`. With no arguments it also
+moves the same prompt keys in `<kl root>/config.yml` (backup
+`config.yml.bak`). It prints one line per key.
 
 ## Uninstall
 
