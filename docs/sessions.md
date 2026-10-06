@@ -135,9 +135,9 @@ until the reset is done).
 of exiting. After the cleanup turn (if any), the model sees only the system
 prompt, the `handoff` text, and whatever comes next. `handoff` is text, or
 an absolute or `~/` path to a file whose contents are used. With
-`autonomous: true` the session starts a new turn right away, with a short
-note telling the model to carry on from the handoff; otherwise it waits for
-the next message. The session keeps its name, UUID, transcript, inbox, plan
+`autonomous: true` the session starts a new turn right away with a short
+user message from kl, visible in the transcript, telling the model to carry
+on from the handoff; otherwise it waits for the next message. The session keeps its name, UUID, transcript, inbox, plan
 and children. The reset rereads the identity, baseline and extra sections,
 so the new context sees what the cleanup turn wrote.
 

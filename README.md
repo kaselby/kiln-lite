@@ -27,7 +27,8 @@ git clone <this repo> ~/Git/kiln-lite && cd ~/Git/kiln-lite
 ```
 
 `kl install <pkg>` installs a Pi package for every kl agent (into the kl Pi
-dir, not base Pi). `kl migrate` converts agent folders from an older kiln-lite layout.
+dir, not base Pi). `kl migrate` converts agent folders from an older
+kiln-lite layout.
 
 kl logs in with your Pi credentials: `~/.kl/pi/auth.json` is a symlink to
 `~/.pi/agent/auth.json`. Log in once with base `pi` (`/login`) first. Details

@@ -180,9 +180,8 @@ session, `kl message history`, `kl message channels` and the `message`
 tool's `channels` and `history` all read files. Sending and subscribing
 need it, and start it if it's not running. If it can't start, the send
 fails with an error and nothing is written. `kl message status` never
-starts it; it reports `running: false`. A daemon that
-restarts while sessions run picks them up again on their next send or
-subscribe.
+starts it; it reports `running: false`. A daemon that restarts while
+sessions run picks them up again on their next send or subscribe.
 
 **Protocol.** One JSON object per line over the unix socket, one request
 per connection. See `src/daemon/protocol.ts`.

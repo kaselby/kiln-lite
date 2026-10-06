@@ -30,11 +30,11 @@ keys of the global `config.yml`. Per-agent settings are in
   daemon/                 the messaging daemon's state and log
 ```
 
-`KL_ROOT` moves all of it except `agents/`: agent folders are found at
-`$KL_AGENTS_DIR`, which defaults to `~/.kl/agents` whatever `KL_ROOT` is.
-The daemon's socket isn't here either; it's
-`$XDG_RUNTIME_DIR/kiln-lite.sock`, or `/tmp/kiln-lite-<uid>.sock` if that's
-unset.
+`KL_ROOT` moves all of it; `$KL_AGENTS_DIR` moves just the agent folders.
+The daemon's socket isn't here: it's `$XDG_RUNTIME_DIR/kiln-lite.sock`, or
+`/tmp/kiln-lite-<uid>.sock` if that's unset. It doesn't follow `KL_ROOT`,
+so two kl folders on one machine share a daemon unless their
+`XDG_RUNTIME_DIR` differs.
 
 ## What uses each part
 
@@ -94,7 +94,8 @@ and all channel history. Piece by piece:
 the values are defaults that an agent's own `agent.yml` overrides key by
 key (`prompt:` merges one level down). The keys and their defaults are in
 [agents.md](agents.md#agentyml). Relative `prompt.identity` and
-`prompt.extra_sections` paths here are relative to the kl folder (a `cleanup` path is always relative to the agent folder).
+`prompt.extra_sections` paths here are relative to the kl folder; a
+`cleanup` path is always relative to the agent folder.
 
 One key belongs only here:
 

@@ -6,14 +6,14 @@ extensions and hooks, and `kl init`. What happens to a running agent
 (names, resuming, subagents, exiting) is in [sessions.md](sessions.md).
 
 An agent is a folder at `$KL_AGENTS_DIR/<name>/` (default
-`~/.kl/agents/<name>/`). Each `kl run <name>` starts a new session of it.
+`<kl root>/agents/<name>/`, so `~/.kl/agents/<name>/`). Each `kl run <name>` starts a new session of it.
 Agents differ only in what their folder holds.
 
 kl has no persistence code. A "persistent" agent is an agent whose folder
 has memory files, a `prompt.extra_sections` entry that puts them in the
-prompt, and a
-cleanup prompt that asks it to update them before it exits. `kl init
---full` sets that up; everything else is the same as for any agent.
+prompt, and a cleanup prompt that asks it to update them before it exits.
+`kl init --full` sets that up; everything else is the same as for any
+agent.
 
 ## The folder
 
@@ -75,8 +75,9 @@ agent; see [config.md](config.md)), then the agent's `agent.yml`. A
 top-level key in `agent.yml` replaces the global value outright. The
 exception is `prompt:`, which merges one level down: `agent.yml` can set
 `include_kl_prompt` and keep the global `identity`. A list inside it, like
-`extra_sections`, still replaces the global list. An unknown key, or a value of the wrong type, prints a warning and is
-ignored (the lower layer's value stands). Warnings show on `kl run`'s
+`extra_sections`, still replaces the global list. An unknown key, or a
+value of the wrong type, prints a warning and is ignored (the lower
+layer's value stands). Warnings show on `kl run`'s
 stderr and in the session's UI.
 
 | key | where | default | meaning |
@@ -100,7 +101,7 @@ always relative to the agent folder, even when set in `config.yml`.
 **model and thinking** apply only to new sessions, and only when you don't
 pass `--model` or `--thinking` to `kl run` yourself. `thinking` is also
 skipped when the model carries a `:<thinking>` suffix. A resumed session
-uses the model and thinking level it started with (see
+keeps the model and thinking level it last used (see
 [sessions.md](sessions.md#resuming)).
 
 **timestamps.** With timestamps on, each user turn gets a hidden

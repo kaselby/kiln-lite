@@ -70,9 +70,8 @@ attaching. Mail that arrived while it was down is delivered when it starts.
 It keeps the model and thinking level the session last used. `resume`
 passes extra arguments to `pi` when it starts the session (`--model` to
 switch models, say), and ignores them, with a note, if it's already
-running. `attach` takes none.
-Put flags after `<session>`; the first argument that isn't `-d` is taken as
-the session.
+running. `attach` takes none. Put flags after `<session>`; the first
+argument that isn't `-d` is taken as the session.
 
 **Inside a kl session** (`SESSION_UUID` set, which includes anything an
 agent runs from its bash tool), `run`, `resume`, `attach` and bare `kl`
@@ -114,9 +113,10 @@ if any check fails.
 dir (`<kl root>/pi`), so the package loads for every kl agent and base `pi`
 doesn't see it.
 
-**migrate** converts old agent folders in place (default: every agent in
-`$KL_AGENTS_DIR`), keeping `agent.yml.bak`. `--dry-run` only prints. See
-[install.md](install.md).
+**migrate** converts old agent folders in place, keeping `agent.yml.bak`.
+With no arguments it converts `<kl root>/config.yml` (keeping
+`config.yml.bak`) and every agent in `$KL_AGENTS_DIR`. `--dry-run` only
+prints. See [install.md](install.md).
 
 ## `kl message`
 

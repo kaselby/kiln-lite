@@ -102,7 +102,7 @@ reset its context and keep going in the same session. All default to false.
 - `autonomous`: after the reset, start working on the handoff right away
   instead of waiting for the next message.
 
-See [agents.md](agents.md) for the cleanup turn and resets.
+See [sessions.md](sessions.md#exiting) for the cleanup turn and resets.
 
 ## Commands
 
