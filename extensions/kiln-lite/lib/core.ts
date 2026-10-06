@@ -26,6 +26,7 @@ import {
 } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
+import { buildSessionsTool } from "../sessions-tool.ts";
 import { registerSpawnCommand } from "../spawn.ts";
 import { createSessionStateHook, type SessionStateHook } from "../session-state.ts";
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
@@ -59,6 +60,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 	// Tools register at load time; their closures read live state lazily.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
+	pi.registerTool(buildSessionsTool({ getSelf: () => state?.sessionUuid ?? null }));
 	const planKit = buildPlanToolKit({
 		getKlRoot: () => (state ? klRoot() : null),
 		getSessionUuid: () => state?.sessionUuid ?? null,

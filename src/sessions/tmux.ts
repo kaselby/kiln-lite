@@ -55,6 +55,16 @@ export function ownTmuxSession(): string {
 	return (cur.stdout ?? "").trim();
 }
 
+/**
+ * Inside a kl session (SESSION_UUID set, inherited by everything an agent
+ * runs) attaching would take over the agent's own terminal: force detach
+ * and say so. A human's shell has no SESSION_UUID, so attaching still works.
+ */
+export function guardDetach(detach: boolean, env: NodeJS.ProcessEnv = process.env): { detach: boolean; note?: string } {
+	if (detach || !env.SESSION_UUID) return { detach };
+	return { detach: true, note: "inside a kl session (SESSION_UUID is set): acting as --detach; attach from your own terminal" };
+}
+
 /** How to attach to `name` by hand (honours $KL_TMUX_SOCKET). */
 export function attachHint(name: string): string {
 	return ["tmux", ...tmuxBaseArgs(), "attach", "-t", `=${name}`].join(" ");
