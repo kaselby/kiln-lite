@@ -191,8 +191,9 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 
 	// --- before_agent_start: prompt composition (never returns systemPrompt) ---
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (!state || !promptParts) return;
+		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		let active: string[] | undefined;
 		try {
 			active = pi.getActiveTools();
@@ -205,6 +206,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			{
 				agentName: state.config.name,
 				sessionId: state.agentId,
+				model,
 				home: state.agentHome,
 				inbox: state.env.KL_INBOX,
 			},

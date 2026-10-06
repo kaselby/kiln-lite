@@ -149,8 +149,9 @@ kl writes the top of the prompt and leaves the rest to Pi. In order:
    `<project_context>` (`AGENTS.md` and similar from the working
    directory; `include_project_context: false` drops it), `<skills>`,
    `<cwd>`, and any sections other extensions add.
-4. `<session>`: the agent name, session name, agent folder and inbox
-   path. It leaves out the model, so `/model` doesn't change the prompt.
+4. `<session>`: the agent name, session name, model, agent folder and
+   inbox path. A `/model` change updates it, which reaches the model as a
+   section update (below).
 5. One `<name>` block per `extra_sections` entry, in order.
 
 HTML comments are stripped from the identity prompt and the baseline, so

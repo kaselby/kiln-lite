@@ -18,7 +18,7 @@
  *   <project_context> Pi: AGENTS.md etc. (`include_project_context: false` empties it)
  *   <skills>          Pi
  *   <cwd>             Pi (always rendered)
- *   <session>         kl: agent, session id, home, inbox (no model: it would change on /model)
+ *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
  *   <name>…           `prompt.extra_sections`
  *
  * The identity, baseline and extra sections (PromptParts) are read at session
@@ -74,6 +74,8 @@ export interface PromptParts {
 export interface SessionInfo {
 	agentName: string;
 	sessionId: string;
+	/** `provider/id`, or undefined if no model is selected. */
+	model?: string;
 	home: string;
 	/** This session's inbox dir (~/.kl/run/inbox/<uuid>): the one place a UUID reaches the model. */
 	inbox?: string;
@@ -237,6 +239,7 @@ export function renderSessionSection(info: SessionInfo): string {
 	return [
 		`agent: ${info.agentName}`,
 		`session: ${info.sessionId}`,
+		`model: ${info.model ?? "(none)"}`,
 		`home: ${info.home}`,
 		...(info.inbox ? [`inbox: ${info.inbox}`] : []),
 	].join("\n");

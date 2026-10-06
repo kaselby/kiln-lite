@@ -33,7 +33,7 @@ async function piRenderer(): Promise<{
 	return import(PI_SYSTEM_PROMPT);
 }
 
-const SESSION = { agentName: "scout", sessionId: "scout-quiet-fox", home: "/agents/scout" };
+const SESSION = { agentName: "scout", sessionId: "scout-quiet-fox", model: "openai-codex/gpt-5.6-luna", home: "/agents/scout" };
 
 function options(over: Partial<PromptOptionsLike> = {}): PromptOptionsLike {
 	return {
@@ -92,10 +92,10 @@ test("fillPlaceholders: known names filled; unknown or unresolved warn once and 
 	assert.match(warnings.join("\n"), /\{\{pi_readme\}\} could not be resolved/);
 });
 
-test("renderSessionSection: names the agent, session and home; nothing that changes mid-session (model)", () => {
+test("renderSessionSection: agent, session, model, home — no uuid, no cwd", () => {
 	const s = renderSessionSection(SESSION);
-	for (const want of ["scout", "scout-quiet-fox", "/agents/scout"]) assert.ok(s.includes(want), want);
-	assert.ok(!/model/i.test(s), s);
+	assert.equal(s, "agent: scout\nsession: scout-quiet-fox\nmodel: openai-codex/gpt-5.6-luna\nhome: /agents/scout");
+	assert.equal(renderSessionSection({ ...SESSION, model: undefined }).includes("model: (none)"), true);
 });
 
 test("stripComments drops HTML comments and outer whitespace", () => {
@@ -314,7 +314,7 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 		at("<today>"),
 	];
 	assert.deepEqual([...order].sort((a, b) => a - b), order, `order wrong:\n${text}`);
-	assert.ok(text.includes("<session>\nagent: scout\nsession: scout-quiet-fox\nhome: /agents/scout\n</session>"));
+	assert.ok(text.includes("<session>\nagent: scout\nsession: scout-quiet-fox\nmodel: openai-codex/gpt-5.6-luna\nhome: /agents/scout\n</session>"));
 });
 
 test("Pi integration: include_project_context false drops the <project_context> section", async () => {
