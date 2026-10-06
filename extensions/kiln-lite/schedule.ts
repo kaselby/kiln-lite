@@ -32,6 +32,7 @@ export function registerScheduleTool(pi: ExtensionAPI, deps: ScheduleDeps): void
 			label: "Schedule",
 			description: DESCRIPTION,
 			promptSnippet: "- **schedule**: wake this session after a delay, at a time, or when a pid exits.",
+			promptGuidelines: ["Use the provided schedule tool instead of polling"],
 			parameters: Type.Object({
 				action: Type.Union([Type.Literal("at"), Type.Literal("watch"), Type.Literal("list"), Type.Literal("cancel")]),
 				delay: Type.Optional(Type.String({ description: "at: 30s, 10m, 2h, 1d." })),

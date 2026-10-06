@@ -82,6 +82,7 @@ export function buildPlanToolKit(deps: PlanToolDeps, interval = 15): PlanToolKit
 		label: "Plan",
 		description: PLAN_DESCRIPTION,
 		promptSnippet: PLAN_PROMPT_SNIPPET,
+		promptGuidelines: ["Use plan to loosely track what you're doing - it helps other agents see what you're working on"],
 		parameters: PlanParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx): Promise<AgentToolResult<unknown>> {
