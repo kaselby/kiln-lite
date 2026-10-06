@@ -13,16 +13,21 @@ works is in [messaging.md](messaging.md).
 |---|---|---|
 | `action` | all | `send`, `subscribe`, `unsubscribe`, `channels`, `history` |
 | `to` | send, history | a session ([name forms](cli.md#session-names)) |
-| `channel` | send, subscribe, unsubscribe, history | channel name, without `#` |
+| `channel` | send, subscribe, unsubscribe, history | channel name, `#` optional ([rules](messaging.md#sending)) |
 | `summary`, `body` | send | both required |
 | `priority` | send | `normal` (default) or `high` |
+| `wake` | send with `to` | `true`: start the session if it isn't running |
 | `limit` | history | newest messages to show, default 20 |
 
 - **send** takes `to` or `channel`, not both. Returns `sent to <name>`, the
-  `parked: …` reply, or `Message broadcast to channel '<c>' (N
-  recipient(s)).`
-- **subscribe**, **unsubscribe** take only `channel`. Subscriptions end when
-  the session does.
+  `parked: …` reply, or `sent to #<c> (N recipients)`. With `wake: true`, a
+  session that isn't running is started detached and reads the message at
+  startup (`woke <name>; …`). If the wake fails, the result says so but is
+  not an error: the message is parked, so don't send it again. `wake` with
+  `channel` is an error.
+- **subscribe**, **unsubscribe** take only `channel`. A subscription lasts
+  until you unsubscribe, across exits and resumes; while the session isn't
+  running, channel messages are parked in its inbox.
 - **channels** lists every channel, as `kl message channels` does.
 - **history** with `channel` reads the channel's history; with `to`, the
   session's inbox (`new` = not yet given to it). Oldest first.

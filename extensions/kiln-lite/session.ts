@@ -24,7 +24,6 @@ export const NAME_ENTRY = "kl-name";
 
 export interface SessionCtxLike {
 	cwd: string;
-	model?: { provider?: string; id?: string };
 	sessionManager: { getSessionId(): string; getSessionFile(): string | undefined };
 }
 
@@ -39,7 +38,7 @@ export interface BoundSession {
 
 export type ClaimResult = { ok: true; session: BoundSession } | { ok: false; reason: string };
 
-/** KL_NAME/KL_PARENT/KL_WAKE belong to the first session_start of the process only. */
+/** KL_NAME/KL_PARENT belong to the first session_start of the process only. */
 let launchEnvConsumed = false;
 
 export function resetLaunchEnvForTests(): void {
@@ -51,7 +50,6 @@ export interface ClaimInput {
 	agent: string;
 	home: string;
 	ctx: SessionCtxLike;
-	thinking?: string;
 	/** Name held before a reload. */
 	currentName?: string;
 	warn: (msg: string) => void;
@@ -74,7 +72,6 @@ export function claimSession(input: ClaimInput): ClaimResult {
 
 	let launchName: string | undefined;
 	let parent: string | undefined;
-	let wakeMode: "park" | "auto" = "park";
 	if (!launchEnvConsumed) {
 		launchEnvConsumed = true;
 		launchName = process.env.KL_NAME?.trim() || undefined;
@@ -83,12 +80,10 @@ export function claimSession(input: ClaimInput): ClaimResult {
 			if (UUID_RE.test(p)) parent = p;
 			else warn(`kiln-lite: KL_PARENT '${p}' is not a session UUID; not recording a parent`);
 		}
-		if (process.env.KL_WAKE === "auto") wakeMode = "auto";
 	}
 	// Children inherit our env through bash; don't let them reuse it.
 	delete process.env.KL_NAME;
 	delete process.env.KL_PARENT;
-	delete process.env.KL_WAKE;
 
 	const prior = readEntry(uuid, root);
 	const tmuxName = ownTmuxSession();
@@ -111,11 +106,6 @@ export function claimSession(input: ClaimInput): ClaimResult {
 				cwd: ctx.cwd,
 				parent,
 				created: now,
-				wake: wakeMode,
-				launch: {
-					model: ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
-					thinking: input.thinking,
-				},
 			};
 		}
 		writeEntry(entry, root);

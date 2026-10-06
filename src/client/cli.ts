@@ -5,7 +5,7 @@
  * DaemonClient). Without SESSION_UUID it acts as the human: "user", or
  * $KL_USER / `user_name:` in <kl root>/config.yml.
  *
- *   kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high]
+ *   kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
  *   kl message subscribe <channel>
  *   kl message unsubscribe <channel>
  *   kl message channels [--json]
@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { resolveUserName } from "../../extensions/kiln-lite/config.ts";
 import { inboxRoot } from "../sessions/paths.ts";
 import { DaemonClient } from "./index.ts";
+import { send } from "./send.ts";
 import {
 	channelName,
 	followHistory,
@@ -44,7 +45,7 @@ import {
 const USAGE = `kl message: send and read messages between sessions
 
 Usage:
-  kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high]
+  kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
   kl message subscribe <channel>
   kl message unsubscribe <channel>
   kl message channels [--json]
@@ -52,7 +53,8 @@ Usage:
   kl message status [--json]
 
   send         a DM to a session (by name, as in kl sessions), or #channel
-               to everyone subscribed to it
+               to everyone subscribed to it. A session that isn't running
+               gets the DM when it next starts; --wake starts it now
   channels     every channel, with subscribers and message counts
                (* = this session subscribes)
   history      a channel's history, or the mail in a session's inbox,
@@ -123,6 +125,18 @@ function resolveOrDie(target: string): HistoryTarget {
 	}
 }
 
+/** The daemon's status, or {running: false} if nothing answers. Never starts it. */
+async function statusOrDown(): Promise<Record<string, unknown>> {
+	const client = new DaemonClient({ requester: { agent: "human", session: "status" }, autostart: false });
+	try {
+		return { running: true, ...(await client.getStatus()) };
+	} catch (e) {
+		const code = (e as NodeJS.ErrnoException).code;
+		if (code === "ENOENT" || code === "ECONNREFUSED") return { running: false, socket_path: client.socketPath };
+		throw e;
+	}
+}
+
 const out = (s: string): void => {
 	process.stdout.write(s.endsWith("\n") ? s : `${s}\n`);
 };
@@ -136,7 +150,7 @@ async function main(argv: string[]): Promise<void> {
 
 	switch (cmd) {
 		case "send": {
-			const { positional, flags } = parseArgs(rest, { "--body": "string", "--body-stdin": "bool", "--priority": "string" });
+			const { positional, flags } = parseArgs(rest, { "--body": "string", "--body-stdin": "bool", "--priority": "string", "--wake": "bool" });
 			const [to, ...words] = positional;
 			const summary = words.join(" ");
 			if (!to || !summary) die("send needs <session|#channel> <summary>");
@@ -144,15 +158,14 @@ async function main(argv: string[]): Promise<void> {
 			const p = flags["--priority"];
 			if (p !== undefined && p !== "normal" && p !== "high") die(`--priority must be normal or high, not '${p}'`);
 			const priority = p === "high" ? "high" : "normal";
-			const client = makeClient(cmd);
+			const wake = !!flags["--wake"];
 			if (to.startsWith("#")) {
-				const channel = to.slice(1);
-				if (!validChannel(channel)) die(`bad channel name '${to}'`);
-				const n = await client.publish(channel, summary, body, priority);
-				out(`sent to #${channel} (${n} recipient${n === 1 ? "" : "s"})`);
-			} else {
-				out(await client.sendDirect(to, summary, body, priority));
+				if (wake) die("--wake works only for a message to a session, not a channel");
+				if (!validChannel(channelName(to))) die(`bad channel name '${to}'`);
 			}
+			const r = await send(makeClient(cmd), to, summary, body, { priority, wake });
+			out(r.text);
+			if (!r.ok) process.exit(1);
 			return;
 		}
 		case "subscribe":
@@ -204,7 +217,7 @@ async function main(argv: string[]): Promise<void> {
 		}
 		case "status": {
 			const { flags } = parseArgs(rest, { "--json": "bool" });
-			const status = await makeClient(cmd).getStatus();
+			const status = await statusOrDown();
 			if (flags["--json"]) out(JSON.stringify(status, null, 2));
 			else for (const [k, v] of Object.entries(status)) out(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
 			return;

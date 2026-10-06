@@ -16,6 +16,8 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { validChannel } from "./protocol.ts";
+
 // ---------------------------------------------------------------------------
 // Presence registry — who's alive right now
 // ---------------------------------------------------------------------------
@@ -90,18 +92,6 @@ export class ChannelRegistry {
         if (!subs) return;
         subs.delete(session_id);
         if (subs.size === 0) this.channels.delete(channel);
-    }
-
-    /** Remove a session from every channel. Returns the channels it left. */
-    unsubscribeAll(session_id: string): string[] {
-        const departed: string[] = [];
-        for (const [channel, subs] of this.channels) {
-            if (subs.delete(session_id)) {
-                departed.push(channel);
-                if (subs.size === 0) this.channels.delete(channel);
-            }
-        }
-        return departed;
     }
 
     subscribers(channel: string): Set<string> {
@@ -293,14 +283,6 @@ export class SubscriptionStore {
         }
         return out;
     }
-
-    remove(session_id: string): void {
-        try {
-            rmSync(this.pathFor(session_id), { force: true });
-        } catch {
-            /* noop */
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -325,15 +307,16 @@ export class DaemonState {
         this.subscriptions.ensureDir();
         for (const [session_id, channels] of Object.entries(this.subscriptions.readAll())) {
             for (const channel of channels) {
-                this.channels.subscribe(channel, session_id);
+                if (validChannel(channel)) this.channels.subscribe(channel, session_id);
             }
         }
     }
 
-    /** Remove all state for a dead session. Idempotent. */
-    pruneSession(session_id: string): void {
-        this.channels.unsubscribeAll(session_id);
+    /**
+     * The session's process is gone. Its channel subscriptions stay: they
+     * end only on an explicit unsubscribe. Idempotent.
+     */
+    dropPresence(session_id: string): void {
         this.presence.deregister(session_id);
-        this.subscriptions.remove(session_id);
     }
 }

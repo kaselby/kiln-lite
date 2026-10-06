@@ -32,6 +32,20 @@ function sessionName(uuid: string, root: string): string | undefined {
 // Envelope helpers
 // ---------------------------------------------------------------------------
 
+/** A session id that is safe as a file name (subscriptions/<session>.json). */
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** The request's channel, '#' stripped: the name, or an error string. */
+function channelArg(msg: proto.Message, verb: string): { channel: string } | { error: string } {
+    const raw = typeof msg.data.channel === "string" ? msg.data.channel : "";
+    if (!raw) return { error: `${verb} requires a channel name` };
+    const channel = proto.channelName(raw);
+    if (!proto.validChannel(channel)) {
+        return { error: `bad channel name '${raw}': use letters, digits, '.', '_' and '-'` };
+    }
+    return { channel };
+}
+
 function requireRequester(msg: proto.Message): proto.Requester | null {
     const req = msg.data.requester;
     if (!req || typeof req !== "object") return null;
@@ -66,7 +80,8 @@ function ensureSession(daemon: Daemon, req: proto.Requester): void {
         session_id: req.session,
         agent_name: req.agent,
         inbox_path: req.inbox_path!,
-        pid: 0,
+        // The session's lease has its pid; without one, reconcile prunes the record.
+        pid: (UUID_RE.test(req.session) && liveLease(req.session, daemon.config.klRoot)?.pid) || 0,
         first_seen_at: now,
         last_seen_at: now,
         status: "unknown",
@@ -113,7 +128,8 @@ export async function handleDeregister(
 ): Promise<proto.Message> {
     const req = requireRequester(msg);
     if (!req) return proto.error(msg.ref!, "deregister requires requester identity");
-    daemon.state.pruneSession(req.session);
+    // Presence only: channel subscriptions outlive the process.
+    daemon.state.dropPresence(req.session);
     daemon.maybeScheduleShutdown();
     return proto.ack(msg.ref!, { session_count: daemon.state.presence.size() });
 }
@@ -122,10 +138,12 @@ export async function handleSubscribe(
     msg: proto.Message,
     daemon: Daemon,
 ): Promise<proto.Message> {
-    const channel = typeof msg.data.channel === "string" ? msg.data.channel : "";
-    if (!channel) return proto.error(msg.ref!, "subscribe requires a channel name");
+    const arg = channelArg(msg, "subscribe");
+    if ("error" in arg) return proto.error(msg.ref!, arg.error);
+    const { channel } = arg;
     const req = requireRequester(msg);
     if (!req) return proto.error(msg.ref!, "subscribe requires requester identity");
+    if (!SAFE_ID.test(req.session)) return proto.error(msg.ref!, "subscribe requester session is invalid");
     ensureSession(daemon, req);
 
     const count = daemon.state.channels.subscribe(channel, req.session);
@@ -141,10 +159,12 @@ export async function handleUnsubscribe(
     msg: proto.Message,
     daemon: Daemon,
 ): Promise<proto.Message> {
-    const channel = typeof msg.data.channel === "string" ? msg.data.channel : "";
-    if (!channel) return proto.error(msg.ref!, "unsubscribe requires a channel name");
+    const arg = channelArg(msg, "unsubscribe");
+    if ("error" in arg) return proto.error(msg.ref!, arg.error);
+    const { channel } = arg;
     const req = requireRequester(msg);
     if (!req) return proto.error(msg.ref!, "unsubscribe requires requester identity");
+    if (!SAFE_ID.test(req.session)) return proto.error(msg.ref!, "unsubscribe requester session is invalid");
 
     daemon.state.channels.unsubscribe(channel, req.session);
     daemon.state.subscriptions.write(
@@ -159,11 +179,12 @@ export async function handlePublish(
     msg: proto.Message,
     daemon: Daemon,
 ): Promise<proto.Message> {
-    const channel = typeof msg.data.channel === "string" ? msg.data.channel : "";
     const summary = typeof msg.data.summary === "string" ? msg.data.summary : "";
     const body = typeof msg.data.body === "string" ? msg.data.body : "";
     const priority = (msg.data.priority === "high" ? "high" : "normal") as "normal" | "high";
-    if (!channel) return proto.error(msg.ref!, "publish requires a channel name");
+    const arg = channelArg(msg, "publish");
+    if ("error" in arg) return proto.error(msg.ref!, arg.error);
+    const { channel } = arg;
     const req = requireRequester(msg);
     if (!req) return proto.error(msg.ref!, "publish requires requester identity");
     ensureSession(daemon, req);
@@ -171,12 +192,14 @@ export async function handlePublish(
     const subscribers = daemon.state.channels.subscribers(channel);
     subscribers.delete(req.session); // don't echo back to sender
 
+    // A subscriber that isn't running gets its copy parked in its inbox,
+    // like a DM, and reads it when it is resumed.
     let delivered = 0;
     for (const sub_id of subscribers) {
-        const record = daemon.state.presence.get(sub_id);
-        const inbox_root = record?.inbox_path
+        const inbox_root = daemon.state.presence.get(sub_id)?.inbox_path
+            ?? (UUID_RE.test(sub_id) && entryExists(sub_id, daemon.config.klRoot) ? inboxRoot(daemon.config.klRoot) : undefined)
             ?? daemon.state.knownSessions.lookup(sub_id)?.inbox_path;
-        if (!inbox_root) continue; // subscriber disappeared + not known — skip
+        if (!inbox_root) continue; // no running session, registry entry or known inbox
         writeInboxMessage({
             inboxRoot: inbox_root,
             recipient: sub_id,
@@ -277,6 +300,7 @@ export async function handleSendDirect(
         session: target.uuid,
         name: target.name,
         live: !!target.lease,
+        ...(target.note ? { note: target.note } : {}),
     });
 }
 
@@ -300,7 +324,7 @@ export async function handleDeliverSelf(
     if (!req?.inbox_path) {
         return proto.error(msg.ref!, "deliver_self requires requester identity and inbox_path");
     }
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(req.session)) {
+    if (!SAFE_ID.test(req.session)) {
         return proto.error(msg.ref!, "deliver_self requester session is invalid");
     }
     if (!isAbsolute(req.inbox_path)) {

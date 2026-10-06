@@ -97,18 +97,11 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		// Registry entry, lease, name. Refuses a second process on a
 		// transcript whose lease is live.
 		const priorName = bound?.name;
-		let thinking: string | undefined;
-		try {
-			thinking = pi.getThinkingLevel();
-		} catch {
-			thinking = undefined;
-		}
 		const claim = claimSession({
 			reason: event.reason,
 			agent: config.name,
 			home: agentHome,
 			ctx,
-			thinking,
 			currentName: event.reason === "reload" ? priorName : undefined,
 			warn,
 		});

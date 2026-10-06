@@ -68,37 +68,37 @@ function stoppedSession(root: string, home: string): string {
 	writeFileSync(transcript, "");
 	const bound = "2026-10-01T00:00:00Z";
 	writeEntry(
-		{ uuid, agent: "rev", name: "rev-calm-fox", names: [{ name: "rev-calm-fox", bound }], home, transcript, cwd: root, created: bound, wake: "park", launch: {} },
+		{ uuid, agent: "rev", name: "rev-calm-fox", names: [{ name: "rev-calm-fox", bound }], home, transcript, cwd: root, created: bound },
 		root,
 	);
 	return uuid;
 }
 
-test("wake (resume/attach) runs the pre-launch hook too, with the same env", (t) => {
+test("wake (resume/attach) runs the pre-launch hook too, with the same env", async (t) => {
 	const { root, home, cleanup } = setup(`echo "$AGENT_NAME|$KL_NAME|$AGENT_HOME" > "$AGENT_HOME/../../hook-env"`);
 	t.after(cleanup);
 	const uuid = stoppedSession(root, home);
 	// The fake pi writes no lease, so wake times out after starting it.
-	assert.throws(() => wake(uuid, { root, timeoutMs: 300 }), /wrote no lease/);
+	await assert.rejects(wake(uuid, { root, timeoutMs: 300 }), /wrote no lease/);
 	assert.equal(readFileSync(join(root, "hook-env"), "utf8").trim(), `rev|rev-calm-fox|${home}`);
 	assert.ok(waitFor(join(root, "pi-ran")), "pi started after the hook");
 });
 
-test("a failing pre-launch hook rejects a wake; pi never starts", (t) => {
+test("a failing pre-launch hook rejects a wake; pi never starts", async (t) => {
 	const { root, home, cleanup } = setup(`echo "not now" >&2; exit 4`);
 	t.after(cleanup);
 	const uuid = stoppedSession(root, home);
-	assert.throws(() => wake(uuid, { root, timeoutMs: 300 }), /pre-launch hook rejected the launch \(exit 4\): not now/);
+	await assert.rejects(wake(uuid, { root, timeoutMs: 300 }), /pre-launch hook rejected the launch \(exit 4\): not now/);
 	sleepMs(300);
 	assert.equal(existsSync(join(root, "pi-ran")), false);
 });
 
-test("wake on a session with no transcript: 'never started a conversation', pi never starts", (t) => {
+test("wake on a session with no transcript: 'never started a conversation', pi never starts", async (t) => {
 	const { root, home, cleanup } = setup(`touch "$AGENT_HOME/../../hook-ran"`);
 	t.after(cleanup);
 	const uuid = stoppedSession(root, home);
 	rmSync(join(root, "t.jsonl"));
-	assert.throws(() => wake(uuid, { root, timeoutMs: 300 }), /^Error: rev-calm-fox never started a conversation; nothing to resume$/);
+	await assert.rejects(wake(uuid, { root, timeoutMs: 300 }), /^Error: rev-calm-fox never started a conversation; nothing to resume$/);
 	sleepMs(200);
 	assert.ok(!existsSync(join(root, "hook-ran")), "no hook, no launch");
 	assert.ok(!existsSync(join(root, "pi-ran")));

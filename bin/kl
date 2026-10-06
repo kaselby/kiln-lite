@@ -11,7 +11,7 @@
 #
 # Subcommands:
 #   kl run [<agent>] [--detach] [--prompt-file FILE] [--parent SESSION]
-#          [--wake park|auto] [pi-args...]
+#          [pi-args...]
 #                           Start a new session of <agent> ($KL_AGENTS_DIR/<agent>;
 #                           default: $AGENT_HOME, else the starter "agent") and
 #                           attach to it. Inside a kl session (SESSION_UUID set)
@@ -61,7 +61,7 @@
 #   kl -h | --help          Show this help.
 #
 # Env:
-#   KL_AGENTS_DIR           Parent dir for agent homes (default: ~/.kl/agents).
+#   KL_AGENTS_DIR           Parent dir for agent homes (default: <kl root>/agents).
 #   AGENT_HOME              Explicit agent home for `kl run` with no <agent>.
 #   KL_ROOT                 kl root (default: ~/.kl): config.yml, pi/ (the
 #                           kl-wide PI_CODING_AGENT_DIR), run/ (sessions,
@@ -104,23 +104,27 @@ die() { echo "kl: $*" >&2; exit 1; }
 #
 # Single source of truth for "where does this agent live on disk?". Used
 # by run/doctor so the priority order stays consistent.
-KL_AGENTS_DIR="${KL_AGENTS_DIR:-$HOME/.kl/agents}"
+KL_AGENTS_DIR="${KL_AGENTS_DIR:-${KL_ROOT:-$HOME/.kl}/agents}"
 
 # Resolve an agent home from an optional name.
 #
 # Priority:
-#   1. Explicit name        -> $KL_AGENTS_DIR/<name>   (must exist)
+#   1. Explicit name        -> $KL_AGENTS_DIR/<name>   (must have agent.yml)
 #   2. $AGENT_HOME env var  -> use as-is               (must exist)
-#   3. Default              -> $KL_AGENTS_DIR/agent    (must exist)
+#   3. Default              -> $KL_AGENTS_DIR/agent    (must have agent.yml)
+#
+# By name, an agent is a dir with an agent.yml: the same rule as `kl agents`
+# and the subagent tool (src/sessions/agents.ts).
 #
 # Exits non-zero with a helpful message if no agent can be resolved.
 resolve_agent_home() {
     local name="${1:-}"
     if [ -n "$name" ]; then
         local home="$KL_AGENTS_DIR/$name"
-        if [ -d "$home" ]; then
+        if [ -f "$home/agent.yml" ]; then
             printf '%s' "$home"; return
         fi
+        [ -d "$home" ] && die "$home has no agent.yml, so it isn't an agent (kl init makes one)"
         die "no agent named '$name' at $home (use 'kl init $name' to create, or 'kl agents' to list)"
     fi
     if [ -n "${AGENT_HOME:-}" ]; then
@@ -130,7 +134,7 @@ resolve_agent_home() {
         die "AGENT_HOME=$AGENT_HOME does not exist"
     fi
     local default_home="$KL_AGENTS_DIR/agent"
-    if [ -d "$default_home" ]; then
+    if [ -f "$default_home/agent.yml" ]; then
         printf '%s' "$default_home"; return
     fi
     die "no agent home found.
@@ -160,14 +164,15 @@ usage() {
         /^#$/ { print ""; next }         # blank-comment -> blank line
         /^# ?/ { sub(/^# ?/, ""); print }
     ' "$SCRIPT_PATH"
-    exit 1
+    exit 0
 }
 
 # Parse `name:` from agent.yml without bringing in a yaml dep. Trivial
 # for the shape our scaffold uses; fine for more complex yaml too since we
 # only match a top-level `name:` line.
+# Without a name: the folder name, as extensions/kiln-lite/config.ts does.
 resolve_agent_name() {
-    local agent_home="${1:-$HOME/.kl/agent}"
+    local agent_home="$1"
     if [ -f "$agent_home/agent.yml" ]; then
         local n
         n="$(awk '/^name:[[:space:]]*/{sub(/^name:[[:space:]]*/,""); gsub(/[\"'\''[:space:]]/,""); print; exit}' "$agent_home/agent.yml")"
@@ -176,7 +181,7 @@ resolve_agent_name() {
             return
         fi
     fi
-    printf 'agent'
+    basename "$agent_home"
 }
 
 # Parse `description:` from agent.yml. Returns empty if unset. Handles both

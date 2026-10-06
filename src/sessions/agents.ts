@@ -1,14 +1,15 @@
 /**
  * Installed agents: one home per dir under $KL_AGENTS_DIR (default
- * ~/.kl/agents), counted only if it has an agent.yml. Same rule as bin/kl's
+ * <kl root>/agents), counted only if it has an agent.yml. Same rule as bin/kl's
  * resolve_agent_home / list_agent_homes.
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import yaml from "js-yaml";
+
+import { klRoot } from "./paths.ts";
 
 export interface AgentInfo {
 	name: string;
@@ -19,7 +20,7 @@ export interface AgentInfo {
 
 export function agentsDir(): string {
 	const env = process.env.KL_AGENTS_DIR?.trim();
-	return resolve(env || join(homedir(), ".kl", "agents"));
+	return resolve(env || join(klRoot(), "agents"));
 }
 
 const AGENT_DIR_NAME = /^[a-z][a-z0-9_]*$/;

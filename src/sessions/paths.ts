@@ -2,7 +2,7 @@
  * Where the session registry lives. Everything is a
  * plain file under <kl root>/run so agents and humans can ls/cat it:
  *
- *   run/sessions/<uuid>.yml   registry entry, written by kl (launch, rename)
+ *   run/sessions/<uuid>.yml   registry entry, written by the session's process at each start
  *   run/leases/<uuid>.json    liveness, written by the running pi process
  *   run/inbox/<uuid>/*.md     mail, keyed by UUID so a reused name can't read old mail
  *   run/names.lock/           mkdir lock for drawing names (holder pid inside)
@@ -43,7 +43,7 @@ export function inboxDir(uuid: string, root = klRoot()): string {
 	return join(inboxRoot(root), uuid);
 }
 
-/** Optional status file: anyone may write it (the plan tool does by default); kl only reads it. */
+/** Optional status file: anyone may write it; kl only reads it (kl sessions shows it). */
 export function statusPath(uuid: string, root = klRoot()): string {
 	if (!UUID_RE.test(uuid)) throw new Error(`not a session uuid: ${uuid}`);
 	return join(runDir(root), "status", `${uuid}.json`);

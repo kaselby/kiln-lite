@@ -7,21 +7,18 @@
  * SessionManager.createBranchedSession writes it; we run it on a second
  * SessionManager opened on our transcript, because it switches the manager it
  * is called on over to the new file (session-manager.js:1276-1278) and the
- * live one must stay put. Then `kl run <this agent> --detach -- --session F`.
+ * live one must stay put. Then launchNew on this session's agent home (as
+ * `kl run --detach -- --session F` does), in-process like the subagent tool.
  *
  * Not a child: no --parent, so it is not ended when this session ends. The
  * fork's header carries parentSession (our transcript) for provenance.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { SessionManager, UserMessageSelectorComponent } from "@earendil-works/pi-coding-agent";
 
-import { klBin, writeForkedSession } from "./fork.ts";
-
-const execFileAsync = promisify(execFile);
+import { launchNew } from "../../src/sessions/launch.ts";
+import { writeForkedSession } from "./fork.ts";
 
 /** Extract plain text from a user message's content field. */
 function extractText(content: unknown): string {
@@ -108,18 +105,21 @@ export function registerSpawnCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const agent = process.env.AGENT_NAME;
-			if (!agent) {
-				ctx.ui.notify(`Spawn failed: AGENT_NAME not set; fork written to ${forkedFile}`, "error");
+			// The home, not the agent name: the name need not match the folder,
+			// and the home need not be under KL_AGENTS_DIR.
+			const home = process.env.AGENT_HOME;
+			if (!home) {
+				ctx.ui.notify(`Spawn failed: AGENT_HOME not set; fork written to ${forkedFile}`, "error");
 				return;
 			}
 			try {
-				const { stdout } = await execFileAsync(klBin(), ["run", agent, "--detach", "--", "--session", forkedFile], {
+				const name = launchNew({
+					home,
+					piArgs: ["--session", forkedFile],
 					cwd: ctx.cwd,
-					env: process.env,
+					warn: (w) => ctx.ui.notify(w, "warning"),
 				});
-				const name = stdout.trim().split("\n").pop() ?? "";
-				ctx.ui.notify(name ? `Spawned → ${name}` : "Spawned (could not read its name)", name ? "info" : "warning");
+				ctx.ui.notify(`Spawned → ${name}`, "info");
 			} catch (err: unknown) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`Spawn failed: ${msg}`, "error");

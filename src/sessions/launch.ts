@@ -4,16 +4,17 @@
  *
  * wake(uuid): wake lock → re-check lease → reserve a name (the session's
  * last name unless something live holds it) → `tmux new-session -d` with
- * `pi --session <transcript>` (model/thinking from `launch:`, everything
- * else re-derived from home + agent.yml), after the agent's pre-launch hook
- * → hold the lock until the new process has written its lease.
+ * `pi --session <transcript>`, after the agent's pre-launch hook → hold the
+ * lock until the new process has written its lease. Pi restores the
+ * session's latest model and thinking level from the transcript; the rest
+ * is re-derived from home + agent.yml.
  */
 
 import { accessSync, constants, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { plan, REPO_ROOT } from "../launcher.ts";
-import { acquireLock, sleepMs } from "./fsutil.ts";
+import { acquireLockAsync } from "./fsutil.ts";
 import { liveLease, type Lease } from "./lease.ts";
 import { drawName, reserveName } from "./names.ts";
 import { klRoot, wakeLockPath } from "./paths.ts";
@@ -38,7 +39,11 @@ function tmuxEnv(vars: Record<string, string | undefined>): string[] {
 	return out;
 }
 
-/** Env every kl-launched pi gets. KL_ROOT/KL_TMUX_SOCKET are forwarded: a running tmux server doesn't see the caller's env. */
+/**
+ * Env every kl-launched pi gets. KL_ROOT, KL_TMUX_SOCKET and XDG_RUNTIME_DIR
+ * (where the daemon socket is) are forwarded: a running tmux server doesn't
+ * see the caller's env.
+ */
 function baseEnv(home: string, piDir: string, name: string): Record<string, string | undefined> {
 	return {
 		AGENT_HOME: home,
@@ -46,6 +51,7 @@ function baseEnv(home: string, piDir: string, name: string): Record<string, stri
 		PI_CODING_AGENT_DIR: piDir,
 		KL_ROOT: process.env.KL_ROOT,
 		KL_TMUX_SOCKET: process.env.KL_TMUX_SOCKET,
+		XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
 		KL_NAME: name,
 	};
 }
@@ -57,8 +63,6 @@ export interface LaunchOptions {
 	/** Parent session UUID. */
 	parent?: string;
 	cwd?: string;
-	/** `park` (default) or `auto`. */
-	wake?: "park" | "auto";
 	warn?: (msg: string) => void;
 }
 
@@ -108,7 +112,7 @@ export function launchNew(opts: LaunchOptions): string {
 		(state) => drawName({ agent: p.agentName, held: state.held, recent: state.recent }),
 		(name) => {
 			runPreLaunchHook(opts.home, p.agentName, name, cwd);
-			const env = { ...baseEnv(opts.home, p.piDir, name), KL_PARENT: opts.parent, KL_WAKE: opts.wake };
+			const env = { ...baseEnv(opts.home, p.piDir, name), KL_PARENT: opts.parent };
 			const r = tmux(["new-session", "-d", "-s", name, "-c", cwd, ...tmuxEnv(env), pi, ...p.args]);
 			if (!r.ok) throw new Error(`tmux new-session failed for ${name}: ${r.stderr.trim()}`);
 			return name;
@@ -136,7 +140,13 @@ export function neverStarted(entry: RegistryEntry): string {
 	return `${entry.name} never started a conversation; nothing to resume`;
 }
 
-export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
+/**
+ * Start a stopped session detached; does nothing if it is running. At most
+ * one process per session: concurrent callers serialise on the wake lock and
+ * the later ones find the lease. Waits without blocking the event loop, so
+ * the message tool can call it inside pi.
+ */
+export async function wake(uuid: string, opts: WakeOptions = {}): Promise<WakeResult> {
 	const root = opts.root ?? klRoot();
 	const log = opts.log ?? (() => {});
 	const entry = readEntry(uuid, root);
@@ -147,7 +157,7 @@ export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 	// (pi --session on a missing path would start a NEW session there.)
 	if (!existsSync(entry.transcript)) throw new Error(neverStarted(entry));
 
-	const release = acquireLock(wakeLockPath(uuid, root), {
+	const release = await acquireLockAsync(wakeLockPath(uuid, root), {
 		timeoutMs: (opts.timeoutMs ?? 20000) + 5000,
 		onWait: (pid) => log(`wake ${entry.name}: another waker (pid ${pid}) holds the lock, waiting`),
 		onBreak: (pid) => log(`wake ${entry.name}: broke stale wake lock (holder ${pid || "unknown"})`),
@@ -161,7 +171,7 @@ export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 		while (Date.now() < deadline) {
 			const l = liveLease(uuid, root);
 			if (l) return { name: l.name, started: true, lease: l };
-			sleepMs(100);
+			await new Promise((r) => setTimeout(r, 100));
 		}
 		throw new Error(
 			`woke ${name} but it wrote no lease within ${opts.timeoutMs ?? 20000}ms (tmux session '${name}' may be stuck; attach to look)`,
@@ -174,10 +184,9 @@ export function wake(uuid: string, opts: WakeOptions = {}): WakeResult {
 function startProcess(entry: RegistryEntry, extraArgs: string[], root: string): string {
 	if (!existsSync(entry.transcript)) throw new Error(neverStarted(entry));
 	if (!existsSync(entry.home)) throw new Error(`agent home for ${entry.name} is gone: ${entry.home}`);
-	const launchArgs: string[] = [];
-	if (entry.launch.model && !extraArgs.includes("--model")) launchArgs.push("--model", entry.launch.model);
-	if (entry.launch.thinking && !extraArgs.includes("--thinking")) launchArgs.push("--thinking", entry.launch.thinking);
-	const p = plan({ agentHome: entry.home, userArgs: ["--session", entry.transcript, ...launchArgs, ...extraArgs], resume: true });
+	// No --model/--thinking unless the caller passes them: pi restores the
+	// transcript's latest model_change and thinking_level_change.
+	const p = plan({ agentHome: entry.home, userArgs: ["--session", entry.transcript, ...extraArgs], resume: true });
 	const pi = resolvePiBin();
 	const cwd = entry.cwd && existsSync(entry.cwd) ? entry.cwd : entry.home;
 	return reserveName(

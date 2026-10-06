@@ -19,6 +19,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import type { DaemonClient } from "../../src/client/index.ts";
+import { send, sendChannel } from "../../src/client/send.ts";
 import {
 	channelName,
 	formatChannels,
@@ -53,7 +54,7 @@ const MessageParams = Type.Object({
 	channel: Type.Optional(
 		Type.String({
 			description:
-				"Channel name (for subscribe/unsubscribe, for action=send to broadcast, or for action=history to read the channel).",
+				"Channel name, with or without '#': letters, digits, '.', '_' and '-' (for subscribe/unsubscribe, for action=send to broadcast, or for action=history to read the channel).",
 		}),
 	),
 	summary: Type.Optional(
@@ -65,6 +66,12 @@ const MessageParams = Type.Object({
 	priority: Type.Optional(
 		Type.Union([Type.Literal("normal"), Type.Literal("high")], {
 			description: "Message priority (for action=send). Default normal.",
+		}),
+	),
+	wake: Type.Optional(
+		Type.Boolean({
+			description:
+				"For action=send with `to`: if the session isn't running, start it (detached) so it reads the message now. Not for channels.",
 		}),
 	),
 	limit: Type.Optional(
@@ -79,9 +86,11 @@ const MESSAGE_DESCRIPTION =
 	"Actions:\n" +
 	"- **send**: Send a message to an agent (via `to`) or broadcast to a channel " +
 	"(via `channel`). Requires `summary` and `body`. A direct message to a session " +
-	"that isn't running is parked in its inbox until it is resumed; an unknown name " +
-	"fails. Channel broadcasts reach offline subscribers too (parked in their inbox).\n" +
-	"- **subscribe**: Subscribe to a channel to receive all messages sent to it.\n" +
+	"that isn't running is parked in its inbox until it is resumed, or with `wake: true` " +
+	"the session is started now; an unknown name fails. Subscribers that aren't running " +
+	"get channel messages parked in their inbox too.\n" +
+	"- **subscribe**: Subscribe to a channel to receive all messages sent to it. " +
+	"A subscription lasts until you unsubscribe, across exits and resumes.\n" +
 	"- **unsubscribe**: Unsubscribe from a channel.\n" +
 	"- **channels**: List every channel with its subscribers and message count.\n" +
 	"- **history**: Read a channel's history (`channel`) or the mail in a session's " +
@@ -145,16 +154,19 @@ async function dispatchSend(
 		return err("send takes either 'to' OR 'channel', not both.");
 	}
 
+	if (channel && params.wake) {
+		return err("wake works only for a message to a session (`to`), not a channel.");
+	}
+	let r;
 	try {
-		if (to) {
-			return ok(await daemon.sendDirect(to, summary, body, priority));
-		}
-		// channel branch
-		const count = await daemon.publish(channel!, summary, body, priority);
-		return ok(`Message broadcast to channel '${channel}' (${count} recipient(s)).`);
+		r = to
+			? await send(daemon, to, summary, body, { priority, wake: params.wake })
+			: await sendChannel(daemon, channel!, summary, body, { priority });
 	} catch (e) {
 		return err(`send failed: ${(e as Error).message}`);
 	}
+	// A failed wake is not a failed send: the message is parked. ok() so the model doesn't resend.
+	return ok(r.text);
 }
 
 async function dispatchSubscribe(
@@ -167,8 +179,9 @@ async function dispatchSubscribe(
 		return err("subscribe takes only 'channel' — drop 'to'/'summary'/'body'.");
 	}
 	try {
-		const count = await daemon.subscribe(channel);
-		return ok(`Subscribed to '${channel}' (${count} subscriber(s)).`);
+		const name = channelName(channel);
+		const count = await daemon.subscribe(name);
+		return ok(`Subscribed to #${name} (${count} subscriber(s)).`);
 	} catch (e) {
 		return err(`subscribe failed: ${(e as Error).message}`);
 	}
@@ -184,8 +197,9 @@ async function dispatchUnsubscribe(
 		return err("unsubscribe takes only 'channel' — drop 'to'/'summary'/'body'.");
 	}
 	try {
-		await daemon.unsubscribe(channel);
-		return ok(`Unsubscribed from '${channel}'.`);
+		const name = channelName(channel);
+		await daemon.unsubscribe(name);
+		return ok(`Unsubscribed from #${name}.`);
 	} catch (e) {
 		return err(`unsubscribe failed: ${(e as Error).message}`);
 	}

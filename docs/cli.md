@@ -28,7 +28,7 @@ An unknown name is an error. Notes about what kl picked go to stderr.
 ## Commands
 
 ```
-kl run [<agent>] [-d|--detach] [--prompt-file F] [--parent S] [--wake park|auto] [pi args...]
+kl run [<agent>] [-d|--detach] [--prompt-file F] [--parent S] [pi args...]
 kl [-d] [pi args...]
 kl resume <session> [-d] [pi args...]
 kl attach <session> [-d]
@@ -50,15 +50,15 @@ own tmux session and attaches to it.
 
 - `<agent>` must be the first argument; a word in that spot that matches
   `[a-z][a-z0-9_]*` is always taken as an agent name and is an error if no
-  such agent exists. With no `<agent>`: `$AGENT_HOME`, else the agent named
-  `agent`.
+  such agent exists. An agent is a folder with an `agent.yml`; a folder
+  without one is an error. With no `<agent>`: `$AGENT_HOME` (any existing
+  folder), else `$KL_AGENTS_DIR/agent`, which needs an `agent.yml` too.
 - `-d`, `--detach`: don't attach; print the new name on stdout
   (`name=$(kl run reviewer -d --prompt-file brief.md)`).
 - `--prompt-file F`: the first message, read from a file and passed to Pi
   as its last argument, so it never goes through a shell.
 - `--parent S`: the session that launched this one (any `<session>` form,
   or a full UUID). Stored as a UUID; `kl sessions` shows the tree.
-- `--wake park|auto`: recorded in the session's registry entry.
 - Everything else, and everything after `--`, goes to `pi`.
 
 Bare `kl`, or `kl` followed by a flag, is `kl run` with the default agent.
@@ -67,8 +67,10 @@ Bare `kl`, or `kl` followed by a flag, is `kl run` with the default agent.
 again from its transcript if it isn't running (same name, unless another
 running session holds it), then attach. `-d` prints the name instead of
 attaching. Mail that arrived while it was down is delivered when it starts.
-`resume` passes extra arguments to `pi` when it starts the session, and
-ignores them, with a note, if it's already running. `attach` takes none.
+It keeps the model and thinking level the session last used. `resume`
+passes extra arguments to `pi` when it starts the session (`--model` to
+switch models, say), and ignores them, with a note, if it's already
+running. `attach` takes none.
 Put flags after `<session>`; the first argument that isn't `-d` is taken as
 the session.
 
@@ -123,7 +125,7 @@ session. From your own shell it acts as the user; see
 [messaging.md](messaging.md#sending-from-your-shell).
 
 ```
-kl message send <session|#channel> <summary...> [--body <text> | --body-stdin] [--priority normal|high]
+kl message send <session|#channel> <summary...> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
 kl message subscribe <channel>
 kl message unsubscribe <channel>
 kl message channels [--json]
@@ -135,8 +137,12 @@ kl message status [--json]
   `#channel`. The words after the target are the summary. The body is
   `--body`, or stdin with `--body-stdin`, else empty. Prints the daemon's
   reply (`sent to …`, `parked: …`, or `sent to #c (N recipients)`).
+  `--wake` starts a session that isn't running so it reads the message
+  now; see [messaging.md](messaging.md#sending). It exits 1 if the message
+  was parked but the wake failed, and is an error with a `#channel`.
 - **subscribe**, **unsubscribe**: this session joins or leaves a channel
-  (`#` optional). They need a session.
+  (`#` optional). They need a session. A subscription lasts until
+  `unsubscribe`, across exits and resumes.
 - **channels**: every channel, with subscriber count, message count, time of
   the last message, and subscriber names. `*` marks the ones this session
   subscribes to.
@@ -145,15 +151,17 @@ kl message status [--json]
   inbox, DMs and channel copies, with `new` on what it hasn't been given
   yet. What a session sent is in the recipients' inboxes, not its own.
   `--follow` keeps printing new messages until interrupted.
-- **status**: the daemon's pid, socket, uptime, and its counts of running
-  sessions and channels. It starts the daemon if it isn't running.
+- **status**: whether the daemon is running and, if so, its pid, socket,
+  uptime, and its counts of running sessions and channels. It never starts
+  the daemon.
 - **--json**: `channels` prints an array and `status` an object. `history`
   prints one object per line (also with `--follow`), with `id`, `ts`,
   `from`, `from_session` (when the sender is a kl session), `to`, `read`
   and `path` (inbox mail), `channel`, `summary`, `body`, `priority`.
 
-Channel names can't contain `/` or start with `.`. Usage errors exit with
-2, other failures with 1.
+Channel names are letters, digits, `.`, `_` and `-`, starting with a
+letter or digit, up to 128 characters. Usage errors exit with 2, other
+failures with 1.
 
 ## Status files
 
@@ -168,7 +176,7 @@ kl reads:
 | var | meaning |
 |---|---|
 | `KL_ROOT` | kl root (default `~/.kl`) |
-| `KL_AGENTS_DIR` | where agents live (default `~/.kl/agents`, even when `KL_ROOT` is set) |
+| `KL_AGENTS_DIR` | where agents live (default `<kl root>/agents`) |
 | `AGENT_HOME` | agent folder for `kl run` with no `<agent>` |
 | `KL_PI` | pi binary (default: the repo's `node_modules/.bin/pi`, else `pi` on PATH) |
 | `KL_USER` | your name on messages sent from your shell |
@@ -187,6 +195,6 @@ Inside a session, kl sets these for the agent and everything it runs:
 | `KL_INBOX` | the session's inbox directory |
 | `PI_CODING_AGENT_DIR` | the kl Pi dir |
 
-kl also passes `KL_ROOT` and `KL_TMUX_SOCKET` through to the session, and
-sets `_KL`, `KL_NAME`, `KL_PARENT` and `KL_WAKE` for its own use at
-startup.
+kl also passes `KL_ROOT`, `KL_TMUX_SOCKET` and `XDG_RUNTIME_DIR` through
+to the session, and sets `_KL`, `KL_NAME` and `KL_PARENT` for its own use
+at startup.

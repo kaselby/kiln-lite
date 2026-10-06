@@ -14,7 +14,7 @@ export function buildDescription(agents: AgentInfo[]): string {
 		"",
 	];
 	if (agents.length === 0) {
-		lines.push("No installed agents found under $KL_AGENTS_DIR (default ~/.kl/agents).");
+		lines.push("No installed agents found under $KL_AGENTS_DIR (default <kl root>/agents).");
 	} else {
 		lines.push("Installed agents:");
 		for (const a of agents.slice(0, AGENT_LIST_CAP)) lines.push(`- ${a.name}${a.description ? `: ${a.description}` : ""}`);
