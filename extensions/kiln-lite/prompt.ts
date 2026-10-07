@@ -289,7 +289,7 @@ export function originReminder(origin: NonNullable<SessionState["sessionOrigin"]
 	}
 	if (origin.subagentOf) {
 		lines.push(
-			`You are a subagent of ${origin.subagentOf}, launched by it. ` +
+			`You are a subagent of ${origin.subagentOf}. ` +
 				`Send your results with the message tool, to: "${origin.subagentOf}".`,
 		);
 	}
