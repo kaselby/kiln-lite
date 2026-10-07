@@ -1,6 +1,6 @@
 ---
 name: kl-agents
-description: How to find, start and work with other kl agents and sessions. Use when launching a subagent or peer, checking what other sessions are doing, resuming a stopped session, or looking at another agent's setup.
+description: How to find, start and work with other kl agents and sessions. Use when launching a subagent or peer, checking what other sessions are doing, resuming a stopped session, looking at another agent's setup, or creating or changing an agent.
 ---
 
 # Agents and sessions
@@ -13,6 +13,8 @@ session is wrapped in a tmux session.
 
 Your identity prompt may include instructions about what agents you are
 allowed to spawn - if so follow those guidelines.
+
+To create or change an agent, read `references/defining-agents.md`.
 
 ## Finding out what's there
 
@@ -29,7 +31,10 @@ allowed to spawn - if so follow those guidelines.
 
 Kiln-lite subagents are simply regular agent sessions whose lifecycle is
 tied to yours. They communicate with the message tool like any other session.
-Spawn them with the `subagent` tool. Remember:
+Spawn them with the `subagent` tool. Leaving agent unset uses the default
+worker agent - this should be your default unless specified otherwise.
+
+Remember:
 
 **The prompt is all it gets.** Its first message is your `prompt`, and it
 starts with none of your context. Say what to do, where to look, and what

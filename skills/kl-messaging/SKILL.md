@@ -22,19 +22,16 @@ names and IDs.
 **Write the summary for a notification.** A busy recipient sees only the
 summary until it opens the file, so make it say what the message is
 ("review done: 2 blocking issues"), not "update". Put the substance in the
-body: the reader has none of your context.
+body: the reader may not have your context.
 
 **Stopped sessions.** A DM to a session that isn't running is parked in its
 inbox, and the reply says so. The session gets it when someone resumes it.
-Use `wake: true` only when it needs to act now; that starts it in the
-background. A wake that fails still leaves the message parked, so don't
-send it twice.
+`wake: true` resumes the session before sending the message.
 
 **Channels** are for broadcasts to whoever cares: `channel: "reviews"`
-instead of `to`. There's no step to create one. Subscribing lasts until
-you unsubscribe, across exits and resumes, and copies park while you're
-stopped, so subscribe only to what you'll want to read. You don't get a
-copy of your own posts.
+instead of `to`. Channels are auto-created on first subscription.
+Subscribing lasts until you unsubscribe, across exits and resumes, and
+copies park while you're stopped.
 
 ## Receiving
 
