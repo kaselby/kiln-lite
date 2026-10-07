@@ -52,6 +52,7 @@ export const DEFAULT_TIMESTAMPS: TimestampConfig = { per_turn: true, every_calls
 
 const KNOWN_KEYS = new Set([
 	"user_name",
+	"default_agent",
 	"name",
 	"description",
 	"model",
@@ -66,7 +67,7 @@ const KNOWN_KEYS = new Set([
 /** Keys that only make sense per agent; ignored (with a warning) in the global file. */
 const AGENT_ONLY_KEYS = new Set(["name", "description"]);
 /** Keys that only mean something in <kl root>/config.yml. */
-const GLOBAL_ONLY_KEYS = new Set(["user_name"]);
+const GLOBAL_ONLY_KEYS = new Set(["user_name", "default_agent"]);
 
 /** Sender name used for messages from outside any session (the human's shell). */
 export const DEFAULT_USER_NAME = "user";

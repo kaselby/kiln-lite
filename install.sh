@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
 # install.sh — one-stop kiln-lite install.
 #
-# Installs the kl CLI globally and scaffolds a starter agent. Agents live
-# under $KL_AGENTS_DIR (default ~/.kl/agents/). The starter is created at
-# ~/.kl/agents/agent — launchable as `kl` (no args).
+# Installs the kl CLI globally and scaffolds the default agent, `worker`.
+# Agents live under $KL_AGENTS_DIR (default ~/.kl/agents/). `kl` with no
+# agent, and the subagent tool with none, launch the worker.
 #
 # Does, in order:
 #   1. Install node deps (npm install).
 #   2. Link the `kl` command globally (npm link).
-#   3. Create a compact starter agent at $KL_AGENTS_DIR/agent (if it doesn't
-#      already exist) with `kl init`. Use `kl init <name> [--full]` for more.
+#   3. Create the worker at $KL_AGENTS_DIR/worker (if it doesn't already
+#      exist) with `kl init worker`. Use `kl init <name> [--full]` for more.
 #
 # Usage:
-#   ./install.sh [--no-starter]
-#
-#   --no-starter    Install kl + daemon only; skip starter-agent scaffold.
-#                   Useful for CI or when you'll create agents explicitly
-#                   with `kl init <name>`.
+#   ./install.sh
 #
 # Env:
-#   KL_AGENTS_DIR    Parent dir for agent homes (default: ~/.kl/agents/).
+#   KL_AGENTS_DIR    Parent dir for agent homes (default: <kl root>/agents).
+#   KL_ROOT          kl root (default: ~/.kl).
 #
 # Prerequisites (checked, not installed — bail if missing):
 #   - node, npm (for kl and the pi package)
@@ -31,14 +28,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- defaults / args ---
-KL_AGENTS_DIR="${KL_AGENTS_DIR:-$HOME/.kl/agents}"
-STARTER_NAME="agent"
-STARTER_HOME="$KL_AGENTS_DIR/$STARTER_NAME"
-SKIP_STARTER=0
+KL_AGENTS_DIR="${KL_AGENTS_DIR:-${KL_ROOT:-$HOME/.kl}/agents}"
+WORKER_HOME="$KL_AGENTS_DIR/worker"
 
 for arg in "$@"; do
     case "$arg" in
-        --no-starter) SKIP_STARTER=1 ;;
         -h|--help)
             awk '
                 NR == 1 { next }
@@ -89,14 +83,14 @@ else
     warn "  add this to your shell config: export PATH=\"$NPM_GLOBAL:\$PATH\""
 fi
 
-# --- 3. starter agent ---
-if [ "$SKIP_STARTER" = "1" ]; then
-    log "--no-starter: skipping starter scaffold"
-elif [ -e "$STARTER_HOME" ]; then
-    log "starter agent exists at $STARTER_HOME — leaving it as-is"
+# --- 3. the worker (the default agent) ---
+if [ -e "$WORKER_HOME" ]; then
+    log "worker exists at $WORKER_HOME — leaving it as-is"
 else
-    log "creating compact starter agent at $STARTER_HOME"
-    KL_AGENTS_DIR="$KL_AGENTS_DIR" "$REPO_ROOT/bin/kl" init "$STARTER_NAME"
+    log "creating the worker at $WORKER_HOME"
+    KL_AGENTS_DIR="$KL_AGENTS_DIR" "$REPO_ROOT/bin/kl" init worker
+    sed -i.bak 's/^description: ""$/description: "General-purpose worker: Pi'"'"'s default prompt, tools and skills, plus kl."/' "$WORKER_HOME/agent.yml"
+    rm -f "$WORKER_HOME/agent.yml.bak"
 fi
 
 cat <<DONE
@@ -104,12 +98,12 @@ cat <<DONE
 [install] complete.
 
   Agents dir:   $KL_AGENTS_DIR
-  Starter:      $STARTER_HOME
+  Worker:       $WORKER_HOME (the default agent)
   Pi extension: loaded by \`kl\` via \`pi -e\` (not globally registered — bare \`pi\` stays pristine)
   kl command:   $(command -v kl 2>/dev/null || echo '(not on PATH — see warning above)')
 
 Next:
-  Launch the starter:           kl
+  Launch the worker:            kl
   Add another agent:            kl init <name> [--full]
   List agents:                  kl agents
   Diagnostics:                  kl doctor

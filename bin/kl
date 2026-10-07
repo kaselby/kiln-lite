@@ -13,8 +13,8 @@
 #   kl run [<agent>] [--detach] [--prompt-file FILE] [--parent SESSION]
 #          [pi-args...]
 #                           Start a new session of <agent> ($KL_AGENTS_DIR/<agent>;
-#                           default: $AGENT_HOME, else the starter "agent") and
-#                           attach to it. Inside a kl session (SESSION_UUID set)
+#                           default: the default agent, see KL_DEFAULT_AGENT)
+#                           and attach to it. Inside a kl session (SESSION_UUID set)
 #                           run and attach never attach: they act as
 #                           --detach and say so.
 #                           --detach (-d): don't attach; print the name on stdout:
@@ -60,7 +60,9 @@
 #
 # Env:
 #   KL_AGENTS_DIR           Parent dir for agent homes (default: <kl root>/agents).
-#   AGENT_HOME              Explicit agent home for `kl run` with no <agent>.
+#   KL_DEFAULT_AGENT        Agent for `kl`/`kl run` with no <agent> and for the
+#                           subagent tool with no agent (default: default_agent
+#                           in config.yml, else "worker").
 #   KL_ROOT                 kl root (default: ~/.kl): config.yml, pi/ (the
 #                           kl-wide PI_CODING_AGENT_DIR), run/ (one folder
 #                           per session), daemon/.
@@ -104,41 +106,25 @@ die() { echo "kl: $*" >&2; exit 1; }
 # by run/doctor so the priority order stays consistent.
 KL_AGENTS_DIR="${KL_AGENTS_DIR:-${KL_ROOT:-$HOME/.kl}/agents}"
 
-# Resolve an agent home from an optional name.
-#
-# Priority:
-#   1. Explicit name        -> $KL_AGENTS_DIR/<name>   (must have agent.yml)
-#   2. $AGENT_HOME env var  -> use as-is               (must exist)
-#   3. Default              -> $KL_AGENTS_DIR/agent    (must have agent.yml)
-#
-# By name, an agent is a dir with an agent.yml: the same rule as `kl agents`
-# and the subagent tool (src/sessions/agents.ts).
+# Resolve an agent home from an optional name. No name: the default agent
+# ($KL_DEFAULT_AGENT, else default_agent in <kl root>/config.yml, else
+# "worker"; src/launcher.ts default-agent, shared with the subagent tool).
+# $AGENT_HOME plays no part. By name, an agent is a dir with an agent.yml:
+# the same rule as `kl agents` and the subagent tool (src/sessions/agents.ts).
 #
 # Exits non-zero with a helpful message if no agent can be resolved.
 resolve_agent_home() {
-    local name="${1:-}"
-    if [ -n "$name" ]; then
-        local home="$KL_AGENTS_DIR/$name"
-        if [ -f "$home/agent.yml" ]; then
-            printf '%s' "$home"; return
-        fi
-        [ -d "$home" ] && die "$home has no agent.yml, so it isn't an agent (kl init makes one)"
-        die "no agent named '$name' at $home (use 'kl init $name' to create, or 'kl agents' to list)"
+    local name="${1:-}" what="no agent named"
+    if [ -z "$name" ]; then
+        name="$("$(tsx_path)" "$REPO_ROOT/src/launcher.ts" default-agent)" || exit 1
+        what="no default agent"
     fi
-    if [ -n "${AGENT_HOME:-}" ]; then
-        if [ -d "$AGENT_HOME" ]; then
-            printf '%s' "$AGENT_HOME"; return
-        fi
-        die "AGENT_HOME=$AGENT_HOME does not exist"
+    local home="$KL_AGENTS_DIR/$name"
+    if [ -f "$home/agent.yml" ]; then
+        printf '%s' "$home"; return
     fi
-    local default_home="$KL_AGENTS_DIR/agent"
-    if [ -f "$default_home/agent.yml" ]; then
-        printf '%s' "$default_home"; return
-    fi
-    die "no agent home found.
-  Tried: \$KL_AGENTS_DIR/agent  -> $default_home
-         \$AGENT_HOME            -> (unset)
-  Run '$REPO_ROOT/install.sh' to scaffold a starter agent, or 'kl init <name>' to create one."
+    [ -d "$home" ] && die "$home has no agent.yml, so it isn't an agent (kl init makes one)"
+    die "$what '$name' at $home (use 'kl init $name' to create, or 'kl agents' to list)"
 }
 
 # Iterate installed agent homes (one per line). No output if none exist.
@@ -389,8 +375,7 @@ cmd_agents() {
 # verbatim when reporting an issue.
 cmd_doctor() {
     # Optional positional <name>: scope agent-home checks to one agent.
-    # Without it, iterate every installed agent (and the AGENT_HOME
-    # override if present and not already covered).
+    # Without it, iterate every installed agent.
     local explicit_name=""
     if [ $# -gt 0 ] \
        && [[ "$1" =~ ^[a-z][a-z0-9_]*$ ]] \
@@ -502,6 +487,7 @@ cmd_doctor() {
     echo "[current env]"
     echo "  AGENT_ID       ${AGENT_ID:-(unset)}"
     echo "  AGENT_HOME     ${AGENT_HOME:-(unset)}"
+    echo "  KL_DEFAULT_AGENT ${KL_DEFAULT_AGENT:-(unset)}"
     echo "  KL_AGENTS_DIR  ${KL_AGENTS_DIR}"
     echo "  _KL            ${_KL:-(unset)}"
     echo "  TMUX           ${TMUX:-(unset)}"
@@ -518,22 +504,24 @@ cmd_doctor() {
         while IFS= read -r h; do
             [ -n "$h" ] && homes+=("$h")
         done < <(list_agent_homes)
-        # Include AGENT_HOME if set and not already included
-        if [ -n "${AGENT_HOME:-}" ] && [ -d "$AGENT_HOME" ]; then
-            local seen=0
-            for h in ${homes[@]+"${homes[@]}"}; do
-                [ "$h" = "$AGENT_HOME" ] && { seen=1; break; }
-            done
-            [ "$seen" = 0 ] && homes+=("$AGENT_HOME")
-        fi
     fi
 
+    echo "[agents]"
+    local default_name
+    if default_name="$("$(tsx_path)" "$REPO_ROOT/src/launcher.ts" default-agent 2>&1)"; then
+        if [ -f "$KL_AGENTS_DIR/$default_name/agent.yml" ]; then
+            say_ok "default agent '$default_name' installed"
+        else
+            say_warn "default agent '$default_name' not installed: bare 'kl' and subagent without an agent fail (kl init $default_name)"
+        fi
+    else
+        say_fail "default agent: $default_name"
+    fi
     if [ ${#homes[@]} -eq 0 ]; then
-        echo "[agents]"
         say_warn "no agent homes found under $KL_AGENTS_DIR"
         say_warn "  scaffold one with: kl init <name>   or run install.sh"
-        echo
     fi
+    echo
 
     local home
     for home in ${homes[@]+"${homes[@]}"}; do
