@@ -118,5 +118,5 @@ export interface SessionState {
 	 * and the parent's name if the registry gives it one. Drives a one-time
 	 * orientation reminder; unset for a new session without a parent.
 	 */
-	sessionOrigin?: { kind: "new" | "fork" | "resume"; parentAgentId?: string; subagentOf?: string };
+	sessionOrigin?: { kind: "new" | "fork" | "resume"; subagentOf?: string };
 }

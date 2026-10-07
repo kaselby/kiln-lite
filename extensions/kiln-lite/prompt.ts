@@ -275,11 +275,10 @@ export function sessionOriginFor(o: {
 export function originReminder(origin: NonNullable<SessionState["sessionOrigin"]>, agentId: string): string {
 	const lines: string[] = [];
 	if (origin.kind === "fork") {
-		const from = origin.parentAgentId ? `parent session ${origin.parentAgentId}` : "a parent session";
 		lines.push(
-			`You are a new session (${agentId}) forked via /spawn from ${from} ` +
-				`at this point in the conversation. Context above this point is shared with the parent; ` +
-				`from here the two diverge independently.`,
+			`You are a new session (${agentId}), forked via /spawn from another session ` +
+				`at this point in the conversation. Everything above this point is shared with that session; ` +
+				`from here the two diverge. You are a separate session, not a subagent of it.`,
 		);
 	} else if (origin.kind === "resume") {
 		lines.push(

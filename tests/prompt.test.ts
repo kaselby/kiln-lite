@@ -120,7 +120,7 @@ test("start note: a session with a parent is told to report to it, however it wa
 	// A /spawn fork has no parent link of its own: fork note, no parent line.
 	const fork = note({ ...base, forked: true }) ?? "";
 	assert.match(fork, /forked via \/spawn/);
-	assert.doesNotMatch(fork, /subagent/);
+	assert.doesNotMatch(fork, /Send your results/);
 	// Reload: same process, already oriented.
 	assert.equal(note({ ...base, reason: "reload", parent: "lead-grey-reef" }), null);
 });
