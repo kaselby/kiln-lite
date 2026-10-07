@@ -91,6 +91,8 @@ one:
 
 - **agent**: an agent folder under `$KL_AGENTS_DIR` with an `agent.yml`.
   The tool's description lists them (up to 15, with descriptions).
+  Optional: without it, the default agent (`$KL_DEFAULT_AGENT`, else
+  `default_agent` in `config.yml`, else `worker`).
 - **prompt**: the child's first message. kl puts a line before it saying
   who launched it and to send results with the `message` tool, to the
   parent's name.

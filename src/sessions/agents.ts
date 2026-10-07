@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 
 import yaml from "js-yaml";
 
+import { readYamlMapping } from "../../extensions/kiln-lite/config.ts";
 import { klRoot } from "./paths.ts";
 
 export interface AgentInfo {
@@ -25,11 +26,43 @@ export function agentsDir(): string {
 
 const AGENT_DIR_NAME = /^[a-z][a-z0-9_]*$/;
 
+/** The agent `kl run` and the subagent tool use when none is named. */
+export const DEFAULT_AGENT = "worker";
+
+/**
+ * Default agent name: $KL_DEFAULT_AGENT, else `default_agent:` in
+ * <kl root>/config.yml, else "worker". Only the name: the agent may not be
+ * installed. Throws on a name outside the agent-name grammar.
+ */
+export function defaultAgentName(root = klRoot()): string {
+	const fromEnv = process.env.KL_DEFAULT_AGENT?.trim();
+	const fromConfig = readYamlMapping(join(root, "config.yml"), "kl config.yml", () => {})?.default_agent;
+	const [name, source] = fromEnv
+		? [fromEnv, "KL_DEFAULT_AGENT"]
+		: fromConfig !== undefined && fromConfig !== null
+			? [String(fromConfig).trim(), "config.yml default_agent"]
+			: [DEFAULT_AGENT, ""];
+	if (!AGENT_DIR_NAME.test(name)) {
+		throw new Error(`${source} '${name}' is not an agent name (lowercase letter, then [a-z0-9_])`);
+	}
+	return name;
+}
+
 /** Home of the installed agent `name`, or null. */
 export function agentHome(name: string): string | null {
 	if (!AGENT_DIR_NAME.test(name)) return null;
 	const home = join(agentsDir(), name);
 	return existsSync(join(home, "agent.yml")) ? home : null;
+}
+
+/** The subagent tool's pick: `name`, else the default agent; must be installed. Throws otherwise. */
+export function resolveAgent(name?: string): { name: string; home: string } {
+	const picked = name ?? defaultAgentName();
+	const home = agentHome(picked);
+	if (home) return { name: picked, home };
+	const installed = listAgents().map((a) => a.name).join(", ") || "(none)";
+	const which = name === undefined ? "default agent" : "installed agent";
+	throw new Error(`no ${which} '${picked}'. Installed: ${installed}`);
 }
 
 export function listAgents(): AgentInfo[] {

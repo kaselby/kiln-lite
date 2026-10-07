@@ -72,8 +72,9 @@ tried 3 times, after which the error is kept and shown by `list`.
 
 ## subagent
 
-`{agent, prompt, wait?}`. Starts a new session of an installed agent (the
-tool description lists up to 15 of them), in its own tmux session, as a
+`{agent?, prompt, wait?}`. Starts a new session of an installed agent (the
+tool description lists up to 15 of them, and names the default agent used
+when `agent` is omitted; see [config.md](config.md) `default_agent`), in its own tmux session, as a
 child of this one, in this session's working directory. Its first message
 is `prompt`, after a line telling it who launched it and to send results
 back with the `message` tool.

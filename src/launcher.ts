@@ -7,6 +7,7 @@
  * ~/.kl/config.yml + agent.yml the extension reads).
  *
  *   tsx src/launcher.ts plan --home <agent home> [--resume] [--] [pi args...]
+ *   tsx src/launcher.ts default-agent    (prints the default agent's name)
  *
  * Effects: creates <kl root>/pi on first use (ensureKlPiDir) and (re)writes
  * the agent's skill stub, <kl root>/pi/skill-stubs/<name>. Warnings go to
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import { loadConfig, resolveKlRoot, THINKING_LEVELS } from "../extensions/kiln-lite/config.ts";
 import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
+import { defaultAgentName } from "./sessions/agents.ts";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CORE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "index.ts");
@@ -257,8 +259,18 @@ function main(argv: string[]): number {
 		process.stdout.write(`${dir}\n`);
 		return 0;
 	}
+	if (cmd === "default-agent") {
+		// bin/kl with no <agent>: the same resolution the subagent tool uses.
+		try {
+			process.stdout.write(`${defaultAgentName()}\n`);
+			return 0;
+		} catch (err) {
+			process.stderr.write(`kl: ${(err as Error).message}\n`);
+			return 1;
+		}
+	}
 	if (cmd !== "plan") {
-		process.stderr.write("usage: launcher.ts plan --home <agent home> [--resume] [--] [pi args...]\n");
+		process.stderr.write("usage: launcher.ts plan --home <agent home> [--resume] [--] [pi args...] | default-agent | pi-dir\n");
 		return 2;
 	}
 	let agentHome: string | undefined;

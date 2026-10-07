@@ -91,6 +91,7 @@ stderr and in the session's UI.
 | `timestamps` | both | on | `false`, `true`, or a mapping (below) |
 | `session_state_interval` | both | `15` | tool calls between `[Session state]` lines; `0` turns them off |
 | `user_name` | config.yml only | `user` | see [config.md](config.md) |
+| `default_agent` | config.yml only | `worker` | see [config.md](config.md) |
 
 **Paths.** `prompt.identity` and `prompt.extra_sections[].path` are
 relative to the folder of the file that sets them, so a global section can

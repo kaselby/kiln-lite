@@ -50,8 +50,11 @@ own tmux session and attaches to it.
 - `<agent>` must be the first argument; a word in that spot that matches
   `[a-z][a-z0-9_]*` is always taken as an agent name and is an error if no
   such agent exists. An agent is a folder with an `agent.yml`; a folder
-  without one is an error. With no `<agent>`: `$AGENT_HOME` (any existing
-  folder), else `$KL_AGENTS_DIR/agent`, which needs an `agent.yml` too.
+  without one is an error. With no `<agent>`: the default agent,
+  `$KL_DEFAULT_AGENT`, else `default_agent` in `config.yml`, else `worker`
+  (which `install.sh` creates). If it isn't installed, kl says so and
+  points at `kl init <name>`. `$AGENT_HOME` plays no part, so a bare
+  `kl run` from inside a session doesn't start another of the same agent.
 - `-d`, `--detach`: don't attach; print the new name on stdout
   (`name=$(kl run reviewer -d --prompt-file brief.md)`).
 - `--prompt-file F`: the first message, read from a file and passed to Pi
@@ -170,7 +173,7 @@ kl reads:
 |---|---|
 | `KL_ROOT` | kl root (default `~/.kl`) |
 | `KL_AGENTS_DIR` | where agents live (default `<kl root>/agents`) |
-| `AGENT_HOME` | agent folder for `kl run` with no `<agent>` |
+| `KL_DEFAULT_AGENT` | the agent for `kl`/`kl run` with no `<agent>` and the `subagent` tool with no `agent` (overrides `default_agent` in config.yml; default `worker`) |
 | `KL_PI` | pi binary (default: the repo's `node_modules/.bin/pi`, else `pi` on PATH) |
 | `KL_USER` | your name on messages sent from your shell |
 | `KL_TMUX_SOCKET` | run every tmux call as `tmux -L <socket>`, for isolated test runs |

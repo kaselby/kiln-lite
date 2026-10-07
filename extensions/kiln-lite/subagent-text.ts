@@ -5,12 +5,13 @@ import type { AgentInfo } from "../../src/sessions/agents.ts";
 const AGENT_LIST_CAP = 15;
 
 /** Tool description; the installed-agent list is read once, at load. Pure apart from `agents`. */
-export function buildDescription(agents: AgentInfo[]): string {
+export function buildDescription(agents: AgentInfo[], defaultAgent: string): string {
 	const lines = [
 		"Launch a subagent: a new session of an installed kl agent, running on its own in tmux, as your child.",
 		"It returns the child's session name at once. The child reports back with the message tool; its message arrives in your inbox like any other.",
 		"wait=true blocks until a message from the child arrives, the child goes idle, or it exits (the user can interrupt).",
 		"Children are stopped when your session ends; their transcripts stay resumable.",
+		`Without \`agent\`, it launches the default agent: ${defaultAgent}.`,
 		"",
 	];
 	if (agents.length === 0) {

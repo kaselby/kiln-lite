@@ -17,7 +17,8 @@ allowed to spawn - if so follow those guidelines.
 ## Finding out what's there
 
 - `kl agents` lists the installed agents with their descriptions. The
-  `subagent` tool's description lists them too.
+  `subagent` tool's description lists them too, and names the default
+  agent it starts when you don't give one.
 - The `sessions` tool shows recent sessions as parent/child trees: which
   are running, busy or idle, and what each is doing (its plan goal or
   status). Give it a name for one session in full: its plan, inbox, working

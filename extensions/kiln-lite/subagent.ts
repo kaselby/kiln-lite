@@ -19,7 +19,7 @@ import { Type } from "@sinclair/typebox";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
-import { agentHome, listAgents } from "../../src/sessions/agents.ts";
+import { defaultAgentName, listAgents, resolveAgent } from "../../src/sessions/agents.ts";
 import { buildDescription, childPrompt, messageFrom } from "./subagent-text.ts";
 import { launchNew } from "../../src/sessions/launch.ts";
 import { leaseIsLive, liveLease, readLease, type Lease } from "../../src/sessions/lease.ts";
@@ -71,14 +71,25 @@ export function stopChildren(parentUuid: string): string[] {
 	return out;
 }
 
+/** The default agent's name for the tool description, or why there isn't one. */
+function describeDefault(): string {
+	try {
+		return defaultAgentName();
+	} catch (err) {
+		return `(none: ${(err as Error).message})`;
+	}
+}
+
 function buildSubagentTool(deps: SubagentDeps) {
 	return defineTool({
 		name: "subagent",
 		label: "Subagent",
-		description: buildDescription(listAgents()),
+		description: buildDescription(listAgents(), describeDefault()),
 		promptSnippet: "Launch a child session of an installed agent; it reports back by message.",
 		parameters: Type.Object({
-			agent: Type.String({ description: "Installed agent name (see the list in this tool's description)." }),
+			agent: Type.Optional(
+				Type.String({ description: "Installed agent name (see the list in this tool's description). Omit for the default agent." }),
+			),
 			prompt: Type.String({ description: "The child's first message: what to do and what to send back." }),
 			wait: Type.Optional(
 				Type.Boolean({ description: "Block until the child messages you, goes idle, or exits. Default false." }),
@@ -87,10 +98,11 @@ function buildSubagentTool(deps: SubagentDeps) {
 		async execute(_id, params, signal): Promise<AgentToolResult<unknown>> {
 			const self = deps.getSelf();
 			if (!self) throw new Error("subagent: session not initialised");
-			const home = agentHome(params.agent);
-			if (!home) {
-				const names = listAgents().map((a) => a.name);
-				throw new Error(`subagent: no installed agent '${params.agent}'. Installed: ${names.join(", ") || "(none)"}`);
+			let agent: string, home: string;
+			try {
+				({ name: agent, home } = resolveAgent(params.agent));
+			} catch (err) {
+				throw new Error(`subagent: ${(err as Error).message}`);
 			}
 			const warnings: string[] = [];
 			const startedAt = Date.now();
@@ -104,7 +116,7 @@ function buildSubagentTool(deps: SubagentDeps) {
 			});
 			const warnText = warnings.length ? `\n${warnings.join("\n")}` : "";
 			if (!params.wait) {
-				return text(`Launched subagent ${name} (agent ${params.agent}). It will message you when done.${warnText}`);
+				return text(`Launched subagent ${name} (agent ${agent}). It will message you when done.${warnText}`);
 			}
 			const why = await waitForChild({ self, name, seen, startedAt, signal });
 			return text(`Subagent ${name}: ${why}${warnText}`);

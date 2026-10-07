@@ -106,11 +106,15 @@ key (`prompt:` and `external:` merge one level down). The keys and their default
 `prompt.extra_sections` paths here are relative to the kl folder; a
 `cleanup` path is always relative to the agent folder.
 
-One key belongs only here:
+Two keys belong only here:
 
 - **`user_name`** (default `user`): the sender name on messages you send
   with `kl message` from your own shell. Letters, digits, `_`, `.` and `-`,
   up to 64 characters. `$KL_USER` overrides it.
+- **`default_agent`** (default `worker`): the agent that bare `kl`,
+  `kl run` with no `<agent>`, and the `subagent` tool with no `agent`
+  start. An agent name (`[a-z][a-z0-9_]*`); anything else is an error.
+  `$KL_DEFAULT_AGENT` overrides it.
 
 ```yaml
 user_name: sam

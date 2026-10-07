@@ -11,13 +11,14 @@ Node 20+, tmux, and Pi 1.0.3 or newer (`@earendil-works/pi-coding-agent`).
 ## install.sh
 
 ```bash
-./install.sh [--no-starter]
+./install.sh
 ```
 
 It runs `npm install`, then `npm link`, which puts `kl` on PATH. It removes
-any global `pi install` of kiln-lite, and creates a starter agent at
-`$KL_AGENTS_DIR/agent` (`kl init agent`) unless one exists or you pass
-`--no-starter`. Running it again is safe.
+any global `pi install` of kiln-lite, and creates the default agent,
+`worker`, at `$KL_AGENTS_DIR/worker` (`kl init worker` plus a description)
+unless that folder exists. The worker is a plain agent: Pi's default
+prompt, tools and skills, plus kl. Running it again is safe.
 
 kl loads its extension with `pi -e` on every launch. It is not installed
 into Pi, so plain `pi` stays as it was.

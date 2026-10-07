@@ -22,7 +22,7 @@ Requires Pi 1.0.3 or newer, Node 20+, and tmux.
 
 ```bash
 git clone <this repo> ~/Git/kiln-lite && cd ~/Git/kiln-lite
-./install.sh          # npm install, npm link (puts kl on PATH), starter agent
+./install.sh          # npm install, npm link (puts kl on PATH), the default `worker` agent
 ```
 
 `kl install <pkg>` installs a Pi package for every kl agent (into the kl Pi
