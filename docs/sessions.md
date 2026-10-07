@@ -32,10 +32,9 @@ running.
 
 ## Starting
 
-**`kl run`** draws a name, runs the agent's
-[pre-launch hook](agents.md#hooks), and starts pi in a detached tmux
-session with that name in the current directory, then attaches. kl builds
-the pi command line from the agent folder: its extensions, its skills, its
+**`kl run`** draws a name and starts pi in a detached tmux session with
+that name in the current directory, then attaches. kl builds the pi
+command line from the agent folder: its extensions, its skills, its
 `model` and `thinking`, and `-a` so pi doesn't stop to ask whether to
 trust the directory. Your own arguments come last.
 
@@ -69,8 +68,7 @@ asks before resuming a stopped one. Starting it again:
   them from the transcript, so a `/model` change sticks);
 - rereads config, extensions and prompt files from the agent folder as it
   is now;
-- runs the pre-launch hook, and waits up to 20 s for the new process to
-  write its lease;
+- waits up to 20 s for the new process to write its lease;
 - gives the first turn a hidden note that the session was resumed and time
   may have passed.
 

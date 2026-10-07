@@ -23,7 +23,6 @@ agent.
 | `IDENTITY.md` | identity prompt, used when `prompt.identity` isn't set |
 | `extensions/` | the agent's own Pi extensions |
 | `skills/` | the agent's own skills; see [skills.md](skills.md) |
-| `hooks/pre-launch` | optional executable run before every launch |
 
 Anything else (memory files, prompts, scratch space) is the agent's own
 business; kl only reads what `agent.yml` points at. Transcripts, inboxes
@@ -203,13 +202,3 @@ well; see [install.md](install.md).
 [`examples/extensions/guardrails.ts`](../examples/extensions/guardrails.ts)
 is an example agent extension, and [`example/`](../example/) is a larger
 agent setup.
-
-## Hooks
-
-If `hooks/pre-launch` exists and is executable, kl runs it before starting
-pi: for a new session (`kl run`, the `subagent` tool, `/spawn`) and when
-`kl resume` or `kl attach` starts a session that isn't running. It runs in
-the session's working directory with `AGENT_HOME`, `AGENT_NAME` (the agent)
-and `KL_NAME` (the session name about to be used) set. A non-zero exit
-cancels the launch and kl prints the hook's output. kl holds the name lock
-while the hook runs, so it has a 30 s timeout; keep it quick.

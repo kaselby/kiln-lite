@@ -65,9 +65,9 @@ It rewrites each `agent.yml` in place, keeping the original as
 - `{summary_path}` in `cleanup` becomes plain wording.
 
 `SYSTEM.md` is renamed `IDENTITY.md` when it's the identity file in use.
-`harness/pre-launch` moves to `hooks/pre-launch`. With no arguments it also
-moves the same prompt keys in `<kl root>/config.yml` (backup
-`config.yml.bak`). It prints one line per key.
+An old `harness/pre-launch` is left in place with a warning: kl has no
+pre-launch hook. With no arguments it also moves the same prompt keys in
+`<kl root>/config.yml` (backup `config.yml.bak`). It prints one line per key.
 
 ## Uninstall
 

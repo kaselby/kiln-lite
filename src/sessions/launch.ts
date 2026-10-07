@@ -4,13 +4,13 @@
  *
  * wake(uuid): wake lock → re-check lease → reserve a name (the session's
  * last name unless something live holds it) → `tmux new-session -d` with
- * `pi --session <transcript>`, after the agent's pre-launch hook → hold the
+ * `pi --session <transcript>` → hold the
  * lock until the new process has written its lease. Pi restores the
  * session's latest model and thinking level from the transcript; the rest
  * is re-derived from home + agent.yml.
  */
 
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { plan, REPO_ROOT } from "../launcher.ts";
@@ -66,41 +66,8 @@ export interface LaunchOptions {
 	warn?: (msg: string) => void;
 }
 
-/** <home>/hooks/pre-launch: run (if executable) by launchNew and wake before pi starts. */
-export function preLaunchHookPath(home: string): string {
-	return join(home, "hooks", "pre-launch");
-}
-
 /**
- * Run the agent's pre-launch hook, if there is an executable one, with
- * AGENT_HOME, AGENT_NAME (the agent) and KL_NAME (the session name just
- * drawn). A non-zero exit rejects the launch: throws with the hook's output.
- * It runs under names.lock (the name isn't held until tmux has it), so it
- * has a 30 s timeout.
- */
-export function runPreLaunchHook(home: string, agentName: string, name: string, cwd: string): void {
-	const hook = preLaunchHookPath(home);
-	try {
-		accessSync(hook, constants.X_OK);
-	} catch {
-		return;
-	}
-	const r = spawnSync(hook, [], {
-		cwd,
-		encoding: "utf8",
-		timeout: 30000,
-		env: { ...process.env, AGENT_HOME: home, AGENT_NAME: agentName, KL_NAME: name },
-	});
-	if (r.error) throw new Error(`pre-launch hook ${hook} failed: ${r.error.message}`);
-	if (r.status !== 0) {
-		const out = `${r.stderr ?? ""}${r.stdout ?? ""}`.trim();
-		const why = r.signal ? `killed by ${r.signal}` : `exit ${r.status}`;
-		throw new Error(`pre-launch hook rejected the launch (${why})${out ? `: ${out}` : ""}`);
-	}
-}
-
-/**
- * `kl run` and the subagent tool: draw a name, run the pre-launch hook, and
+ * `kl run` and the subagent tool: draw a name and
  * start pi in a detached tmux session named after it. Returns the name.
  */
 export function launchNew(opts: LaunchOptions): string {
@@ -111,7 +78,6 @@ export function launchNew(opts: LaunchOptions): string {
 	return reserveName(
 		(state) => drawName({ agent: p.agentName, held: state.held, recent: state.recent }),
 		(name) => {
-			runPreLaunchHook(opts.home, p.agentName, name, cwd);
 			const env = { ...baseEnv(opts.home, p.piDir, name), KL_PARENT: opts.parent };
 			const r = tmux(["new-session", "-d", "-s", name, "-c", cwd, ...tmuxEnv(env), pi, ...p.args]);
 			if (!r.ok) throw new Error(`tmux new-session failed for ${name}: ${r.stderr.trim()}`);
@@ -190,7 +156,6 @@ function startProcess(entry: RegistryEntry, root: string): string {
 	return reserveName(
 		(state) => (state.held.has(entry.name) ? drawName({ agent: entry.agent, held: state.held, recent: state.recent }) : entry.name),
 		(name) => {
-			runPreLaunchHook(entry.home, p.agentName, name, cwd);
 			const r = tmux(["new-session", "-d", "-s", name, "-c", cwd, ...tmuxEnv(baseEnv(entry.home, p.piDir, name)), pi, ...p.args]);
 			if (!r.ok) throw new Error(`tmux new-session failed for ${name}: ${r.stderr.trim()}`);
 			return name;

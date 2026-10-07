@@ -261,7 +261,6 @@ cmd_run() {
     fi
     local agent_home
     agent_home="$(resolve_agent_home "$explicit_name")"
-    # The pre-launch hook (<home>/hooks/pre-launch) runs in launchNew.
     sessions_cli run --home "$agent_home" "$@"
 }
 
@@ -551,7 +550,7 @@ cmd_doctor() {
             [ -d "$home/skills" ] && say_ok "skills/ present"
             [ -d "$home/extensions" ] && say_ok "extensions/ present"
             if [ -e "$home/harness/pre-launch" ]; then
-                say_warn "harness/pre-launch is no longer run — kl migrate moves it to hooks/pre-launch"
+                say_warn "harness/pre-launch is no longer run — kl has no pre-launch hook"
             fi
             if [ -f "$home/harness/index.ts" ]; then
                 say_warn "harness/index.ts is no longer loaded — move it to extensions/"

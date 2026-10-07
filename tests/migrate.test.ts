@@ -60,7 +60,7 @@ test("migrate: context_injection → prompt.extra_sections, drops dead keys, rew
 	assert.match(out, /# top comment\nname: rev/);
 	assert.match(out, /# keep me\nmodel: x\/y/);
 	assert.match(out, /memory\/sessions\/<date>-<session name>\.md/);
-	assert.ok(existsSync(join(home, "hooks", "pre-launch")));
+	assert.ok(r.warnings.some((w) => w.includes("no pre-launch hook")));
 	assert.ok(r.warnings.some((w) => w.includes("dynamic dropped")));
 	assert.ok(r.warnings.some((w) => w.includes("{today}")));
 	assert.ok(r.warnings.some((w) => w.includes("GONE.md")));

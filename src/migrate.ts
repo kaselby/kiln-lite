@@ -13,8 +13,8 @@
  *   startup, tools_dir, sessions_dir, inbox_dir → removed (warn)
  *   cleanup → {summary_path} becomes memory/sessions/<date>-<session name>.md
  *             wording; any other {placeholder} warns (kl expands none)
- * Files: harness/pre-launch → hooks/pre-launch; SYSTEM.md → IDENTITY.md when
- * it is the identity file in use.
+ * Files: SYSTEM.md → IDENTITY.md when it is the identity file in use; a
+ * harness/pre-launch is left in place with a warning (kl has no pre-launch hook).
  * config.yml (config.yml.bak first): the same prompt keys move into `prompt:`.
  *
  * Edits are line-based so comments elsewhere survive: a removed key takes
@@ -22,15 +22,15 @@
  * Prints one line per key saying what it became.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import yaml from "js-yaml";
 
 import { DEFAULT_IDENTITY_FILE, RESERVED_SECTIONS, SECTION_NAME, resolveKlRoot } from "../extensions/kiln-lite/config.ts";
 import { agentsDir, listAgents } from "./sessions/agents.ts";
 
 const DROPPED: Record<string, string> = {
-	startup: "kl runs no startup commands; use <home>/hooks/pre-launch or an extension",
+	startup: "kl runs no startup commands; use an extension",
 	tools_dir: "kl no longer discovers shell tools",
 	sessions_dir: "session ids live in the kl registry; summaries go to memory/sessions/",
 	inbox_dir: "inboxes live at <kl root>/run/inbox/<uuid>/",
@@ -421,18 +421,7 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean; klRoot?: 
 	}
 
 	const oldHook = join(home, "harness", "pre-launch");
-	if (existsSync(oldHook)) {
-		const newHook = join(home, "hooks", "pre-launch");
-		if (existsSync(newHook)) res.warnings.push(`both ${oldHook} and ${newHook} exist; left both, only hooks/pre-launch runs`);
-		else {
-			if (!opts.dryRun) {
-				mkdirSync(dirname(newHook), { recursive: true });
-				renameSync(oldHook, newHook);
-			}
-			res.changed = true;
-			res.report.push("harness/pre-launch → hooks/pre-launch");
-		}
-	}
+	if (existsSync(oldHook)) res.warnings.push(`${oldHook} is no longer run: kl has no pre-launch hook; use an extension`);
 
 	if (!res.changed && res.report.length === 0) res.report.push("nothing to migrate");
 	return res;
