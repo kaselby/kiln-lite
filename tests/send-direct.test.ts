@@ -225,6 +225,13 @@ describe("handlePublish: channel history", () => {
 		assert.doesNotMatch(text, new RegExp(`^to: ${UB}$`, "m"));
 	});
 
+	it("a subscriber whose folder was deleted gets nothing, and the folder isn't recreated", async () => {
+		daemon.state.knownSessions.upsert({ ...record(UC), inbox_path: inboxDir(UC, dir) });
+		daemon.state.channels.subscribe("lobby", UC);
+		await handlePublish(proto.publish("lobby", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
+		assert.equal(existsSync(join(dir, "run", UC)), false);
+	});
+
 	it("history.jsonl records from: as the sender's name, plus from_session for a kl session", async () => {
 		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
 		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", "normal", who), daemon as never);

@@ -189,11 +189,9 @@ tools, scripts you invoke via bash):
 - **Mid-turn inbox pings piggy-back on tool results.** A turn with no tool
   calls gets no ping. The message stays pending; the first tool call on
   the next turn surfaces it.
-- **Dead-peer DMs fall back to last-known inbox.** If you DM a session
-  that registered once and exited without clean deregister, the daemon
-  uses the stored `inbox_path` from `known-sessions.json`. Usually this
-  works; if the recipient has since deleted their inbox dir, the write
-  silently fails.
+- **A stopped session still gets mail.** DMs and channel posts to a
+  session that isn't running are parked in its inbox (`run/<uuid>/inbox/`)
+  as long as its folder exists. Delete the folder and nothing reaches it.
 - **Subscriptions don't survive `deregister`.** The daemon removes a
   session's subscription file when the session ends. If you want persistent
   subs per *agent* across sessions, re-subscribe at startup (e.g. via an

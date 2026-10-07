@@ -196,10 +196,10 @@ export async function handlePublish(
     // like a DM, and reads it when it is resumed.
     let delivered = 0;
     for (const sub_id of subscribers) {
-        const dir = daemon.state.presence.get(sub_id)?.inbox_path
-            ?? (UUID_RE.test(sub_id) && entryExists(sub_id, daemon.config.klRoot) ? inboxDir(sub_id, daemon.config.klRoot) : undefined)
-            ?? daemon.state.knownSessions.lookup(sub_id)?.inbox_path;
-        if (!dir) continue; // no running session, registry entry or known inbox
+        // The inbox is fixed by the UUID; a session with no folder (deleted,
+        // or never registered) gets nothing, so a post can't recreate it.
+        if (!UUID_RE.test(sub_id) || !entryExists(sub_id, daemon.config.klRoot)) continue;
+        const dir = inboxDir(sub_id, daemon.config.klRoot);
         writeInboxMessage({
             dir,
             recipient: sub_id,
