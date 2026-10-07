@@ -20,7 +20,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 
 import { defaultAgentName, listAgents, resolveAgent } from "../../src/sessions/agents.ts";
-import { buildDescription, childPrompt, messageFrom } from "./subagent-text.ts";
+import { buildDescription, messageFrom } from "./subagent-text.ts";
 import { launchNew } from "../../src/sessions/launch.ts";
 import { leaseIsLive, liveLease, readLease, type Lease } from "../../src/sessions/lease.ts";
 import { listEntries, readEntry } from "../../src/sessions/registry.ts";
@@ -109,7 +109,7 @@ function buildSubagentTool(deps: SubagentDeps) {
 			const seen = new Set(listMd(self.inboxDir));
 			const name = launchNew({
 				home,
-				piArgs: [childPrompt(self.name, self.uuid, params.prompt)],
+				piArgs: [params.prompt],
 				parent: self.uuid,
 				cwd: self.cwd,
 				warn: (m) => warnings.push(m),
@@ -261,7 +261,6 @@ function installNudge(pi: ExtensionAPI, deps: SubagentDeps): void {
 	});
 }
 
-/** Parent handles (uuid, registry name, live lease name), or null if we have no parent. */
 /** Did a send to `to` reach the parent? Its known handles, else what the daemon's resolver picks (agent name, name@prefix). */
 function addressesParent(to: string, parent: { uuid: string; handles: Set<string> }): boolean {
 	return parent.handles.has(to) || resolvesTo(to, parent.uuid);
@@ -270,9 +269,12 @@ function addressesParent(to: string, parent: { uuid: string; handles: Set<string
 function parentOf(deps: SubagentDeps): { uuid: string; name: string; handles: Set<string> } | null {
 	const self = deps.getSelf();
 	if (!self) return null;
-	const mine = readEntry(self.uuid);
-	const parentUuid = mine?.parent;
-	if (!parentUuid) return null;
+	const parentUuid = readEntry(self.uuid)?.parent;
+	return parentUuid ? parentHandles(parentUuid) : null;
+}
+
+/** A parent's handles (uuid, registry name, live lease name) and its current name. */
+export function parentHandles(parentUuid: string): { uuid: string; name: string; handles: Set<string> } {
 	const handles = new Set<string>([parentUuid]);
 	const entry = readEntry(parentUuid);
 	if (entry) handles.add(entry.name);

@@ -72,7 +72,7 @@ asks before resuming a stopped one. Starting it again:
   is now;
 - waits up to 20 s for the new process to write its lease;
 - gives the first turn a hidden note that the session was resumed and time
-  may have passed.
+  may have passed (and, for a session with a parent, who to report to).
 
 A session that never exchanged a message has no transcript and can't be
 resumed. Mail that arrived while a session was down is delivered when it
@@ -93,9 +93,7 @@ one:
   The tool's description lists them (up to 15, with descriptions).
   Optional: without it, the default agent (`$KL_DEFAULT_AGENT`, else
   `default_agent` in `config.yml`, else `worker`).
-- **prompt**: the child's first message. kl puts a line before it saying
-  who launched it and to send results with the `message` tool, to the
-  parent's name.
+- **prompt**: the child's first message, passed as is.
 - **wait** (default `false`): return at once with the child's name, or
   block until a message from the child arrives in the parent's inbox, the
   child goes idle after working, or it exits. Interrupting stops the wait;
@@ -104,6 +102,12 @@ one:
 The child starts like `kl run --detach`, in the parent's working
 directory, with the parent's UUID as its parent. `kl run --parent
 <session>` sets the same link by hand.
+
+**A session with a parent is a subagent**, whichever way it was launched.
+Its first turn gets a hidden note naming the parent and telling it to send
+results with the `message` tool, to the parent's name, and its `<session>`
+prompt section has a `parent:` line. Both use the parent's name at the
+time the session starts.
 
 **Results come back only as messages.** The tool returns the child's name,
 never its output. If a child with a parent finishes a turn without

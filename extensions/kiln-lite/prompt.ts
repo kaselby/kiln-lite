@@ -18,7 +18,8 @@
  *   <project_context> Pi: AGENTS.md etc. (`external.project_context: false` empties it)
  *   <skills>          Pi
  *   <cwd>             Pi (always rendered)
- *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
+ *   <session>         kl: agent, session id, parent (if any), model, home,
+ *                     inbox (no uuid, no cwd)
  *   <name>…           `prompt.extra_sections`
  *
  * The identity, baseline and extra sections (PromptParts) are read once, at
@@ -34,7 +35,7 @@ import { execSync } from "node:child_process";
 import { isAbsolute, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { AgentConfig, SectionEntry } from "./types.ts";
+import type { AgentConfig, SectionEntry, SessionState } from "./types.ts";
 
 /** Hard caps for `extra_sections` commands (carried over from context_injection). */
 export const SECTION_COMMAND_TIMEOUT_MS = 1000;
@@ -74,6 +75,8 @@ export interface PromptParts {
 export interface SessionInfo {
 	agentName: string;
 	sessionId: string;
+	/** The parent session's name, if this session has a parent (a subagent). */
+	parent?: string;
 	/** `provider/id`, or undefined if no model is selected. */
 	model?: string;
 	home: string;
@@ -239,10 +242,58 @@ export function renderSessionSection(info: SessionInfo): string {
 	return [
 		`agent: ${info.agentName}`,
 		`session: ${info.sessionId}`,
+		...(info.parent ? [`parent: ${info.parent}`] : []),
 		`model: ${info.model ?? "(none)"}`,
 		`home: ${info.home}`,
 		...(info.inbox ? [`inbox: ${info.inbox}`] : []),
 	].join("\n");
+}
+
+/**
+ * How this process started, for the one-time note; undefined means no note.
+ * `parent` is the parent session's name: a session with a parent link is a
+ * subagent, whatever launched it. Pure.
+ */
+export function sessionOriginFor(o: {
+	reason: string;
+	resumed: boolean;
+	forked: boolean;
+	parent?: string;
+}): SessionState["sessionOrigin"] {
+	if (o.reason === "reload") return undefined; // same session, same process: already oriented
+	let kind: "new" | "fork" | "resume" | undefined;
+	if (o.reason === "resume" || (o.reason === "startup" && o.resumed)) kind = "resume";
+	else if ((o.reason === "fork" || o.reason === "startup") && o.forked) kind = "fork";
+	if (o.parent) return { kind: kind ?? "new", subagentOf: o.parent };
+	return kind ? { kind } : undefined;
+}
+
+/**
+ * The one-time hidden note on a session's first turn: fork (/spawn) or resume
+ * orientation, plus the parent line for a session with a parent. Pure.
+ */
+export function originReminder(origin: NonNullable<SessionState["sessionOrigin"]>, agentId: string): string {
+	const lines: string[] = [];
+	if (origin.kind === "fork") {
+		const from = origin.parentAgentId ? `parent session ${origin.parentAgentId}` : "a parent session";
+		lines.push(
+			`You are a new session (${agentId}) forked via /spawn from ${from} ` +
+				`at this point in the conversation. Context above this point is shared with the parent; ` +
+				`from here the two diverge independently.`,
+		);
+	} else if (origin.kind === "resume") {
+		lines.push(
+			`This session was resumed via \`kl resume\` in a fresh process; ` +
+				`time may have passed since the last message. You continue as the same agent (${agentId}).`,
+		);
+	}
+	if (origin.subagentOf) {
+		lines.push(
+			`You are a subagent of ${origin.subagentOf}, launched by it. ` +
+				`Send your results with the message tool, to: "${origin.subagentOf}".`,
+		);
+	}
+	return `<system-reminder>${lines.join(" ")}</system-reminder>`;
 }
 
 /**

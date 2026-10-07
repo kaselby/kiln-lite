@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildDescription, childPrompt, messageFrom } from "../extensions/kiln-lite/subagent-text.ts";
+import { buildDescription, messageFrom } from "../extensions/kiln-lite/subagent-text.ts";
 import { spawnSync } from "node:child_process";
 
 import { agentHome, defaultAgentName, listAgents, resolveAgent } from "../src/sessions/agents.ts";
@@ -14,13 +14,6 @@ test("messageFrom reads the frontmatter from: line only", () => {
 	assert.equal(messageFrom("---\nid: x\nfrom: sam-red-fox\nsummary: hi\n---\nfrom: body\n"), "sam-red-fox");
 	assert.equal(messageFrom("---\nsummary: hi\n---\nfrom: body\n"), null);
 	assert.equal(messageFrom("no frontmatter"), null);
-});
-
-test("childPrompt names the parent and keeps the task verbatim", () => {
-	const p = childPrompt("lead-grey-reef", "0123abcd-1111", "do `x`\nthen y");
-	assert.match(p, /launched as a subagent by lead-grey-reef \(session 0123abcd-1111\)/);
-	assert.match(p, /to: "lead-grey-reef"/);
-	assert.ok(p.endsWith("\n\ndo `x`\nthen y"));
 });
 
 test("agents dir: listing, description first line, cap in the tool description", () => {
