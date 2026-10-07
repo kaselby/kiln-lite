@@ -144,11 +144,11 @@ it), `summary`, `body`. It is never trimmed.
 A Node process that routes messages and holds channel subscriptions. You
 don't start it. Anything that talks to it (a session starting up, `kl
 message send`, a scheduled wake) starts it if its socket doesn't answer,
-then waits up to 5 s for it. One runs per socket.
+then waits up to 5 s for it. One runs per kl root.
 
 | what | where |
 |---|---|
-| socket | `$XDG_RUNTIME_DIR/kiln-lite.sock`, else `/tmp/kiln-lite-<uid>.sock` (mode 600) |
+| socket | `<kl root>/daemon/kiln-lite.sock`, or `/tmp/kiln-lite-<hash of the kl root>.sock` if that path is too long for a socket (mode 600) |
 | pidfile | `<kl root>/daemon/daemon.pid` |
 | log | `<kl root>/daemon/daemon.log` |
 | sessions it has seen | `<kl root>/daemon/known-sessions.json` (entries older than 7 days dropped) |

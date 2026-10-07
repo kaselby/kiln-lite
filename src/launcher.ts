@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, resolveKlRoot, THINKING_LEVELS } from "../extensions/kiln-lite/config.ts";
 import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
 import { defaultAgentName } from "./sessions/agents.ts";
+import { socketPath } from "./sessions/paths.ts";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CORE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "index.ts");
@@ -269,8 +270,13 @@ function main(argv: string[]): number {
 			return 1;
 		}
 	}
+	if (cmd === "socket-path") {
+		// kl doctor: where the daemon's socket is for this kl root.
+		process.stdout.write(`${socketPath()}\n`);
+		return 0;
+	}
 	if (cmd !== "plan") {
-		process.stderr.write("usage: launcher.ts plan --home <agent home> [--resume] [--] [pi args...] | default-agent | pi-dir\n");
+		process.stderr.write("usage: launcher.ts plan --home <agent home> [--resume] [--] [pi args...] | default-agent | pi-dir | socket-path\n");
 		return 2;
 	}
 	let agentHome: string | undefined;

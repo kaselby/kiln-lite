@@ -177,7 +177,6 @@ kl reads:
 | `KL_PI` | pi binary (default: the repo's `node_modules/.bin/pi`, else `pi` on PATH) |
 | `KL_USER` | your name on messages sent from your shell |
 | `KL_TMUX_SOCKET` | run every tmux call as `tmux -L <socket>`, for isolated test runs |
-| `XDG_RUNTIME_DIR` | where the daemon's socket goes |
 | `SESSION_UUID` | set means "inside a kl session" (see above) |
 
 Inside a session, kl sets these for the agent and everything it runs:
@@ -191,6 +190,6 @@ Inside a session, kl sets these for the agent and everything it runs:
 | `KL_INBOX` | the session's inbox directory |
 | `PI_CODING_AGENT_DIR` | the kl Pi dir |
 
-kl also passes `KL_ROOT`, `KL_TMUX_SOCKET` and `XDG_RUNTIME_DIR` through
+kl also passes `KL_ROOT` and `KL_TMUX_SOCKET` through
 to the session, and sets `_KL`, `KL_NAME` and `KL_PARENT` for its own use
 at startup.

@@ -466,8 +466,8 @@ cmd_doctor() {
 
     # 4. Daemon
     echo "[daemon]"
-    local sock="${XDG_RUNTIME_DIR:-/tmp}/kiln-lite.sock"
-    [ -n "${XDG_RUNTIME_DIR:-}" ] || sock="/tmp/kiln-lite-$(id -u).sock"
+    local sock
+    sock="$("$(tsx_path)" "$REPO_ROOT/src/launcher.ts" socket-path)"
     echo "  socket     $sock"
     if [ -S "$sock" ]; then
         say_ok "socket file exists"

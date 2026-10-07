@@ -29,13 +29,13 @@ keys of the global `config.yml`. Per-agent settings are in
       wake.lock/            lock held while starting the stopped session
     names.lock/           lock held while drawing a name
   daemon/                 the messaging daemon's state and log
+    kiln-lite.sock          its socket
 ```
 
 `KL_ROOT` moves all of it; `$KL_AGENTS_DIR` moves just the agent folders.
-The daemon's socket isn't here: it's `$XDG_RUNTIME_DIR/kiln-lite.sock`, or
-`/tmp/kiln-lite-<uid>.sock` if that's unset. It doesn't follow `KL_ROOT`,
-so two kl folders on one machine share a daemon unless their
-`XDG_RUNTIME_DIR` differs.
+Each kl folder has its own daemon. If the socket's path would be too long
+for a Unix socket (104 bytes on macOS, 108 on Linux), it goes to
+`/tmp/kiln-lite-<hash of the kl folder>.sock` instead.
 
 ## What uses each part
 

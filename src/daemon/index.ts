@@ -40,7 +40,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { handlers } from "./handlers.ts";
-import { klRoot } from "../sessions/paths.ts";
+import { klRoot, socketPath } from "../sessions/paths.ts";
 import { cleanInboxes } from "./inbox-cleanup.ts";
 import * as proto from "./protocol.ts";
 import { reconcile } from "./reconcile.ts";
@@ -51,12 +51,6 @@ const INBOX_CLEANUP_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 1 day
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
-
-function defaultSocketPath(): string {
-    const runtime = process.env.XDG_RUNTIME_DIR;
-    if (runtime) return join(runtime, "kiln-lite.sock");
-    return `/tmp/kiln-lite-${process.getuid?.() ?? "nouid"}.sock`;
-}
 
 /** `<kl root>/daemon`, kl root = $KL_ROOT or ~/.kl (same rule as extensions/kiln-lite/config.ts resolveKlRoot). */
 function defaultStateDir(): string {
@@ -79,7 +73,7 @@ function loadConfig(overrides: Partial<DaemonConfig> = {}): DaemonConfig {
     const stateDir = overrides.stateDir ?? defaultStateDir();
     return {
         klRoot: overrides.klRoot ?? klRoot(),
-        socketPath: overrides.socketPath ?? defaultSocketPath(),
+        socketPath: overrides.socketPath ?? socketPath(overrides.klRoot ?? klRoot()),
         stateDir,
         pidfilePath: overrides.pidfilePath ?? join(stateDir, "daemon.pid"),
         channelsDir: overrides.channelsDir ?? join(stateDir, "channels"),
@@ -149,8 +143,8 @@ export class Daemon {
 
     async start(): Promise<void> {
         mkdirSync(this.config.stateDir, { recursive: true });
-        // The socket's dir ($XDG_RUNTIME_DIR or the fallback) may not exist yet
-        // on a fresh machine or in a sandbox; listen() would fail with EACCES.
+        // The socket's dir may not exist yet (a --socket elsewhere);
+        // listen() would fail with ENOENT.
         mkdirSync(dirname(this.config.socketPath), { recursive: true, mode: 0o700 });
         this.log.open();
 
@@ -454,8 +448,8 @@ function printUsage(): void {
             "Usage: node --import tsx src/daemon/index.ts [options]",
             "",
             "Options:",
-            "  --socket PATH      Unix socket path (default: $XDG_RUNTIME_DIR/kiln-lite.sock",
-            "                                       or /tmp/kiln-lite-<uid>.sock)",
+            "  --socket PATH      Unix socket path (default: $KL_ROOT/daemon/kiln-lite.sock,",
+            "                                       or /tmp/kiln-lite-<hash>.sock if that is too long)",
             "  --state-dir DIR    State directory (default: $KL_ROOT/daemon, KL_ROOT defaults to ~/.kl)",
             "  --foreground       Log to stdout as well as daemon.log",
             "  -h, --help         Show this help",
