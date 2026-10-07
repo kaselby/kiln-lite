@@ -11,8 +11,9 @@
  * `pi install` on this repo, undo it with `pi remove <repo path>`.
  *
  * agent.yml (a copy goes to agent.yml.bak first):
- *   system_prompt, harness_prompt, sections, project_context → inside `prompt:`
- *     (identity, include_kl_prompt, extra_sections, include_project_context).
+ *   system_prompt, harness_prompt, sections → inside `prompt:`
+ *     (identity, include_kl_prompt, extra_sections).
+ *   project_context → external.project_context
  *     system_prompt naming a missing file is dropped (warn); harness_prompt
  *     naming a file is dropped (warn), false becomes include_kl_prompt: false.
  *   context_injection → prompt.extra_sections ({name: slug of label, path}); `dynamic` dropped (warn)
@@ -43,8 +44,8 @@ const DROPPED: Record<string, string> = {
 };
 
 /** Top-level keys that now live inside `prompt:`. */
-const OLD_PROMPT_KEYS = ["system_prompt", "harness_prompt", "sections", "project_context"];
-const PROMPT_KEY_ORDER = ["identity", "include_kl_prompt", "include_appended_prompt", "include_project_context", "extra_sections"];
+const OLD_PROMPT_KEYS = ["system_prompt", "harness_prompt", "sections"];
+const PROMPT_KEY_ORDER = ["identity", "include_kl_prompt", "extra_sections"];
 const PROMPT_COMMENT = "# System prompt: identity file, which parts to include, extra sections.";
 
 /** null = remove the key (and the comment block above it); otherwise replace it with `lines`. */
@@ -95,16 +96,19 @@ function dumpKey(key: string, value: unknown): string[] {
 	return yaml.dump({ [key]: value }, { lineWidth: -1 }).replace(/\n$/, "").split("\n");
 }
 
-/** The commented `prompt:` example `kl init` writes (keep in step with bin/kl). */
+/** The commented `prompt:` and `external:` examples `kl init` writes (keep in step with bin/kl). */
 export const INIT_PROMPT_COMMENTS = [
 	"# prompt:",
 	"#   identity: IDENTITY.md          # the default; a missing or empty file gives the built-in identity",
 	"#   include_kl_prompt: true        # false drops kl's <harness> block (baseline, <tools>, <rules>)",
-	"#   include_appended_prompt: true  # false drops APPEND_SYSTEM.md / --append-system-prompt",
-	"#   include_project_context: true  # false drops AGENTS.md / CLAUDE.md",
 	"#   extra_sections:                # rendered once at session start, after <session>",
 	"#     - {name: notes, path: notes.md}",
 	'#     - {name: today, command: "date +%A"}',
+	"# external:                  # what the agent picks up from outside itself and kl",
+	"#   extensions: true         # base Pi's ~/.pi/agent/extensions",
+	"#   skills: true             # false: only the agent's skills/ (no base Pi, global, project or installed skills)",
+	"#   appended_prompt: true    # false drops APPEND_SYSTEM.md / --append-system-prompt",
+	"#   project_context: true    # false drops AGENTS.md / CLAUDE.md",
 ].join("\n");
 
 /**
@@ -191,10 +195,6 @@ function buildPromptBlock(
 					"To replace it, move that text into the identity file and set prompt.include_kl_prompt: false",
 			);
 		}
-	}
-	if ("project_context" in doc) {
-		moved.include_project_context = doc.project_context;
-		res.report.push("project_context → prompt.include_project_context");
 	}
 	if ("sections" in doc) {
 		if (Array.isArray(doc.sections)) {
@@ -385,6 +385,11 @@ export function migrateHome(homeArg: string, opts: { dryRun?: boolean; klRoot?: 
 			res.changed = true;
 			res.report.push(`SYSTEM.md → ${DEFAULT_IDENTITY_FILE}${identity ? ` (prompt.identity: ${identity})` : ""}`);
 		}
+	}
+
+	if ("project_context" in doc) {
+		edits.set("project_context", { lines: dumpKey("external", { project_context: doc.project_context }), keepComments: true });
+		res.report.push("project_context → external.project_context");
 	}
 
 	const remove = [...OLD_PROMPT_KEYS, "context_injection"].filter((k) => k in doc);

@@ -32,8 +32,7 @@ test("defaults: no files → name from dir, every prompt part on, default timest
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.equal(config.name, "scout");
 	assert.equal(config.prompt.include_kl_prompt, true);
-	assert.equal(config.prompt.include_appended_prompt, true);
-	assert.equal(config.prompt.include_project_context, true);
+	assert.deepEqual(config.external, { extensions: true, skills: true, appended_prompt: true, project_context: true });
 	assert.deepEqual(config.timestamps, DEFAULT_TIMESTAMPS);
 	assert.deepEqual(config.prompt.extra_sections, []);
 	assert.equal(config.prompt.identity, undefined);
@@ -56,15 +55,13 @@ test("prompt: merges key by key across config.yml and agent.yml", () => {
 	const { klRoot, agentHome } = scratch();
 	writeFileSync(
 		join(klRoot, "config.yml"),
-		"prompt:\n  identity: house.md\n  include_project_context: false\n  include_appended_prompt: false\n  extra_sections:\n    - {name: house, path: house.md}\n",
+		"prompt:\n  identity: house.md\n  include_kl_prompt: false\n  extra_sections:\n    - {name: house, path: house.md}\n",
 	);
-	writeFileSync(join(agentHome, "agent.yml"), "prompt:\n  include_kl_prompt: false\n  include_appended_prompt: true\n");
+	writeFileSync(join(agentHome, "agent.yml"), "prompt:\n  include_kl_prompt: true\n");
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.deepEqual(warnings, []);
 	assert.equal(config.prompt.identity, "house.md", "global identity kept");
-	assert.equal(config.prompt.include_project_context, false, "global switch kept");
-	assert.equal(config.prompt.include_appended_prompt, true, "agent overrides one switch");
-	assert.equal(config.prompt.include_kl_prompt, false, "agent sets another");
+	assert.equal(config.prompt.include_kl_prompt, true, "agent overrides a switch");
 	assert.deepEqual(config.prompt.extra_sections.map((s) => s.name), ["house"], "global sections kept when the agent sets none");
 });
 
@@ -122,8 +119,23 @@ test("the old top-level prompt keys get the plain unknown-key warning and do not
 	assert.equal(warnings.length, 4);
 	assert.equal(config.prompt.identity, undefined, "SYSTEM.md is not picked up");
 	assert.equal(config.prompt.include_kl_prompt, true);
-	assert.equal(config.prompt.include_project_context, true);
+	assert.equal(config.external.project_context, true);
 	assert.deepEqual(config.prompt.extra_sections, []);
+});
+
+test("external: merges key by key across config.yml and agent.yml; old key names are unknown", () => {
+	const { klRoot, agentHome } = scratch();
+	writeFileSync(join(klRoot, "config.yml"), "external:\n  extensions: false\n  project_context: false\n  appended_prompt: false\n");
+	writeFileSync(
+		join(agentHome, "agent.yml"),
+		"external:\n  appended_prompt: true\n  skills: false\n  bogus: 1\npi_extensions: true\nprompt:\n  include_project_context: true\n  include_appended_prompt: true\n",
+	);
+	const { config, warnings } = load(klRoot, agentHome);
+	assert.deepEqual(config.external, { extensions: false, skills: false, appended_prompt: true, project_context: false });
+	for (const key of ["external.bogus", "pi_extensions", "prompt.include_project_context", "prompt.include_appended_prompt"]) {
+		assert.ok(warnings.some((w) => w.includes(`unknown field '${key}'`)), key);
+	}
+	assert.equal(warnings.length, 4);
 });
 
 test("name/description are agent-only: ignored with a warning in the global file", () => {
@@ -147,10 +159,10 @@ test("unknown keys warn and are ignored (e.g. retired context_injection)", () =>
 test("invalid values warn and keep the lower layer", () => {
 	const { klRoot, agentHome } = scratch();
 	writeFileSync(join(klRoot, "config.yml"), "thinking: low\n");
-	writeFileSync(join(agentHome, "agent.yml"), "thinking: turbo\nprompt:\n  include_project_context: nope\n  identity: 3\n  nope: 1\nname: Bad-Name\n");
+	writeFileSync(join(agentHome, "agent.yml"), "thinking: turbo\nprompt:\n  include_kl_prompt: nope\n  identity: 3\n  nope: 1\nname: Bad-Name\n");
 	const { config, warnings } = load(klRoot, agentHome);
 	assert.equal(config.thinking, "low");
-	assert.equal(config.prompt.include_project_context, true);
+	assert.equal(config.prompt.include_kl_prompt, true);
 	assert.equal(config.prompt.identity, undefined);
 	assert.equal(config.name, "scout");
 	assert.equal(warnings.length, 5);

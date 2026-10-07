@@ -12,7 +12,6 @@ import {
 	plan,
 	userSetsThinking,
 	CORE_ENTRY,
-	CORE_SKILLS,
 	REPO_ROOT,
 } from "../src/launcher.ts";
 import { defaultConfig } from "../extensions/kiln-lite/config.ts";
@@ -23,6 +22,8 @@ function tmp(prefix: string): string {
 
 /** A base pi dir with no extensions/, so buildPiArgs never reads the real ~/.pi/agent. */
 const NO_PI = tmp("kl-nopi-");
+/** Stand-in skill stub dir for buildPiArgs (plan() writes the real one). */
+const STUB = "/stub";
 
 // --- ensureKlPiDir ---
 
@@ -88,11 +89,11 @@ test("userSetsThinking: --thinking, --model id:level, --model=id:level", () => {
 test("buildPiArgs: compact agent → core only, model/thinking defaults, -a, user args last", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "openai-codex/gpt-5.6-luna", thinking: "low" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["-p", "hi"] }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: ["-p", "hi"] }), [
 		"-e",
 		CORE_ENTRY,
-		"--skill",
-		CORE_SKILLS,
+		"-e",
+		STUB,
 		"--model",
 		"openai-codex/gpt-5.6-luna",
 		"--thinking",
@@ -103,21 +104,19 @@ test("buildPiArgs: compact agent → core only, model/thinking defaults, -a, use
 	]);
 });
 
-test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions, --skill (no persistence entry)", () => {
+test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions, skill stub (no persistence entry)", () => {
 	const home = tmp("kl-agent-");
 	mkdirSync(join(home, "extensions"));
 	mkdirSync(join(home, "skills"));
 	writeFileSync(join(home, "extensions", "mine.ts"), "");
 	const config = { ...defaultConfig(home), cleanup: "wrap up" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: [] }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: [] }), [
 		"-e",
 		CORE_ENTRY,
 		"-e",
 		join(home, "extensions", "mine.ts"),
-		"--skill",
-		CORE_SKILLS,
-		"--skill",
-		join(home, "skills"),
+		"-e",
+		STUB,
 		"-a",
 	]);
 });
@@ -125,21 +124,21 @@ test("buildPiArgs: full agent (cleanup set) → core only, then agent extensions
 test("buildPiArgs: user --model wins; thinking still defaulted unless the user's model has a level", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/default", thinking: "low" };
-	let args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--model", "y/mine"] });
+	let args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: ["--model", "y/mine"] });
 	assert.ok(!args.includes("x/default"));
 	assert.deepEqual(args.slice(args.indexOf("--thinking"), args.indexOf("--thinking") + 2), ["--thinking", "low"]);
 
-	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--model=y/mine:high"] });
+	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: ["--model=y/mine:high"] });
 	assert.ok(!args.includes("--thinking"));
 
-	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--thinking", "max"] });
+	args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: ["--thinking", "max"] });
 	assert.equal(args.filter((a) => a === "--thinking").length, 1);
 });
 
 test("buildPiArgs: config model with a :level suffix suppresses config thinking", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/m:high", thinking: "low" };
-	const args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: [] });
+	const args = buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: [] });
 	assert.ok(args.includes("x/m:high"));
 	assert.ok(!args.includes("--thinking"));
 });
@@ -147,11 +146,11 @@ test("buildPiArgs: config model with a :level suffix suppresses config thinking"
 test("buildPiArgs: resume skips model/thinking defaults but keeps extensions", () => {
 	const home = tmp("kl-agent-");
 	const config = { ...defaultConfig(home), model: "x/m", thinking: "low", cleanup: "c" };
-	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, config, userArgs: ["--session", "/s.jsonl"], resume: true }), [
+	assert.deepEqual(buildPiArgs({ agentHome: home, basePiDir: NO_PI, skillStub: STUB, config, userArgs: ["--session", "/s.jsonl"], resume: true }), [
 		"-e",
 		CORE_ENTRY,
-		"--skill",
-		CORE_SKILLS,
+		"-e",
+		STUB,
 		"-a",
 		"--session",
 		"/s.jsonl",
@@ -188,10 +187,10 @@ test("CLI: plan prints NUL-separated piDir, name, argv", () => {
 	);
 	const recs = out.split("\0");
 	assert.equal(recs.pop(), "");
-	assert.deepEqual(recs, [join(klRoot, "pi"), "scout", "-e", CORE_ENTRY, "--skill", CORE_SKILLS, "--model", "a/b", "-a", "-p", "two words"]);
+	assert.deepEqual(recs, [join(klRoot, "pi"), "scout", "-e", CORE_ENTRY, "-e", join(klRoot, "pi", "skill-stubs", "scout"), "--model", "a/b", "-a", "-p", "two words"]);
 });
 
-test("base pi's global extensions load by default (Pi's discovery shapes), and not with pi_extensions: false", () => {
+test("base pi's global extensions load by default (Pi's discovery shapes), and not with external.extensions: false", () => {
 	const home = tmp("kl-agent-");
 	const base = tmp("kl-basepi-");
 	const ext = join(base, "extensions");
@@ -204,8 +203,65 @@ test("base pi's global extensions load by default (Pi's discovery shapes), and n
 	writeFileSync(join(ext, "pkg", "src", "main.ts"), "");
 	writeFileSync(join(ext, "plain", "index.ts"), "");
 	const config = defaultConfig(home);
-	const on = buildPiArgs({ agentHome: home, basePiDir: base, config, userArgs: [] });
+	const on = buildPiArgs({ agentHome: home, basePiDir: base, skillStub: STUB, config, userArgs: [] });
 	assert.deepEqual(on.slice(0, 8), ["-e", CORE_ENTRY, "-e", join(ext, "a.ts"), "-e", join(ext, "pkg", "src", "main.ts"), "-e", join(ext, "plain", "index.ts")]);
-	const off = buildPiArgs({ agentHome: home, basePiDir: base, config: { ...config, pi_extensions: false }, userArgs: [] });
+	const off = buildPiArgs({ agentHome: home, basePiDir: base, skillStub: STUB, config: { ...config, external: { ...config.external, extensions: false } }, userArgs: [] });
 	assert.ok(!off.some((a) => a.startsWith(ext)));
+});
+
+// --- skill precedence, through Pi's own resource loader ---
+
+function skill(dir: string, name: string, tag: string): void {
+	mkdirSync(join(dir, name), { recursive: true });
+	writeFileSync(join(dir, name, "SKILL.md"), `---\nname: ${name}\ndescription: ${tag}\n---\n${tag}\n`);
+}
+
+/** Skills Pi loads for plan()'s argv: name → description of the winner. */
+async function piSkills(external: { skills: boolean }): Promise<Map<string, string>> {
+	const { DefaultResourceLoader } = await import("@earendil-works/pi-coding-agent");
+	const fakeHome = tmp("kl-home-");
+	const klRoot = tmp("kl-root-");
+	const base = tmp("pi-base-");
+	const proj = tmp("kl-proj-");
+	const home = join(tmp("kl-agents-"), "scout");
+	writeFileSync(join(klRoot, "config.yml"), `external:\n  skills: ${external.skills}\n`);
+	// same-named "dup" everywhere Pi looks; one unique skill per source
+	skill(join(home, "skills"), "dup", "agent");
+	skill(join(home, "skills"), "agent-only", "agent");
+	skill(join(base, "skills"), "dup", "base");
+	skill(join(base, "skills"), "base-only", "base");
+	skill(join(proj, ".pi", "skills"), "dup", "project");
+	skill(join(proj, ".pi", "skills"), "project-only", "project");
+	skill(join(proj, ".agents", "skills"), "dup", "project-agents");
+	skill(join(fakeHome, ".agents", "skills"), "dup", "home-agents");
+	skill(join(klRoot, "pi", "skills"), "dup", "kl-user");
+
+	const p = plan({ agentHome: home, userArgs: [], klRoot, basePiDir: base });
+	const ext = p.args.flatMap((a, i) => (p.args[i - 1] === "-e" && a !== CORE_ENTRY ? [a] : []));
+	const savedHome = process.env.HOME;
+	process.env.HOME = fakeHome;
+	try {
+		const loader = new DefaultResourceLoader({
+			cwd: proj,
+			agentDir: p.piDir,
+			additionalExtensionPaths: ext,
+			noSkills: p.args.includes("--no-skills"),
+		});
+		await loader.reload({ resolveProjectTrust: async () => true }); // kl passes -a
+		return new Map(loader.getSkills().skills.map((s) => [s.name, s.description]));
+	} finally {
+		process.env.HOME = savedHome;
+	}
+}
+
+test("skills: the agent's win collisions over every other source; base pi's and Pi's own still load", async () => {
+	const skills = await piSkills({ skills: true });
+	assert.equal(skills.get("dup"), "agent");
+	for (const name of ["agent-only", "base-only", "project-only"]) assert.ok(skills.has(name), name);
+});
+
+test("skills: external.skills false keeps only the agent's", async () => {
+	const skills = await piSkills({ skills: false });
+	assert.deepEqual([...skills.keys()].sort(), ["agent-only", "dup"]);
+	assert.equal(skills.get("dup"), "agent");
 });

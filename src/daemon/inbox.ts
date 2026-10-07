@@ -1,10 +1,7 @@
 /**
  * Inbox + channel history writers.
  *
- * Matches the existing kiln-lite message file format so that
- * `skills/messaging/scripts/message read/list/stats` continue to work
- * unchanged: those paths read files directly, while the daemon just takes
- * over writing them.
+ * Message files are plain markdown with a YAML header, readable directly.
  *
  * File layout:
  *
@@ -30,7 +27,7 @@ import { join } from "node:path";
 import { writeAtomic } from "../sessions/fsutil.ts";
 
 function compactTimestamp(date: Date = new Date()): string {
-    // 20260422T170800Z — matches mkid() in skills/messaging/scripts/message
+    // 20260422T170800Z
     const pad = (n: number) => String(n).padStart(2, "0");
     return (
         `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +

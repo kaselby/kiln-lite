@@ -6,11 +6,20 @@ description and path in the `<skills>` part of the system prompt. The model
 reads the file with the `read` tool when a task matches, so the body costs
 nothing until it's needed.
 
-kl passes two skill dirs to Pi with `--skill`:
+kl ships no skills of its own. It loads, in this order:
 
-1. kl's bundled skills (`skills/` in the repo; today just `messaging`), for
-   every agent
-2. the agent's own `skills/` folder, if it has one
+1. the agent's own `skills/` folder, if it has one
+2. base Pi's `~/.pi/agent/skills/`, unless `external.skills: false`
+3. whatever Pi discovers itself, in Pi's order: the project's
+   (`.pi/skills/`, `.agents/skills/`), then global (`~/.kl/pi/skills/`,
+   `~/.agents/skills/`), then packages from `kl install`
+
+When two skills share a name, the first one in that order wins, so an
+agent's own skill always beats a same-named one from anywhere else.
+
+`external.skills: false` (in `agent.yml` or `<kl root>/config.yml`) keeps
+only the agent's own skills: it drops 2 and all of 3, project skills
+included ([agents.md](agents.md#agentyml)).
 
 ```
 ~/.kl/agents/scout/skills/
@@ -28,4 +37,6 @@ Read references/checklist.md, then ...
 ```
 
 Relative paths in a skill resolve against the skill's folder. Discovery,
-the listing and the format are Pi's; see Pi's docs for details.
+the listing and the format are Pi's; see Pi's docs for details. (kl hands
+1 and 2 to Pi as a generated package, `<kl root>/pi/skill-stubs/<name>/`,
+because Pi ranks `--skill` paths below everything it discovers.)

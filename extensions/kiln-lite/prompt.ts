@@ -14,8 +14,8 @@
  *                     re-renders the first two in Pi's format.
  *                     `include_kl_prompt: false` drops the whole <harness>.
  *   <addendum>        Pi: APPEND_SYSTEM.md / --append-system-prompt
- *                     (`include_appended_prompt: false` empties it)
- *   <project_context> Pi: AGENTS.md etc. (`include_project_context: false` empties it)
+ *                     (`external.appended_prompt: false` empties it)
+ *   <project_context> Pi: AGENTS.md etc. (`external.project_context: false` empties it)
  *   <skills>          Pi
  *   <cwd>             Pi (always rendered)
  *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
@@ -123,8 +123,8 @@ export function loadPromptParts(config: AgentConfig, env: Record<string, string>
 		baseline: p.include_kl_prompt ? loadBaseline(warn) : null,
 		sections: renderSections(p.extra_sections, env, warn),
 		klPrompt: p.include_kl_prompt,
-		appendedPrompt: p.include_appended_prompt,
-		projectContext: p.include_project_context,
+		appendedPrompt: config.external.appended_prompt,
+		projectContext: config.external.project_context,
 	};
 }
 

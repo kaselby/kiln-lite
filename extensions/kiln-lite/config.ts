@@ -6,17 +6,16 @@
  *                                 (kl root = $KL_ROOT or ~/.kl)
  *   2. `<agent home>/agent.yml` — per agent; any top-level key it sets
  *                                 replaces the global value outright, except
- *                                 `prompt:`, merged one level down
+ *                                 `prompt:` and `external:`, merged one
+ *                                 level down
  *
  * Relative paths (`prompt.identity`, `prompt.extra_sections[].path`) resolve
  * against the dir of the file that declared them, so a global section can
  * point into ~/.kl and an agent's into its own folder.
  *
- * Minimal schema: name, description, model, thinking, prompt, timestamps.
- * A few more keys are recognized for
- * modules outside the core slice (cleanup,
- * session_state_interval) and by the launcher (pi_extensions); anything else
- * warns and is ignored.
+ * Minimal schema: name, description, model, thinking, prompt, external,
+ * timestamps. A few more keys are recognized for modules outside the core
+ * slice (cleanup, session_state_interval); anything else warns and is ignored.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -24,7 +23,7 @@ import { homedir } from "node:os";
 import { basename, resolve, join } from "node:path";
 import yaml from "js-yaml";
 
-import type { AgentConfig, PromptConfig, SectionEntry, TimestampConfig } from "./types.ts";
+import type { AgentConfig, ExternalConfig, PromptConfig, SectionEntry, TimestampConfig } from "./types.ts";
 import { parsePromptSource } from "./prompt-source.ts";
 
 /** Pi rejects section names outside this grammar (system-prompt.js). */
@@ -61,7 +60,7 @@ const KNOWN_KEYS = new Set([
 	"timestamps",
 	"cleanup",
 	"session_state_interval",
-	"pi_extensions",
+	"external",
 ]);
 
 /** Keys that only make sense per agent; ignored (with a warning) in the global file. */
@@ -120,14 +119,12 @@ export function defaultConfig(agentHome: string): AgentConfig {
 		prompt: {
 			identity_base: agentHome,
 			include_kl_prompt: true,
-			include_appended_prompt: true,
-			include_project_context: true,
 			extra_sections: [],
 		},
+		external: { extensions: true, skills: true, appended_prompt: true, project_context: true },
 		timestamps: { ...DEFAULT_TIMESTAMPS },
 		cleanup: "",
 		session_state_interval: 15,
-		pi_extensions: true,
 	};
 }
 
@@ -226,10 +223,7 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 		const c = parsePromptSource(obj.cleanup, `${label} cleanup`, warn);
 		if (c !== undefined) config.cleanup = c;
 	}
-	if (has("pi_extensions")) {
-		if (typeof obj.pi_extensions === "boolean") config.pi_extensions = obj.pi_extensions;
-		else warn(`kiln-lite: ${label}: pi_extensions must be true or false — ignoring`);
-	}
+	if (has("external")) applyExternalLayer(config.external, obj.external, layer);
 	if (has("session_state_interval")) {
 		const n = obj.session_state_interval;
 		if (typeof n === "number" && Number.isFinite(n) && n >= 0) config.session_state_interval = Math.floor(n);
@@ -237,8 +231,29 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	}
 }
 
-const PROMPT_SWITCHES = ["include_kl_prompt", "include_appended_prompt", "include_project_context"] as const;
+const PROMPT_SWITCHES = ["include_kl_prompt"] as const;
 const PROMPT_KEYS = new Set<string>(["identity", ...PROMPT_SWITCHES, "extra_sections"]);
+const EXTERNAL_SWITCHES = ["extensions", "skills", "appended_prompt", "project_context"] as const;
+
+/** Merge one file's `external:` block into `external`, key by key. */
+function applyExternalLayer(external: ExternalConfig, raw: unknown, layer: LayerOptions): void {
+	const { label, warn } = layer;
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		warn(`kiln-lite: ${label}: external must be a mapping — ignoring`);
+		return;
+	}
+	const obj = raw as Record<string, unknown>;
+	for (const key of Object.keys(obj)) {
+		if (!(EXTERNAL_SWITCHES as readonly string[]).includes(key)) {
+			warn(`kiln-lite: ${label} has unknown field 'external.${key}' — ignoring`);
+			continue;
+		}
+		const v = obj[key];
+		if (v === undefined) continue;
+		if (typeof v === "boolean") external[key as keyof ExternalConfig] = v;
+		else warn(`kiln-lite: ${label}: external.${key} must be true or false — ignoring`);
+	}
+}
 
 /** Merge one file's `prompt:` block into `prompt`, key by key. */
 function applyPromptLayer(prompt: PromptConfig, raw: unknown, layer: LayerOptions): void {

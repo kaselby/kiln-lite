@@ -131,7 +131,7 @@ test("applyPrompt: idempotent across turns", () => {
 	assert.equal(JSON.stringify(opts), first);
 });
 
-test("applyPrompt: include_project_context false empties contextFiles; true leaves them", () => {
+test("applyPrompt: projectContext false empties contextFiles; true leaves them", () => {
 	const files = [{ path: "/p/AGENTS.md", content: "x" }];
 	const off = options({ contextFiles: [...files] });
 	applyPrompt(off, parts({ projectContext: false }), SESSION);
@@ -149,9 +149,9 @@ test("applyPrompt: never sets forceSystemPrompt", () => {
 
 // --- identity / baseline ---
 
-function withPrompt(dir: string, over: Partial<AgentConfig["prompt"]> = {}): AgentConfig {
+function withPrompt(dir: string, over: Partial<AgentConfig["prompt"]> = {}, external: Partial<AgentConfig["external"]> = {}): AgentConfig {
 	const config = defaultConfig(dir);
-	return { ...config, prompt: { ...config.prompt, ...over } };
+	return { ...config, prompt: { ...config.prompt, ...over }, external: { ...config.external, ...external } };
 }
 
 test("loadIdentity: reads prompt.identity against its base; missing or empty file → built-in identity", () => {
@@ -179,7 +179,7 @@ test("loadPromptParts: include_kl_prompt false skips the baseline; switches carr
 	assert.ok(on.baseline && on.baseline.length > 0);
 	assert.equal(on.klPrompt && on.appendedPrompt && on.projectContext, true);
 	const off = loadPromptParts(
-		withPrompt(dir, { include_kl_prompt: false, include_appended_prompt: false, include_project_context: false }),
+		withPrompt(dir, { include_kl_prompt: false }, { appended_prompt: false, project_context: false }),
 		{},
 		(m) => warnings.push(m),
 	);
@@ -317,7 +317,7 @@ test("Pi renders kl's edits in order: preamble < addendum < project_context < sk
 	assert.ok(text.includes("<session>\nagent: scout\nsession: scout-quiet-fox\nmodel: openai-codex/gpt-5.6-luna\nhome: /agents/scout\n</session>"));
 });
 
-test("Pi integration: include_project_context false drops the <project_context> section", async () => {
+test("Pi integration: external.project_context false drops the <project_context> section", async () => {
 	const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await piRenderer();
 	const opts = normalizeBuildSystemPromptOptions({
 		cwd: "/w",
@@ -355,7 +355,7 @@ test("Pi integration: include_kl_prompt false drops <harness>, <tools> and <rule
 	}
 });
 
-test("Pi integration: include_appended_prompt false drops <addendum>; true keeps it", async () => {
+test("Pi integration: external.appended_prompt false drops <addendum>; true keeps it", async () => {
 	const { buildSystemPrompt, normalizeBuildSystemPromptOptions } = await piRenderer();
 	const render = (appendedPrompt: boolean) => {
 		const opts = normalizeBuildSystemPromptOptions({ cwd: "/w", appendSystemPrompt: "ADDENDUM TEXT" });

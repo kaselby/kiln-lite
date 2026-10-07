@@ -72,9 +72,9 @@ that should outlast the session, then stop.
 Settings come from two files: `<kl root>/config.yml` (defaults for every
 agent; see [config.md](config.md)), then the agent's `agent.yml`. A
 top-level key in `agent.yml` replaces the global value outright. The
-exception is `prompt:`, which merges one level down: `agent.yml` can set
-`include_kl_prompt` and keep the global `identity`. A list inside it, like
-`extra_sections`, still replaces the global list. An unknown key, or a
+exceptions are `prompt:` and `external:`, which merge one level down:
+`agent.yml` can set `include_kl_prompt` and keep the global `identity`. A
+list inside them, like `extra_sections`, still replaces the global list. An unknown key, or a
 value of the wrong type, prints a warning and is ignored (the lower
 layer's value stands). Warnings show on `kl run`'s
 stderr and in the session's UI.
@@ -86,10 +86,10 @@ stderr and in the session's UI.
 | `model` | both | Pi's | `provider/id`, optionally with a `:<thinking>` suffix |
 | `thinking` | both | Pi's | `off` `minimal` `low` `medium` `high` `xhigh` `max` |
 | `prompt` | both | below | what goes into the system prompt |
+| `external` | both | all `true` | what the agent picks up from outside itself and kl (below) |
 | `cleanup` | both | none | the cleanup prompt: inline text, or `{path: ...}` |
 | `timestamps` | both | on | `false`, `true`, or a mapping (below) |
 | `session_state_interval` | both | `15` | tool calls between `[Session state]` lines; `0` turns them off |
-| `pi_extensions` | both | `true` | load base Pi's global extensions (`~/.pi/agent/extensions/`) too |
 | `user_name` | config.yml only | `user` | see [config.md](config.md) |
 
 **Paths.** `prompt.identity` and `prompt.extra_sections[].path` are
@@ -111,6 +111,24 @@ first. A mapping overrides any of the defaults
 `{per_turn: true, every_calls: 20, every_minutes: 10}`; `0` turns a
 periodic trigger off.
 
+**external** groups the switches for things that come from outside the
+agent and kl:
+
+```yaml
+external:
+  extensions: true       # base Pi's ~/.pi/agent/extensions/ (see Extensions below)
+  skills: true           # skills from outside the agent (see skills.md)
+  appended_prompt: true  # Pi's <addendum>: APPEND_SYSTEM.md / --append-system-prompt
+  project_context: true  # Pi's <project_context>: AGENTS.md / CLAUDE.md
+```
+
+`skills: false` keeps only the agent's own `skills/`. It drops base Pi's
+`~/.pi/agent/skills/` and also everything Pi discovers itself: global
+skills (`~/.kl/pi/skills/`, `~/.agents/skills/`), the project's
+(`.pi/skills/`, `.agents/skills/`) and those in packages from
+`kl install`. Pi has no switch that drops global skills but keeps the
+project's.
+
 **cleanup** is read when it's used, not at session start, so edits to the
 file during a session apply. HTML comments in it are dropped. An empty or
 missing cleanup prompt means no cleanup turn. How the turn runs is in
@@ -122,8 +140,6 @@ missing cleanup prompt means no cleanup turn. How the turn runs is in
 prompt:
   identity: IDENTITY.md          # default: IDENTITY.md in the agent folder if present
   include_kl_prompt: true        # kl's <harness> block
-  include_appended_prompt: true  # Pi's <addendum>
-  include_project_context: true  # Pi's <project_context>
   extra_sections:                # none by default
     - {name: memory, path: memory/MEMORY.md}
 ```
@@ -144,9 +160,9 @@ kl writes the top of the prompt and leaves the rest to Pi. In order:
    `<rules>` included. The identity then stands alone at the top, so
    that plus your own identity file is how you replace kl's prompt.
 3. Pi's sections: `<addendum>` (`APPEND_SYSTEM.md` in the kl Pi dir, or
-   `--append-system-prompt`; `include_appended_prompt: false` drops it),
+   `--append-system-prompt`; `external.appended_prompt: false` drops it),
    `<project_context>` (`AGENTS.md` and similar from the working
-   directory; `include_project_context: false` drops it), `<skills>`,
+   directory; `external.project_context: false` drops it), `<skills>`,
    `<cwd>`, and any sections other extensions add.
 4. `<session>`: the agent name, session name, model, agent folder and
    inbox path.
@@ -189,7 +205,7 @@ kl passes Pi these extensions, each with its own `-e`, in this order:
 
 1. kl's own extension.
 2. Base Pi's global extensions in `~/.pi/agent/extensions/`, unless
-   `pi_extensions: false`.
+   `external.extensions: false`.
 3. The agent's `extensions/`.
 
 In each folder kl takes `*.ts` and `*.js` files (not `*.d.ts`), and for each

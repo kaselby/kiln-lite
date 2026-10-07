@@ -298,11 +298,14 @@ description: ""
 # prompt:
 #   identity: IDENTITY.md          # the default; a missing or empty file gives the built-in identity
 #   include_kl_prompt: true        # false drops kl's <harness> block (baseline, <tools>, <rules>)
-#   include_appended_prompt: true  # false drops APPEND_SYSTEM.md / --append-system-prompt
-#   include_project_context: true  # false drops AGENTS.md / CLAUDE.md
 #   extra_sections:                # rendered once at session start, after <session>
 #     - {name: notes, path: notes.md}
 #     - {name: today, command: "date +%A"}
+# external:                  # what the agent picks up from outside itself and kl
+#   extensions: true         # base Pi's ~/.pi/agent/extensions
+#   skills: true             # false: only the agent's skills/ (no base Pi, global, project or installed skills)
+#   appended_prompt: true    # false drops APPEND_SYSTEM.md / --append-system-prompt
+#   project_context: true    # false drops AGENTS.md / CLAUDE.md
 YML
     cat > "$target/IDENTITY.md" <<MD
 <!--

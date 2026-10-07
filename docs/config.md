@@ -101,7 +101,7 @@ Piece by piece:
 
 `config.yml` takes every `agent.yml` key except `name` and `description`;
 the values are defaults that an agent's own `agent.yml` overrides key by
-key (`prompt:` merges one level down). The keys and their defaults are in
+key (`prompt:` and `external:` merge one level down). The keys and their defaults are in
 [agents.md](agents.md#agentyml). Relative `prompt.identity` and
 `prompt.extra_sections` paths here are relative to the kl folder; a
 `cleanup` path is always relative to the agent folder.

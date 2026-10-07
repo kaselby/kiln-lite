@@ -116,6 +116,6 @@ kl loads each `*.ts` or `*.js` file there, and each subfolder's
 in name order, each with its own `-e`. See Pi's `docs/extensions.md`.
 
 Extensions in base Pi's `~/.pi/agent/extensions/` load into kl agents too,
-after kl's own and before the agent's. Set `pi_extensions: false` in
+after kl's own and before the agent's. Set `external.extensions: false` in
 `agent.yml` (or `<kl root>/config.yml` for every agent) to leave them out.
 Pi packages are installed with `kl install`; see [install.md](install.md).

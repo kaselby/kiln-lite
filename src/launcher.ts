@@ -8,14 +8,15 @@
  *
  *   tsx src/launcher.ts plan --home <agent home> [--resume] [--] [pi args...]
  *
- * Effects: creates <kl root>/pi on first use (ensureKlPiDir). Warnings go to
+ * Effects: creates <kl root>/pi on first use (ensureKlPiDir) and (re)writes
+ * the agent's skill stub, <kl root>/pi/skill-stubs/<name>. Warnings go to
  * stderr. Stdout is NUL-terminated records:
  *   1. the Pi agent dir (value for PI_CODING_AGENT_DIR)
  *   2. the agent name (validated session-id prefix)
  *   3… the pi argv (without the pi binary; user args included, in order)
  */
 
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +26,6 @@ import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CORE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "index.ts");
-/** kl's bundled skills (messaging), loaded for every agent instead of being copied in. */
-export const CORE_SKILLS = join(REPO_ROOT, "skills");
 
 /** Files shared with base pi by symlink (never copied). */
 export const SHARED_PI_FILES = ["auth.json", "keybindings.json", "models.json"];
@@ -120,9 +119,34 @@ export function agentExtensions(agentHome: string): string[] {
 	return discoverExtensions(join(agentHome, "extensions"));
 }
 
-/** Base pi's global extensions dir (~/.pi/agent/extensions), loaded into kl agents unless `pi_extensions: false`. */
+/** Base pi's global extensions dir (~/.pi/agent/extensions), loaded into kl agents unless `external.extensions: false`. */
 export function basePiExtensionsDir(basePiDir = join(homedir(), ".pi", "agent")): string {
 	return join(basePiDir, "extensions");
+}
+
+/**
+ * Skill dirs for the agent's stub package, highest precedence first: the
+ * agent's, then base pi's ~/.pi/agent/skills unless `external.skills: false`.
+ * Pi skips entries that don't exist, so both are always listed.
+ */
+export function skillDirs(agentHome: string, config: AgentConfig, basePiDir = join(homedir(), ".pi", "agent")): string[] {
+	const dirs = [join(agentHome, "skills")];
+	if (config.external.skills) dirs.push(join(basePiDir, "skills"));
+	return dirs;
+}
+
+/**
+ * Write `<piDir>/skill-stubs/<name>/package.json` = {"pi":{"skills":[dirs]}}
+ * and return the stub dir. Passed as `-e <stub>`, its skills come from a
+ * CLI package, the one source Pi ranks above project, user and installed
+ * skills, and first name wins, so the agent's skills win collisions.
+ * (`--skill` paths rank lowest.)
+ */
+export function writeSkillStub(piDir: string, agentName: string, dirs: string[]): string {
+	const dir = join(piDir, "skill-stubs", agentName);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "package.json"), `${JSON.stringify({ pi: { skills: dirs } }, null, 2)}\n`);
+	return dir;
 }
 
 function hasFlag(args: string[], ...flags: string[]): boolean {
@@ -154,25 +178,25 @@ export interface BuildPiArgsOptions {
 	/** Resume: skip model/thinking defaults (the transcript carries them). */
 	resume?: boolean;
 	coreEntry?: string;
-	coreSkills?: string;
+	/** The agent's skill stub dir (writeSkillStub), passed as -e. */
+	skillStub: string;
 	/** Base pi agent dir, for its extensions/ (default ~/.pi/agent). */
 	basePiDir?: string;
 }
 
 /**
  * pi argv: core -e (the only kl entry), base pi's global extensions
- * (unless pi_extensions: false), agent extensions, --skill
- * (kl's bundled skills, then the agent's),
+ * (unless external.extensions: false), agent extensions, -e skill stub
+ * (agent > base pi skills), --no-skills if external.skills: false,
  * model/thinking defaults the user didn't override, -a, then user args.
  */
 export function buildPiArgs(opts: BuildPiArgsOptions): string[] {
 	const { agentHome, config, userArgs } = opts;
 	const args: string[] = ["-e", opts.coreEntry ?? CORE_ENTRY];
-	if (config.pi_extensions) for (const ext of discoverExtensions(basePiExtensionsDir(opts.basePiDir))) args.push("-e", ext);
+	if (config.external.extensions) for (const ext of discoverExtensions(basePiExtensionsDir(opts.basePiDir))) args.push("-e", ext);
 	for (const ext of agentExtensions(agentHome)) args.push("-e", ext);
-	if (existsSync(opts.coreSkills ?? CORE_SKILLS)) args.push("--skill", opts.coreSkills ?? CORE_SKILLS);
-	const skills = join(agentHome, "skills");
-	if (existsSync(skills)) args.push("--skill", skills);
+	args.push("-e", opts.skillStub);
+	if (!config.external.skills) args.push("--no-skills");
 
 	if (!opts.resume) {
 		let model: string | undefined;
@@ -212,10 +236,11 @@ export function plan(opts: { agentHome: string; userArgs: string[]; resume?: boo
 		);
 	}
 	const { dir, created } = ensureKlPiDir(klRoot, opts.basePiDir);
+	const skillStub = writeSkillStub(dir, config.name, skillDirs(opts.agentHome, config, opts.basePiDir));
 	return {
 		piDir: dir,
 		agentName: config.name,
-		args: buildPiArgs({ agentHome: opts.agentHome, config, userArgs: opts.userArgs, resume: opts.resume, basePiDir: opts.basePiDir }),
+		args: buildPiArgs({ agentHome: opts.agentHome, config, userArgs: opts.userArgs, resume: opts.resume, basePiDir: opts.basePiDir, skillStub }),
 		warnings,
 		created,
 	};
