@@ -10,6 +10,8 @@ extensions and skills. A **session** is one run of an agent, with its own
 name (`scout-bright-raven`), transcript and inbox. One agent can have many
 sessions, running or stopped, and any stopped session can be resumed.
 
+Your identity prompt may include instructions about what agents you are allowed to spawn - if so follow those guidelines.
+
 ## Finding out what's there
 
 - `kl agents` lists the installed agents with their descriptions. The
@@ -27,10 +29,9 @@ The `subagent` tool starts a session of another agent as your child, in
 your working directory. Use it for work you want done and reported back:
 a review, a search, a build in parallel.
 
-**Brief it like a colleague.** Its first message is your `prompt`, and it
-starts with none of your context. Say why the work matters, what you
-already know, where to look, and what to send back. A bare checklist gets
-mechanical work.
+**The prompt is all it gets.** Its first message is your `prompt`, and it
+starts with none of your context. Say what to do, where to look, and what
+to send back.
 
 **Results come back only as messages.** The tool returns the child's name
 at once. Keep working and its message arrives like any other mail, or pass
@@ -48,6 +49,10 @@ isn't tied to yours and keeps running after you exit. Only start a peer
 when the user asks for one. Inside a session, `kl run` always starts
 detached and prints the new name; it never takes over your terminal. Pass
 the brief as a file so no shell quoting gets in the way.
+
+**Brief it like a colleague.** A peer works on its own, so say why the
+work matters and what you already know, not just what to do. A bare
+checklist gets mechanical work.
 
 ## Resuming
 
