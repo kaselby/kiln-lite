@@ -5,7 +5,7 @@ description: How to talk to other kl sessions with the message tool. Use when se
 
 # Messaging
 
-Every kl session has a name like `scout-bright-raven` and an inbox at
+Every kl session has a name like `agentname-bright-raven` and an inbox at
 `$KL_INBOX`. Messages are markdown files: a small daemon writes them into
 the recipient's inbox, and kl delivers them to the agent. Everything here
 goes through the `message` tool; `kl message` does the same from bash.
@@ -65,5 +65,5 @@ delay, at a time, or when a process exits (`watch` with a pid, handy for
 long builds). The note you give becomes the message body, so write it for
 the version of you that will read it cold. Wakes don't survive a reboot.
 
-For how delivery, the daemon and message files work, read
-`../../docs/messaging.md` (relative to this file).
+For how delivery, the daemon and message files work, read `messaging.md`
+in kl's docs folder (its path is in your system prompt).

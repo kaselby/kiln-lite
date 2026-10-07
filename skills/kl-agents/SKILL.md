@@ -65,5 +65,5 @@ stopped session handle a message straight away, send the message with
   own, after your agent's cleanup turn if it has one.
 
 For the full details on names, resuming, subagent lifecycle and agent
-configuration, read `../../docs/sessions.md` and `../../docs/agents.md`
-(relative to this file).
+configuration, read `sessions.md` and `agents.md` in kl's docs folder (its
+path is in your system prompt).
