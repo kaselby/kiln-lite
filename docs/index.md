@@ -4,9 +4,7 @@ kiln-lite (kl) runs Pi sessions as named agents that can find and message
 each other. Start with the [README](../README.md).
 
 - [agents.md](agents.md): what an agent and a session are, the agent
-  folder, `kl init`, `agent.yml` keys, hooks
-- [harness.md](harness.md): how the system prompt is built, timestamps,
-  which extensions load
+  folder, `kl init`, `agent.yml` keys, the system prompt, extensions
 - [sessions.md](sessions.md): names and the registry, starting and resuming,
   subagents, exiting and resets, plans and status files, session env vars
 - [messaging.md](messaging.md): sending and delivery, parked mail, read

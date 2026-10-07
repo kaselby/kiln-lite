@@ -2,7 +2,7 @@
 
 This covers what an agent is and everything that belongs to one: its
 folder, `agent.yml`, how its system prompt is put together, its skills,
-extensions and hooks, and `kl init`. What happens to a running agent
+extensions, and `kl init`. What happens to a running agent
 (names, resuming, subagents, exiting) is in [sessions.md](sessions.md).
 
 An agent is a folder at `$KL_AGENTS_DIR/<name>/` (default

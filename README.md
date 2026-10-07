@@ -61,8 +61,6 @@ kl doctor                # diagnostics
 
 - [docs/agents.md](docs/agents.md): what an agent and a session are, the
   agent folder, `kl init`, `agent.yml`, hooks
-- [docs/harness.md](docs/harness.md): how the system prompt is built,
-  timestamps, which extensions load
 - [docs/sessions.md](docs/sessions.md): names, starting and resuming,
   subagents, exiting and resets, plans and status files
 - [docs/messaging.md](docs/messaging.md): sending and delivery, parked mail,
