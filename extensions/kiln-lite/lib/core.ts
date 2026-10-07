@@ -31,7 +31,8 @@ import { registerScheduleTool } from "../schedule.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
-import { inboxDir as sessionInboxDir, klRoot } from "../../../src/sessions/paths.ts";
+import { inboxDir as sessionInboxDir, klRoot, sessionConfigPath } from "../../../src/sessions/paths.ts";
+import { runtimeConfig, type RuntimeConfig, type RuntimeValues } from "../runtime-config.ts";
 import { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 
@@ -57,6 +58,26 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	let warn: (msg: string) => void = console.warn;
 	const timestamps = createTimestampInjector();
 	let periodicTime: PeriodicTimestamp | null = null;
+	// Timestamp cadence and session_state_interval: run/<uuid>/config.yml over
+	// the config at session start, read at use. A change rebuilds both emitters.
+	let runtime: RuntimeConfig | null = null;
+	let cadence: RuntimeValues | null = null;
+	const currentCadence = (): RuntimeValues | null => {
+		if (!runtime) return null;
+		const v = runtime.get();
+		if (v === cadence) return v;
+		cadence = v;
+		const t = v.timestamps;
+		periodicTime =
+			t === false
+				? null
+				: createPeriodicTimestamp(timestamps, { everyCalls: t.every_calls, everyMs: t.every_minutes * 60 * 1000 });
+		sessionState = createSessionStateHook({
+			getUnread: () => watcher?.unreadCount() ?? null,
+			interval: v.session_state_interval,
+		});
+		return v;
+	};
 
 	// Tools register at load time; their closures read live state lazily.
 	pi.registerTool(buildMessageTool({ getDaemon: () => daemon }));
@@ -152,13 +173,13 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		};
 		lifecycle.start(state, warn);
 
-		periodicTime =
-			config.timestamps === false
-				? null
-				: createPeriodicTimestamp(timestamps, {
-						everyCalls: config.timestamps.every_calls,
-						everyMs: config.timestamps.every_minutes * 60 * 1000,
-					});
+		runtime = runtimeConfig(
+			sessionConfigPath(sessionUuid),
+			{ timestamps: config.timestamps, session_state_interval: config.session_state_interval },
+			warn,
+		);
+		cadence = null;
+		currentCadence();
 
 		try {
 			mkdirSync(inboxDir, { recursive: true });
@@ -183,11 +204,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		}
 		watcher = startInboxWatcher({ inboxDir, pi, isIdle: () => ctx.isIdle(), warn, transcriptEntries, selfSession: sessionUuid });
 
-		sessionState = createSessionStateHook({
-			getUnread: () => watcher?.unreadCount() ?? null,
-			interval: config.session_state_interval,
-		});
-
 		if (ctx.hasUI) ctx.ui.setStatus("kiln-lite", `online as ${agentId}`);
 	});
 
@@ -209,9 +225,10 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 	// --- before_agent_start: per-turn timestamp (hidden custom message) ---
 	pi.on("before_agent_start", async () => {
-		if (!state || state.config.timestamps === false) return;
+		const t = state ? currentCadence()?.timestamps : undefined;
+		if (!t) return;
 		periodicTime?.reset();
-		if (!state.config.timestamps.per_turn) return;
+		if (!t.per_turn) return;
 		return {
 			message: {
 				customType: "kiln-timestamp",
@@ -236,6 +253,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 	pi.on("tool_result", async (event, ctx) => {
 		if (!watcher) return;
+		currentCadence();
 		if (event.toolName === "read" && !event.isError) {
 			const filePath = typeof event.input.path === "string" ? event.input.path : "";
 			if (filePath) watcher.handleReadOfPath(filePath);
@@ -288,6 +306,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			daemon = null;
 		}
 		lifecycle.stop();
+		runtime = null;
 		state = null;
 	});
 

@@ -75,7 +75,7 @@ export interface TimestampConfig {
 /**
  * Merged kl configuration: `~/.kl/config.yml` (global) with the agent's
  * `agent.yml` overriding it key by key. Top-level keys replace, except
- * `prompt:` and `external:`, which merge key by key one level down.
+ * `prompt:`, `external:` and `timestamps:`, which merge key by key one level down.
  */
 export interface AgentConfig {
 	/** Agent name — first component of <name>-<adj>-<noun> session ids. agent.yml only. */

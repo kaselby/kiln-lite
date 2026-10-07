@@ -34,6 +34,7 @@ kl resume <session>
 kl attach <session> [-d]
 kl sessions [-n N] [--all] [--json]
 kl sessions <session> [--json]
+kl config [<session>] [key=value | key= ...]
 kl message <command> ...
 kl agents
 kl init <name> [--full]
@@ -97,6 +98,22 @@ with `*` on running ones:
   created, parent and children, cwd, home, transcript, inbox counts, UUID,
   every name it has run under, its status, and its plan with every task.
 - `--json`: the same data as JSON.
+
+**config** shows or changes one session's runtime settings
+(`timestamps`, `session_state_interval`), kept in `run/<uuid>/config.yml`
+([config.md](config.md#per-session-settings)). The session picks up a
+change at its next turn or tool result.
+
+- With no `key=...`: each effective value and where it comes from
+  (`session`, `agent.yml`, `config.yml` or `default`), then the files.
+- `key=value` sets; the value is YAML (`timestamps=false`,
+  `session_state_interval=5`). `timestamps.per_turn`,
+  `timestamps.every_calls` and `timestamps.every_minutes` set one timestamp
+  field (over `timestamps: true/false` in the file, they replace it with a
+  mapping, which turns timestamps on).
+- `key=` unsets. A file left empty is removed.
+- An invalid value or unknown key is an error and nothing is written.
+- Inside a kl session `<session>` may be left out: it means this session.
 
 **message**: see [`kl message`](#kl-message) below.
 
@@ -180,7 +197,6 @@ kl reads:
 | `KL_PI` | pi binary (default: the repo's `node_modules/.bin/pi`, else `pi` on PATH) |
 | `KL_USER` | your name on messages sent from your shell |
 | `KL_TMUX_SOCKET` | run every tmux call as `tmux -L <socket>`, for isolated test runs |
-| `XDG_RUNTIME_DIR` | where the daemon's socket goes |
 | `SESSION_UUID` | set means "inside a kl session" (see above) |
 
 Inside a session, kl sets these for the agent and everything it runs:
@@ -194,6 +210,6 @@ Inside a session, kl sets these for the agent and everything it runs:
 | `KL_INBOX` | the session's inbox directory |
 | `PI_CODING_AGENT_DIR` | the kl Pi dir |
 
-kl also passes `KL_ROOT`, `KL_TMUX_SOCKET` and `XDG_RUNTIME_DIR` through
+kl also passes `KL_ROOT` and `KL_TMUX_SOCKET` through
 to the session, and sets `_KL`, `KL_NAME` and `KL_PARENT` for its own use
 at startup.

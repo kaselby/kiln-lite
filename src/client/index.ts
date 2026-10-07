@@ -15,23 +15,10 @@
  */
 
 import { connect, type Socket } from "node:net";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 
 import * as proto from "../daemon/protocol.ts";
+import { daemonDir, socketPath } from "../sessions/paths.ts";
 import { autostartDaemon } from "./autostart.ts";
-
-function defaultSocketPath(): string {
-    const runtime = process.env.XDG_RUNTIME_DIR;
-    if (runtime) return join(runtime, "kiln-lite.sock");
-    return `/tmp/kiln-lite-${process.getuid?.() ?? "nouid"}.sock`;
-}
-
-/** `<kl root>/daemon`, kl root = $KL_ROOT or ~/.kl (same rule as extensions/kiln-lite/config.ts resolveKlRoot). */
-function defaultStateDir(): string {
-    const root = process.env.KL_ROOT?.trim();
-    return join(root ? resolve(root) : join(homedir(), ".kl"), "daemon");
-}
 
 export interface DirectSendResult {
     message: string;
@@ -62,8 +49,8 @@ export class DaemonClient {
 
     constructor(opts: DaemonClientOptions) {
         this.requester = opts.requester;
-        this.socketPath = opts.socketPath ?? defaultSocketPath();
-        this.stateDir = opts.stateDir ?? defaultStateDir();
+        this.socketPath = opts.socketPath ?? socketPath();
+        this.stateDir = opts.stateDir ?? daemonDir();
         this.timeoutMs = opts.timeoutMs ?? 5000;
         this.shouldAutostart = opts.autostart ?? true;
     }

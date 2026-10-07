@@ -40,8 +40,8 @@ function tmuxEnv(vars: Record<string, string | undefined>): string[] {
 }
 
 /**
- * Env every kl-launched pi gets. KL_ROOT, KL_TMUX_SOCKET and XDG_RUNTIME_DIR
- * (where the daemon socket is) are forwarded: a running tmux server doesn't
+ * Env every kl-launched pi gets. KL_ROOT (which also places the daemon
+ * socket) and KL_TMUX_SOCKET are forwarded: a running tmux server doesn't
  * see the caller's env.
  */
 function baseEnv(home: string, piDir: string, name: string): Record<string, string | undefined> {
@@ -51,7 +51,6 @@ function baseEnv(home: string, piDir: string, name: string): Record<string, stri
 		PI_CODING_AGENT_DIR: piDir,
 		KL_ROOT: process.env.KL_ROOT,
 		KL_TMUX_SOCKET: process.env.KL_TMUX_SOCKET,
-		XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
 		KL_NAME: name,
 	};
 }

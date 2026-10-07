@@ -12,11 +12,14 @@
  *   run/<uuid>/schedule/      pending wakes (src/schedule.ts)
  *   run/<uuid>/wake.lock/     mkdir lock for waking this session
  *   run/names.lock/           mkdir lock for drawing names (holder pid inside)
+ *   run/<uuid>/config.yml     runtime overrides for this session (kl config; extensions/kiln-lite/runtime-config.ts)
  *   daemon/                   the daemon's state: subscriptions/, channels/<name>/history.jsonl
+ *   daemon/kiln-lite.sock     the daemon's socket (see socketPath for the long-path fallback)
  *
  * kl root = $KL_ROOT, else ~/.kl (same rule as extensions/kiln-lite/config.ts).
  */
 
+import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -78,6 +81,25 @@ export function wakeLockPath(uuid: string, root = klRoot()): string {
 /** The daemon's state dir: subscriptions/, channels/, known-sessions.json, the log. */
 export function daemonDir(root = klRoot()): string {
 	return join(root, "daemon");
+}
+
+/**
+ * The daemon's socket: <kl root>/daemon/kiln-lite.sock, so each kl root has
+ * its own daemon. Unix socket paths are capped (104 bytes with the NUL on
+ * macOS, 108 on Linux); when that path is too long, /tmp/kiln-lite-<hash of
+ * the kl root>.sock. The daemon and every client use this.
+ */
+export function socketPath(root = klRoot()): string {
+	const path = join(daemonDir(root), "kiln-lite.sock");
+	const max = process.platform === "darwin" ? 104 : 108;
+	if (Buffer.byteLength(path) < max) return path;
+	const hash = createHash("sha256").update(resolve(root)).digest("hex").slice(0, 12);
+	return `/tmp/kiln-lite-${hash}.sock`;
+}
+
+/** Per-session runtime overrides (timestamps, session_state_interval); kl config writes it. */
+export function sessionConfigPath(uuid: string, root = klRoot()): string {
+	return join(sessionDir(uuid, root), "config.yml");
 }
 
 export function namesLockPath(root = klRoot()): string {
