@@ -220,5 +220,4 @@ else its `index.ts` or `index.js`. Entries are sorted by name; dotfiles and
 well; see [install.md](install.md).
 
 [`examples/extensions/guardrails.ts`](../examples/extensions/guardrails.ts)
-is an example agent extension, and [`example/`](../example/) is a larger
-agent setup.
+is an example agent extension.

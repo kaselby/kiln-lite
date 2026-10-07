@@ -1,8 +1,8 @@
 /**
  * kl core harness.
  *
- * Everything a kl agent needs: config, session id + env, prompt composition
- *, timestamps, messaging (daemon, inbox, message tool), /spawn,
+ * Everything a kl agent needs: config, session id + env, prompt composition,
+ * timestamps, messaging (daemon, inbox, message tool), /spawn,
  * the subagent and schedule tools, and the lifecycle (cleanup turn, /cleanup,
  * exit_session; ../lifecycle.ts).
  *
