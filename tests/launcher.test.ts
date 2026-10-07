@@ -257,11 +257,11 @@ async function piSkills(external: { skills: boolean }): Promise<Map<string, stri
 test("skills: the agent's win collisions over every other source; base pi's and Pi's own still load", async () => {
 	const skills = await piSkills({ skills: true });
 	assert.equal(skills.get("dup"), "agent");
-	for (const name of ["agent-only", "base-only", "project-only"]) assert.ok(skills.has(name), name);
+	for (const name of ["agent-only", "kl-messaging", "base-only", "project-only"]) assert.ok(skills.has(name), name);
 });
 
-test("skills: external.skills false keeps only the agent's", async () => {
+test("skills: external.skills false keeps only the agent's and kl's", async () => {
 	const skills = await piSkills({ skills: false });
-	assert.deepEqual([...skills.keys()].sort(), ["agent-only", "dup"]);
+	assert.deepEqual([...skills.keys()].sort(), ["agent-only", "dup", "kl-agents", "kl-messaging"]);
 	assert.equal(skills.get("dup"), "agent");
 });

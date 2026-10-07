@@ -26,6 +26,8 @@ import type { AgentConfig } from "../extensions/kiln-lite/types.ts";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const CORE_ENTRY = join(REPO_ROOT, "extensions", "kiln-lite", "index.ts");
+/** kl's own skills (kl-messaging, kl-agents), loaded for every agent below the agent's own. */
+export const KL_SKILLS = join(REPO_ROOT, "skills");
 
 /** Files shared with base pi by symlink (never copied). */
 export const SHARED_PI_FILES = ["auth.json", "keybindings.json", "models.json"];
@@ -126,11 +128,11 @@ export function basePiExtensionsDir(basePiDir = join(homedir(), ".pi", "agent"))
 
 /**
  * Skill dirs for the agent's stub package, highest precedence first: the
- * agent's, then base pi's ~/.pi/agent/skills unless `external.skills: false`.
+ * agent's, kl's, then base pi's ~/.pi/agent/skills unless `external.skills: false`.
  * Pi skips entries that don't exist, so both are always listed.
  */
 export function skillDirs(agentHome: string, config: AgentConfig, basePiDir = join(homedir(), ".pi", "agent")): string[] {
-	const dirs = [join(agentHome, "skills")];
+	const dirs = [join(agentHome, "skills"), KL_SKILLS];
 	if (config.external.skills) dirs.push(join(basePiDir, "skills"));
 	return dirs;
 }
@@ -187,7 +189,7 @@ export interface BuildPiArgsOptions {
 /**
  * pi argv: core -e (the only kl entry), base pi's global extensions
  * (unless external.extensions: false), agent extensions, -e skill stub
- * (agent > base pi skills), --no-skills if external.skills: false,
+ * (agent > kl > base pi skills), --no-skills if external.skills: false,
  * model/thinking defaults the user didn't override, -a, then user args.
  */
 export function buildPiArgs(opts: BuildPiArgsOptions): string[] {

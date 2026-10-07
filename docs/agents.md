@@ -122,8 +122,8 @@ external:
   project_context: true  # Pi's <project_context>: AGENTS.md / CLAUDE.md
 ```
 
-`skills: false` keeps only the agent's own `skills/`. It drops base Pi's
-`~/.pi/agent/skills/` and also everything Pi discovers itself: global
+`skills: false` keeps only the agent's own `skills/` and kl's skills. It
+drops base Pi's `~/.pi/agent/skills/` and also everything Pi discovers itself: global
 skills (`~/.kl/pi/skills/`, `~/.agents/skills/`), the project's
 (`.pi/skills/`, `.agents/skills/`) and those in packages from
 `kl install`. Pi has no switch that drops global skills but keeps the

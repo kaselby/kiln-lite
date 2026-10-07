@@ -303,7 +303,7 @@ description: ""
 #     - {name: today, command: "date +%A"}
 # external:                  # what the agent picks up from outside itself and kl
 #   extensions: true         # base Pi's ~/.pi/agent/extensions
-#   skills: true             # false: only the agent's skills/ (no base Pi, global, project or installed skills)
+#   skills: true             # false: only the agent's and kl's skills (no base Pi, global, project or installed skills)
 #   appended_prompt: true    # false drops APPEND_SYSTEM.md / --append-system-prompt
 #   project_context: true    # false drops AGENTS.md / CLAUDE.md
 YML
