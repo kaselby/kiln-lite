@@ -38,8 +38,8 @@ export interface SelfInfo {
 
 export interface SubagentDeps {
 	getSelf: () => SelfInfo | null;
-	/** True while a cleanup turn, exit or reset is pending: no nudge then. */
-	lifecycleBusy: () => boolean;
+	/** True while an exit is under way (cleanup turn or shutdown): no nudge then. */
+	exiting: () => boolean;
 }
 
 export function installSubagent(pi: ExtensionAPI, deps: SubagentDeps): void {
@@ -225,7 +225,7 @@ function installNudge(pi: ExtensionAPI, deps: SubagentDeps): void {
 
 	pi.on("agent_before_settle", async (event) => {
 		if (messagedParent || nudged || event.outcome !== "completed") return;
-		if (deps.lifecycleBusy()) return;
+		if (deps.exiting()) return;
 		const parent = parentOf(deps);
 		if (!parent) return;
 		nudged = true;

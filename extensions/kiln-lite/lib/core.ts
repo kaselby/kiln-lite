@@ -4,7 +4,7 @@
  * Everything a kl agent needs: config, session id + env, prompt composition
  *, timestamps, messaging (daemon, inbox, message tool), /spawn,
  * the subagent and schedule tools, and the lifecycle (cleanup turn, /exit, /fq,
- * exit_session, in-session reset; ../lifecycle.ts).
+ * exit_session; ../lifecycle.ts).
  *
  * There is no persistence code: a "persistent" agent is one whose
  * folder `kl init --full` scaffolded with a cleanup prompt and memory
@@ -62,20 +62,11 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 	pi.registerTool(planKit.tool);
 	registerSpawnCommand(pi);
-	// A reset (exit_session continue) rebuilds the prompt from the files, as a
-	// fresh start would.
-	const lifecycle = installLifecycle(pi, {
-		onReset: () => {
-			if (!state) return [];
-			promptParts = loadPromptParts(loadConfig({ agentHome: state.agentHome, warn }), state.env, warn);
-			return [];
-		},
-		afterReset: () => watcher?.dispatchIdle(),
-	});
+	const lifecycle = installLifecycle(pi);
 	let cwd = process.cwd();
 	installSubagent(pi, {
 		getSelf: () => (state ? { uuid: state.sessionUuid, name: state.agentId, inboxDir: state.env.KL_INBOX, cwd } : null),
-		lifecycleBusy: () => lifecycle.busy(),
+		exiting: () => lifecycle.exiting(),
 	});
 	registerScheduleTool(pi, { getDaemon: () => daemon, getUuid: () => state?.sessionUuid ?? null });
 
@@ -265,7 +256,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	// --- agent_end: cleanup-turn completion, then drain the inbox into user turns ---
 	// The drain is skipped when shutdown is imminent (cleanup in flight or just
 	// finished): the queued turns would never run (the silent-sweep bug,
-	// commit ca82822). After a reset it runs; the messages land post-reset.
+	// commit ca82822).
 	pi.on("agent_end", async (event, ctx) => {
 		if (!state) return;
 		if (lifecycle.handleAgentEnd(ctx, event.messages)) return;

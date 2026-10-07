@@ -21,8 +21,8 @@
  *   <session>         kl: agent, session id, model, home (no uuid, no cwd)
  *   <name>…           `prompt.extra_sections`
  *
- * The identity, baseline and extra sections (PromptParts) are read at session
- * start and again after a reset (exit_session continue).
+ * The identity, baseline and extra sections (PromptParts) are read once, at
+ * session start.
  *
  * Pi records the prompt's sections in the transcript and appends only changed
  * sections later, so sections other extensions add survive, and a resumed
@@ -55,7 +55,7 @@ export interface PromptOptionsLike {
 	appendSystemPrompt?: string;
 }
 
-/** The prompt text kl reads from files: at session start and after a reset. */
+/** The prompt text kl reads from files at session start. */
 export interface PromptParts {
 	/** Agent identity text, or null when the agent has none. */
 	identity: string | null;

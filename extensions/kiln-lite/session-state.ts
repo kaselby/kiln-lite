@@ -2,7 +2,7 @@
  * Periodic session-state suffix: `[Session state] context: 97k/200k | inbox: 2 unread`.
  *
  * Every Nth tool result gets one line so the agent can see how full its
- * context is (and decide when to reset) and whether mail is waiting.
+ * context is and whether mail is waiting.
  * Nothing else: peer and channel lists were cut.
  *
  * `session_state_interval: 0` in agent.yml disables it. Default every 15 calls.

@@ -22,7 +22,7 @@
  *   3. Embed a unique sentinel in the prompt (so we can identify completion)
  *   4. pi.sendUserMessage(prompt, { deliverAs: "followUp" }) — queues after current turn
  *   5. Core's agent_end handler watches for the sentinel in agent_end messages;
- *      when matched, calls `finish` (shut down, or reset for exit_session continue).
+ *      when matched, shuts down.
  *
  * If the cleanup source is empty, unset, missing, or unreadable: skip the
  * cleanup turn and shut down normally after surfacing any resolution warning.
@@ -43,10 +43,8 @@ export interface CleanupDispatcher {
 	hasPrompt(): boolean;
 	/** Dispatch a cleanup turn (or exit immediately if cleanup is empty/unset). */
 	dispatch(ctx: ExtensionContext): void;
-	/** Bypass any in-flight cleanup and shut down immediately. */
-	forceExit(ctx: ExtensionContext): void;
-	/** Skip the cleanup turn and finish now (shut down, or reset if one is armed). */
-	skip(ctx: ExtensionContext): void;
+	/** Skip (or abandon an in-flight) cleanup turn and shut down now. */
+	exitNow(ctx: ExtensionContext): void;
 	/**
 	 * Called from the single persistent agent_end handler.
 	 * If this agent_end corresponds to the in-flight cleanup, shuts down and
@@ -67,16 +65,15 @@ export function buildCleanupPrompt(body: string, sentinel: string): string {
 }
 
 /**
- * `finish` runs when the exit path completes: right away when there is no
- * cleanup prompt, or after the cleanup turn's agent_end. Default: shut down.
- * The lifecycle module passes one that resets the context instead when
- * exit_session asked to continue.
+ * `shutdown` ends the session: right away when there is no cleanup prompt,
+ * or after the cleanup turn's agent_end. The lifecycle module passes one that
+ * also records that an exit is under way.
  */
 export function createCleanupDispatcher(
 	pi: ExtensionAPI,
 	state: SessionState,
 	warn: (msg: string) => void,
-	finish: (ctx: ExtensionContext) => void = (ctx) => ctx.shutdown(),
+	shutdown: (ctx: ExtensionContext) => void = (ctx) => ctx.shutdown(),
 ): CleanupDispatcher {
 	let pendingSentinel: string | null = null;
 
@@ -86,7 +83,7 @@ export function createCleanupDispatcher(
 	function dispatch(ctx: ExtensionContext): void {
 		const body = resolveBody(warn);
 		if (body === null || !stripHtmlComments(body)) {
-			finish(ctx);
+			shutdown(ctx);
 			return;
 		}
 		if (pendingSentinel) {
@@ -101,13 +98,13 @@ export function createCleanupDispatcher(
 		} catch (err) {
 			warn(`kiln-lite: failed to dispatch cleanup prompt: ${(err as Error).message} — exiting`);
 			pendingSentinel = null;
-			ctx.shutdown();
+			shutdown(ctx);
 		}
 	}
 
-	function forceExit(ctx: ExtensionContext): void {
+	function exitNow(ctx: ExtensionContext): void {
 		pendingSentinel = null;
-		ctx.shutdown();
+		shutdown(ctx);
 	}
 
 	function handleAgentEnd(ctx: ExtensionContext, messages: unknown[]): boolean {
@@ -115,13 +112,8 @@ export function createCleanupDispatcher(
 		const haystack = JSON.stringify(messages);
 		if (!haystack.includes(pendingSentinel)) return false;
 		pendingSentinel = null;
-		finish(ctx);
+		shutdown(ctx);
 		return true;
-	}
-
-	function skip(ctx: ExtensionContext): void {
-		pendingSentinel = null;
-		finish(ctx);
 	}
 
 	return {
@@ -131,8 +123,7 @@ export function createCleanupDispatcher(
 			return body !== null && stripHtmlComments(body) !== "";
 		},
 		dispatch,
-		forceExit,
-		skip,
+		exitNow,
 		handleAgentEnd,
 	};
 }
@@ -170,7 +161,7 @@ export function registerExitCommands(
 			if (dispatcher.inProgress()) {
 				ctx.ui.notify("kiln-lite: cleanup already in flight — force-exiting", "warning");
 				beforeForceExit();
-				dispatcher.forceExit(ctx);
+				dispatcher.exitNow(ctx);
 				return;
 			}
 			dispatcher.dispatch(ctx);
@@ -183,7 +174,7 @@ export function registerExitCommands(
 		description: "Force quit — skip cleanup, exit immediately",
 		handler: async (_args, ctx) => {
 			beforeForceExit();
-			dispatcher.forceExit(ctx);
+			dispatcher.exitNow(ctx);
 		},
 	});
 }
