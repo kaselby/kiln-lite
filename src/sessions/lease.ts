@@ -5,11 +5,12 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, unlinkSync } from "node:fs";
 
 import { pidAlive, writeAtomic, isoNow } from "./fsutil.ts";
-import { klRoot, leasesDir, UUID_RE } from "./paths.ts";
+import { klRoot, leasePath, sessionUuids } from "./paths.ts";
+
+export { leasePath };
 
 export interface Lease {
 	uuid: string;
@@ -22,11 +23,6 @@ export interface Lease {
 	tmux: string;
 	state: "busy" | "idle";
 	since: string;
-}
-
-export function leasePath(uuid: string, root = klRoot()): string {
-	if (!UUID_RE.test(uuid)) throw new Error(`not a session uuid: ${uuid}`);
-	return join(leasesDir(root), `${uuid}.json`);
 }
 
 /** Start time of `pid` (ISO), or null if it isn't running. */
@@ -114,16 +110,9 @@ export function leaseIsLive(lease: Lease, startTimes?: Map<number, string>): boo
 }
 
 export function allLeases(root = klRoot()): Lease[] {
-	let files: string[];
-	try {
-		files = readdirSync(leasesDir(root));
-	} catch {
-		return [];
-	}
 	const out: Lease[] = [];
-	for (const f of files) {
-		if (!f.endsWith(".json") || f.startsWith(".")) continue;
-		const l = readLease(f.slice(0, -5), root);
+	for (const uuid of sessionUuids(root)) {
+		const l = readLease(uuid, root);
 		if (l) out.push(l);
 	}
 	return out;

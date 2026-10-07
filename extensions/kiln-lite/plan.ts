@@ -5,11 +5,15 @@
  * plan-tool.ts and composes these building blocks.
  *
  * Plan shape: `{ goal, tasks: [{ description, status }], updated_at }`.
- * Stored at `<kl root>/run/plans/<session uuid>.json`.
+ * Stored at `<kl root>/run/<session uuid>/plan.json`.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+
+import { planPath } from "../../src/sessions/paths.ts";
+
+export { planPath };
 
 // --- Types ---
 
@@ -30,17 +34,8 @@ export interface PlanData {
 
 // --- Disk I/O ---
 
-/**
- * <kl root>/run/plans/<session uuid>.json. Keyed by UUID, not the session
- * name: names are reusable handles, so a name-keyed plan would leak
- * into a later session that draws the same name.
- */
-export function planPath(klRoot: string, sessionUuid: string): string {
-	return join(klRoot, "run", "plans", `${sessionUuid}.json`);
-}
-
 export function readPlan(klRoot: string, sessionUuid: string): PlanData | null {
-	const path = planPath(klRoot, sessionUuid);
+	const path = planPath(sessionUuid, klRoot);
 	if (!existsSync(path)) return null;
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -56,8 +51,8 @@ export function readPlan(klRoot: string, sessionUuid: string): PlanData | null {
 }
 
 export function writePlan(klRoot: string, sessionUuid: string, plan: PlanData): void {
-	mkdirSync(dirname(planPath(klRoot, sessionUuid)), { recursive: true });
-	writeFileSync(planPath(klRoot, sessionUuid), `${JSON.stringify(plan, null, 2)}\n`);
+	mkdirSync(dirname(planPath(sessionUuid, klRoot)), { recursive: true });
+	writeFileSync(planPath(sessionUuid, klRoot), `${JSON.stringify(plan, null, 2)}\n`);
 }
 
 /**

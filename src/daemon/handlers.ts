@@ -17,7 +17,7 @@ import { isAbsolute, resolve } from "node:path";
 import * as proto from "./protocol.ts";
 import type { SessionRecord } from "./state.ts";
 import { appendChannelHistory, writeInboxMessage } from "./inbox.ts";
-import { inboxRoot, UUID_RE } from "../sessions/paths.ts";
+import { inboxDir, UUID_RE } from "../sessions/paths.ts";
 import { entryExists, lastSeen, readEntry } from "../sessions/registry.ts";
 import { liveLease } from "../sessions/lease.ts";
 import { resolveTarget, ResolveError, type Resolved } from "../sessions/resolve.ts";
@@ -196,12 +196,12 @@ export async function handlePublish(
     // like a DM, and reads it when it is resumed.
     let delivered = 0;
     for (const sub_id of subscribers) {
-        const inbox_root = daemon.state.presence.get(sub_id)?.inbox_path
-            ?? (UUID_RE.test(sub_id) && entryExists(sub_id, daemon.config.klRoot) ? inboxRoot(daemon.config.klRoot) : undefined)
+        const dir = daemon.state.presence.get(sub_id)?.inbox_path
+            ?? (UUID_RE.test(sub_id) && entryExists(sub_id, daemon.config.klRoot) ? inboxDir(sub_id, daemon.config.klRoot) : undefined)
             ?? daemon.state.knownSessions.lookup(sub_id)?.inbox_path;
-        if (!inbox_root) continue; // no running session, registry entry or known inbox
+        if (!dir) continue; // no running session, registry entry or known inbox
         writeInboxMessage({
-            inboxRoot: inbox_root,
+            dir,
             recipient: sub_id,
             sender: req.name || req.session,
             senderSession: agentSession(daemon, req),
@@ -248,7 +248,7 @@ function formatLastSeen(d: Date | null): string {
 /**
  * Direct message by name. Name → UUID happens here,
  * once, so a reused name can't pick up old mail:
- *   - live (lease) → write to run/inbox/<uuid>/, ack "sent"
+ *   - live (lease) → write to run/<uuid>/inbox/, ack "sent"
  *   - registry entry, nothing live → write anyway (parked), ack says so
  *     and how to wake it
  *   - unknown/ambiguous → error, nothing written
@@ -277,7 +277,7 @@ export async function handleSendDirect(
     }
 
     writeInboxMessage({
-        inboxRoot: inboxRoot(daemon.config.klRoot),
+        dir: inboxDir(target.uuid, daemon.config.klRoot),
         recipient: target.uuid,
         sender: req.name || req.session,
         senderSession: agentSession(daemon, req),
@@ -310,7 +310,7 @@ export async function handleSendDirect(
  * Detached helpers can outlive the interactive session, so treating them as
  * ordinary senders would make ensureSession() create an unprunable pid=0
  * presence record. The requester envelope already carries the authoritative
- * inbox root; self-delivery can safely use it directly while peer DMs retain
+ * inbox dir; self-delivery can safely use it directly while peer DMs retain
  * their live-recipient requirement.
  */
 export async function handleDeliverSelf(
@@ -337,7 +337,7 @@ export async function handleDeliverSelf(
     if (!summary) return proto.error(msg.ref!, "deliver_self requires a summary");
 
     writeInboxMessage({
-        inboxRoot: req.inbox_path,
+        dir: req.inbox_path,
         recipient: req.session,
         sender: req.name || req.session,
         // No senderSession: a self-wake is not agent mail (no disclaimer).

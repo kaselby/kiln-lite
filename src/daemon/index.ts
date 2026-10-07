@@ -40,7 +40,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { handlers } from "./handlers.ts";
-import { inboxRoot, klRoot } from "../sessions/paths.ts";
+import { klRoot } from "../sessions/paths.ts";
 import { cleanInboxes } from "./inbox-cleanup.ts";
 import * as proto from "./protocol.ts";
 import { reconcile } from "./reconcile.ts";
@@ -64,7 +64,7 @@ function defaultStateDir(): string {
 }
 
 export interface DaemonConfig {
-    /** kl root: run/{sessions,leases,inbox} live under it (src/sessions/paths.ts). */
+    /** kl root: run/<uuid>/ session folders live under it (src/sessions/paths.ts). */
     klRoot: string;
     socketPath: string;
     stateDir: string;
@@ -177,15 +177,11 @@ export class Daemon {
             // Only the kl root's own inbox tree: never paths learned from
             // clients, so a misconfigured session can't point the sweep
             // at someone else's files.
-            const swept = cleanInboxes({
-                inboxRoots: [inboxRoot(this.config.klRoot)],
-                maxAgeMs: INBOX_CLEANUP_MAX_AGE_MS,
-                log: (m) => this.log.log(m),
-            });
-            if (swept.deleted > 0 || swept.rootsScanned > 0) {
+            const swept = cleanInboxes({ root: this.config.klRoot, maxAgeMs: INBOX_CLEANUP_MAX_AGE_MS });
+            if (swept.deleted > 0 || swept.sessionsScanned > 0) {
                 this.log.log(
-                    `inbox-cleanup: scanned ${swept.sessionsScanned} session inbox(es) ` +
-                        `across ${swept.rootsScanned} root(s), deleted ${swept.deleted} stale message(s)`,
+                    `inbox-cleanup: scanned ${swept.sessionsScanned} session inbox(es), ` +
+                        `deleted ${swept.deleted} stale message(s)`,
                 );
             }
         } catch (err) {

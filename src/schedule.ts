@@ -1,6 +1,6 @@
 /**
  * Scheduled wakes (outside the daemon). A wake is a record under
- * <kl root>/run/schedule/<session uuid>/ plus one detached worker process
+ * <kl root>/run/<session uuid>/schedule/ plus one detached worker process
  * (src/schedule-worker.ts) that sleeps until a time, or polls a pid until it
  * exits, then delivers the note to the session's own inbox through the
  * daemon (deliver_self). Wakes survive the session's exit (the note parks in
@@ -21,7 +21,9 @@ import { execFileSync } from "node:child_process";
 import type { Requester } from "./daemon/protocol.ts";
 import { resolveTsxBin } from "./client/autostart.ts";
 import { pidAlive, writeAtomic, isoNow } from "./sessions/fsutil.ts";
-import { klRoot, runDir, UUID_RE } from "./sessions/paths.ts";
+import { scheduleDir } from "./sessions/paths.ts";
+
+export { scheduleDir };
 
 export const WORKER_ENTRY = join(dirname(fileURLToPath(import.meta.url)), "schedule-worker.ts");
 export const DEFAULT_NOTE = "A scheduled wake fired. Check on the thing you were waiting for.";
@@ -36,11 +38,6 @@ export interface WakeRecord {
 	created: string;
 	note: string;
 	requester: Requester;
-}
-
-export function scheduleDir(uuid: string, root = klRoot()): string {
-	if (!UUID_RE.test(uuid)) throw new Error(`not a session uuid: ${uuid}`);
-	return join(runDir(root), "schedule", uuid);
 }
 
 const recordPath = (dir: string, id: string) => join(dir, `${id}.json`);

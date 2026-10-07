@@ -2,7 +2,7 @@
 
 Sessions send each other direct messages and channel broadcasts through a
 small daemon. Every message ends up as a markdown file in the recipient's
-inbox, `<kl root>/run/inbox/<session uuid>/` (`$KL_INBOX` inside the
+inbox, `<kl root>/run/<session uuid>/inbox/` (`$KL_INBOX` inside the
 session). This page covers what happens to a message from send to
 delivery, and the daemon behind it. The commands are in
 [cli.md](cli.md#kl-message) and the `message` tool is in
@@ -70,7 +70,7 @@ whether the agent is busy:
 
   ```
   [Notification | AGENT MESSAGE from scout-bright-raven | source: kiln-lite/dm | priority: high | sent 14:02]
-  /Users/sam/.kl/run/inbox/<uuid>/20261006T180200Z-61d000a966b14ee1.md
+  /Users/sam/.kl/run/<uuid>/inbox/20261006T180200Z-61d000a966b14ee1.md
   ```
 
   `source` is `kiln-lite/#<channel>` for a channel copy. `priority` appears
@@ -116,7 +116,7 @@ message `user` back, because no session has that name.
 ## Message files
 
 ```
-<kl root>/run/inbox/<uuid>/20261006T180200Z-61d000a966b14ee1.md
+<kl root>/run/<uuid>/inbox/20261006T180200Z-61d000a966b14ee1.md
 ---
 from: helper-hollow-grove
 from_session: 01a10db3-5b00-72fe-b16b-590abb4b8d91
@@ -172,7 +172,7 @@ your shell, say). A session registering in that window keeps it up.
 
 **Inbox cleanup.** Each time the daemon starts, it deletes message files
 whose `.read` marker is more than a day old, together with the marker,
-across every inbox under `<kl root>/run/inbox/`. Unread mail is never
+across every inbox, `<kl root>/run/*/inbox/`. Unread mail is never
 deleted.
 
 **When it's down.** Nothing that reads mail needs it: delivery to a running

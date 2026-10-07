@@ -6,7 +6,7 @@
  * Everything here reads files; nothing needs the daemon to be up:
  *   <kl root>/daemon/subscriptions/<uuid>.json      a session's channels (the daemon mirrors every change here)
  *   <kl root>/daemon/channels/<name>/history.jsonl  every message ever posted to a channel
- *   <kl root>/run/inbox/<uuid>/<id>.md              a session's mail (DMs and channel copies); <id>.read = delivered
+ *   <kl root>/run/<uuid>/inbox/<id>.md              a session's mail (DMs and channel copies); <id>.read = delivered
  *
  * Output uses names, never UUIDs (`from`, `to`, subscribers). from_session
  * is the sender's UUID, kept for callers that need identity.

@@ -1,5 +1,5 @@
 /**
- * Status file: an optional `<kl root>/run/status/<uuid>.json`, an override
+ * Status file: an optional `<kl root>/run/<uuid>/status.json`, an override
  * hook for things outside kl (a memory tool saying "working on thread X").
  * kl only reads it and never writes or deletes it:
  *

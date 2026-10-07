@@ -20,12 +20,14 @@ function makeTmpHome(): string {
 	return dir;
 }
 
+const U = "01a10da3-c9da-7051-8a1b-2c3d4e5f6a7b";
+
 // --- planPath ---
 
 test("planPath builds expected path", () => {
 	assert.equal(
-		planPath("/kl", "01a10da3-c9da-7051"),
-		join("/kl", "run", "plans", "01a10da3-c9da-7051.json"),
+		planPath(U, "/kl"),
+		join("/kl", "run", U, "plan.json"),
 	);
 });
 
@@ -46,7 +48,7 @@ test("resolveSticky: omit keeps prior, empty clears, value replaces", () => {
 
 test("readPlan returns null when no plan exists", () => {
 	const home = makeTmpHome();
-	assert.equal(readPlan(home, "agent-test-one"), null);
+	assert.equal(readPlan(home, U), null);
 	rmSync(home, { recursive: true });
 });
 
@@ -61,11 +63,11 @@ test("writePlan persists and readPlan recovers it", () => {
 		],
 		updated_at: "2026-06-13T12:00:00.000Z",
 	};
-	writePlan(home, "agent-test-two", plan);
+	writePlan(home, U, plan);
 
-	assert.ok(existsSync(planPath(home, "agent-test-two")));
+	assert.ok(existsSync(planPath(U, home)));
 
-	const recovered = readPlan(home, "agent-test-two");
+	const recovered = readPlan(home, U);
 	assert.deepEqual(recovered, plan);
 
 	rmSync(home, { recursive: true });
@@ -80,20 +82,20 @@ test("writePlan round-trips optional project + worktree fields", () => {
 		tasks: [{ description: "Write code", status: "in_progress" }],
 		updated_at: "2026-06-18T12:00:00.000Z",
 	};
-	writePlan(home, "agent-fields", plan);
-	assert.deepEqual(readPlan(home, "agent-fields"), plan);
+	writePlan(home, U, plan);
+	assert.deepEqual(readPlan(home, U), plan);
 	rmSync(home, { recursive: true });
 });
 
 test("readPlan rejects non-string project / worktree", () => {
 	const home = makeTmpHome();
-	const dir = join(home, "state", "sessions", "agent-bad");
+	const dir = join(home, "run", U);
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(
 		join(dir, "plan.json"),
 		JSON.stringify({ goal: "g", project: 5, tasks: [] }),
 	);
-	assert.equal(readPlan(home, "agent-bad"), null);
+	assert.equal(readPlan(home, U), null);
 	rmSync(home, { recursive: true });
 });
 
@@ -110,8 +112,8 @@ test("formatPlanSummary appends project @ worktree context", () => {
 
 test("writePlan creates session directory if absent", () => {
 	const home = makeTmpHome();
-	const id = "01a10da3-mkdir-test";
-	const dir = join(home, "run", "plans");
+	const id = U;
+	const dir = join(home, "run", id);
 	assert.ok(!existsSync(dir));
 
 	writePlan(home, id, {
@@ -121,15 +123,15 @@ test("writePlan creates session directory if absent", () => {
 	});
 
 	assert.ok(existsSync(dir));
-	assert.ok(existsSync(planPath(home, id)));
+	assert.ok(existsSync(planPath(id, home)));
 
 	rmSync(home, { recursive: true });
 });
 
 test("readPlan returns null on malformed JSON", () => {
 	const home = makeTmpHome();
-	const id = "agent-bad-json";
-	const dir = join(home, "state", "sessions", id);
+	const id = U;
+	const dir = join(home, "run", id);
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(join(dir, "plan.json"), "not json{{{");
 
@@ -139,8 +141,8 @@ test("readPlan returns null on malformed JSON", () => {
 
 test("readPlan returns null on valid JSON with wrong shape", () => {
 	const home = makeTmpHome();
-	const id = "agent-wrong-shape";
-	const dir = join(home, "state", "sessions", id);
+	const id = U;
+	const dir = join(home, "run", id);
 	mkdirSync(dir, { recursive: true });
 
 	// Missing tasks array
@@ -229,7 +231,7 @@ test("formatPlanSummary lists multiple in-progress tasks", () => {
 
 test("maybeSuffix fires at interval when plan has in_progress tasks", () => {
 	const home = makeTmpHome();
-	const sessionUuid = "agent-reminder-test";
+	const sessionUuid = U;
 
 	writePlan(home, sessionUuid, {
 		goal: "Reminder test",
@@ -266,7 +268,7 @@ test("maybeSuffix fires at interval when plan has in_progress tasks", () => {
 
 test("maybeSuffix does not fire when plan has no in_progress tasks", () => {
 	const home = makeTmpHome();
-	const sessionUuid = "agent-no-ip";
+	const sessionUuid = U;
 
 	writePlan(home, sessionUuid, {
 		goal: "All done",
@@ -289,7 +291,7 @@ test("maybeSuffix does not fire when plan has no in_progress tasks", () => {
 test("maybeSuffix does not fire when no plan exists", () => {
 	const home = makeTmpHome();
 	const reminder = createPlanReminder(
-		{ getKlRoot: () => home, getSessionUuid: () => "agent-no-plan" },
+		{ getKlRoot: () => home, getSessionUuid: () => U },
 		3,
 	);
 
@@ -313,7 +315,7 @@ test("maybeSuffix returns empty before session_start (null deps)", () => {
 
 test("resetCounter restarts the cadence", () => {
 	const home = makeTmpHome();
-	const sessionUuid = "agent-reset-test";
+	const sessionUuid = U;
 
 	writePlan(home, sessionUuid, {
 		goal: "Reset test",
@@ -343,7 +345,7 @@ test("resetCounter restarts the cadence", () => {
 
 test("maybeSuffix returns empty when interval is 0 (disabled)", () => {
 	const home = makeTmpHome();
-	const sessionUuid = "agent-disabled";
+	const sessionUuid = U;
 
 	writePlan(home, sessionUuid, {
 		goal: "Test",
@@ -365,7 +367,7 @@ test("maybeSuffix returns empty when interval is 0 (disabled)", () => {
 
 test("maybeSuffix picks up plan changes between intervals", () => {
 	const home = makeTmpHome();
-	const sessionUuid = "agent-dynamic";
+	const sessionUuid = U;
 
 	// Start with in_progress task
 	writePlan(home, sessionUuid, {

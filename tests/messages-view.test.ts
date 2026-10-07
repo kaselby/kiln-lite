@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { followHistory, formatHistory, listChannels, readHistory, resolveHistoryTarget, type MessageRecord } from "../src/client/messages.ts";
 import { writeInboxMessage, appendChannelHistory } from "../src/daemon/inbox.ts";
-import { daemonDir, inboxRoot, statusPath } from "../src/sessions/paths.ts";
+import { daemonDir, inboxDir, statusPath } from "../src/sessions/paths.ts";
 import { writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
 import { guardDetach } from "../src/sessions/tmux.ts";
 import { doingLine, formatSessionDetail, listSessions, sessionDetail } from "../src/sessions/view.ts";
@@ -67,9 +67,9 @@ test("history: channel (#name) and a session's inbox by name, last N, read flags
 	const ch = resolveHistoryTarget("#build", { root });
 	assert.deepEqual(readHistory(ch, { root, limit: 2 }).map((m) => m.summary), ["m2", "m3"]);
 
-	const p1 = writeInboxMessage({ inboxRoot: inboxRoot(root), recipient: U1, recipientName: "rev-calm-fox", sender: "sam", summary: 'say "hi"', body: "line1\nline2" });
+	const p1 = writeInboxMessage({ dir: inboxDir(U1, root), recipient: U1, recipientName: "rev-calm-fox", sender: "sam", summary: 'say "hi"', body: "line1\nline2" });
 	writeFileSync(p1.replace(/\.md$/, ".read"), "");
-	writeInboxMessage({ inboxRoot: inboxRoot(root), recipient: U1, recipientName: "rev-calm-fox", sender: "rev-red-owl", senderSession: U2, summary: "chan copy", body: "x", channel: "build" });
+	writeInboxMessage({ dir: inboxDir(U1, root), recipient: U1, recipientName: "rev-calm-fox", sender: "rev-red-owl", senderSession: U2, summary: "chan copy", body: "x", channel: "build" });
 	const s = resolveHistoryTarget("rev-calm-fox", { root });
 	assert.equal(s.kind, "session");
 	const msgs = readHistory(s, { root });
@@ -91,14 +91,14 @@ test("history follow: streams only messages written after it starts", async () =
 	entry(root, U1, "rev-calm-fox");
 	const channelsDir = join(daemonDir(root), "channels");
 	appendChannelHistory({ channelsDir, channel: "build", sender: "a", summary: "before", body: "" });
-	writeInboxMessage({ inboxRoot: inboxRoot(root), recipient: U1, sender: "a", summary: "before", body: "" });
+	writeInboxMessage({ dir: inboxDir(U1, root), recipient: U1, sender: "a", summary: "before", body: "" });
 	const got: MessageRecord[] = [];
 	const stops = [
 		followHistory(resolveHistoryTarget("#build", { root }), (m) => got.push(m), { root, intervalMs: 20 }),
 		followHistory(resolveHistoryTarget("rev-calm-fox", { root }), (m) => got.push(m), { root, intervalMs: 20 }),
 	];
 	appendChannelHistory({ channelsDir, channel: "build", sender: "b", summary: "after-chan", body: "" });
-	writeInboxMessage({ inboxRoot: inboxRoot(root), recipient: U1, sender: "b", summary: "after-dm", body: "" });
+	writeInboxMessage({ dir: inboxDir(U1, root), recipient: U1, sender: "b", summary: "after-dm", body: "" });
 	// a partial line is not emitted until it is complete
 	appendFileSync(join(channelsDir, "build", "history.jsonl"), '{"ts":"2026-10-06T00:00:00Z","from":"c","summ');
 	await new Promise((r) => setTimeout(r, 120));
@@ -131,7 +131,6 @@ test("sessions: doing = plan goal + progress; a status file overrides it; detail
 	]);
 	assert.equal(doingLine(null, { goal: "x".repeat(100), tasks: [{ description: "a", status: "done" }], updated_at: "" }).length, 60);
 
-	mkdirSync(join(root, "run", "status"), { recursive: true });
 	writeFileSync(statusPath(U2, root), JSON.stringify({ summary: "fixing the login bug", detail: "from the tracker\nline 2" }));
 	rows = listSessions({ root }).rows;
 	assert.equal(rows[1].doing, "fixing the login bug");

@@ -72,6 +72,7 @@ export interface Requester {
     session: string;
     /** Session name (handle), for the `from:` line of messages. */
     name?: string;
+    /** This session's own inbox dir (run/<uuid>/inbox). */
     inbox_path?: string;
 }
 

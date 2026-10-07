@@ -13,7 +13,7 @@ export interface EnvInputs {
 	agentId: string;
 	sessionUuid: string;
 	config: AgentConfig;
-	/** ~/.kl/run/inbox/<uuid>. */
+	/** ~/.kl/run/<uuid>/inbox. */
 	inboxDir: string;
 }
 

@@ -15,13 +15,15 @@ that, which is why mail, plans and status files are keyed by UUID. How
 names resolve (`name@<id>`, agent names) is in
 [cli.md](cli.md#session-names).
 
-Each session has two files in the kl folder ([config.md](config.md)):
+Each session has a folder in the kl folder, `run/<uuid>/`
+([config.md](config.md)). Two files in it say what the session is and
+whether it runs:
 
-- **Registry entry**, `run/sessions/<uuid>.yml`: the agent, the current
+- **Registry entry**, `run/<uuid>/session.yml`: the agent, the current
   name and every name it has run under, the agent folder, the transcript
   path, the working directory, the parent's UUID, and the creation time.
   The session's own process writes it when it starts. It is never removed.
-- **Lease**, `run/leases/<uuid>.json`: the process id, its start time,
+- **Lease**, `run/<uuid>/lease.json`: the process id, its start time,
   the name, the tmux session, and `busy` or `idle`. The running process
   writes it and removes it when it exits. A session counts as running only
   if the lease's process is alive and is the same process (start time and
@@ -128,7 +130,7 @@ ends. Messages that arrive meanwhile stay in the inbox for the next start.
 
 ## What a session is doing
 
-**Plans.** The `plan` tool writes `run/plans/<uuid>.json`:
+**Plans.** The `plan` tool writes `run/<uuid>/plan.json`:
 
 ```json
 { "goal": "...", "project": "...", "worktree": "...",
@@ -153,7 +155,7 @@ status, and the plan with every task.
 
 ## Status files
 
-A status file, `run/status/<uuid>.json`, lets a tool outside kl say what a
+A status file, `run/<uuid>/status.json`, lets a tool outside kl say what a
 session is doing, for example a memory tool naming the thread a session
 is on. kl only reads it; nothing in kl writes one. Without one, DOING
 comes from the plan.
@@ -184,4 +186,4 @@ them:
 | `AGENT_NAME` | the agent name (`scout`) |
 | `AGENT_ID` | the session name (`scout-bright-raven`) |
 | `SESSION_UUID` | the session's UUID |
-| `KL_INBOX` | the session's inbox, `<kl root>/run/inbox/<uuid>/` |
+| `KL_INBOX` | the session's inbox, `<kl root>/run/<uuid>/inbox/` |

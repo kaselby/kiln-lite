@@ -7,7 +7,7 @@ description: Inter-session messaging via kiln-lite's daemon + file-based inboxes
 
 Every kiln-lite session has a name (`<agent>-<adj>-<noun>`, e.g.
 `reviewer-calm-fox`) and a file-based inbox at `$KL_INBOX`
-(`~/.kl/run/inbox/<session uuid>/`). Sessions communicate by dropping markdown
+(`~/.kl/run/<session uuid>/inbox/`). Sessions communicate by dropping markdown
 files into each other's inboxes — directly (DM) or through a channel
 (broadcast to subscribers).
 
@@ -179,7 +179,7 @@ tools, scripts you invoke via bash):
 | `AGENT_ID`      | Your session's name (e.g. `reviewer-calm-fox`)  |
 | `AGENT_NAME`    | The name component (e.g. `scout`)                |
 | `SESSION_UUID`  | Pi session UUID                                 |
-| `KL_INBOX`      | `~/.kl/run/inbox/$SESSION_UUID/`                |
+| `KL_INBOX`      | `~/.kl/run/$SESSION_UUID/inbox/`                |
 
 ## Gotchas
 

@@ -25,7 +25,7 @@
 import { readFileSync } from "node:fs";
 
 import { resolveUserName } from "../../extensions/kiln-lite/config.ts";
-import { inboxRoot } from "../sessions/paths.ts";
+import { inboxDir } from "../sessions/paths.ts";
 import { DaemonClient } from "./index.ts";
 import { send } from "./send.ts";
 import {
@@ -89,7 +89,7 @@ function makeClient(cmd: string): DaemonClient {
 	const name = process.env.AGENT_ID;
 	if (!name) die("AGENT_ID not set (it comes with SESSION_UUID)");
 	const agent = process.env.AGENT_NAME ?? name.split("-")[0] ?? "agent";
-	return new DaemonClient({ requester: { agent, session, name, inbox_path: inboxRoot() } });
+	return new DaemonClient({ requester: { agent, session, name, inbox_path: inboxDir(session) } });
 }
 
 interface Parsed {

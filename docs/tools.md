@@ -47,7 +47,7 @@ Each call replaces the whole plan. `project` and `worktree` keep their
 previous value when omitted, and `""` clears them. Returns `Plan updated. 2/5
 done, 1 in progress, 2 pending.`
 
-The plan is saved to `<kl root>/run/plans/<session uuid>.json` and shown by
+The plan is saved to `<kl root>/run/<session uuid>/plan.json` and shown by
 `kl sessions` and the `sessions` tool. Every 15 tool calls without a plan
 update, while a task is `in_progress`, kl appends a `[Plan]` summary to a
 tool result.
@@ -66,7 +66,7 @@ exited`) and the note as its body, delivered like any other mail.
 | `cancel` | `id` | remove a wake |
 
 `at` and `watch` return `Wake <id> scheduled: fires … Worker pid <n>.` Each
-wake is a record in `<kl root>/run/schedule/<session uuid>/` plus a small
+wake is a record in `<kl root>/run/<session uuid>/schedule/` plus a small
 detached process that waits and then delivers. If the session has exited,
 the wake parks in its inbox. Wakes don't survive a reboot. Delivery is
 tried 3 times, after which the error is kept and shown by `list`.

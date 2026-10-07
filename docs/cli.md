@@ -159,7 +159,7 @@ failures with 1.
 ## Status files
 
 An extension can override what `kl sessions` shows as DOING by writing
-`<kl root>/run/status/<session uuid>.json`. The format is in
+`<kl root>/run/<session uuid>/status.json`. The format is in
 [sessions.md](sessions.md#status-files).
 
 ## Environment

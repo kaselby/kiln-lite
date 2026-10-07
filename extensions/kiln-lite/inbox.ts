@@ -66,7 +66,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, watch, type FSWatcher } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -130,7 +130,7 @@ export interface InboxWatcherOptions {
 	/**
 	 * This session's UUID. Mail whose `from_session` is this UUID (a
 	 * self-delivered wake, a message to oneself) is not agent mail. Default:
-	 * the inbox dir's basename, which is the UUID under run/inbox/<uuid>.
+	 * the UUID in the inbox dir's path, run/<uuid>/inbox.
 	 */
 	selfSession?: string;
 	/**
@@ -236,7 +236,7 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 	const inFlightTimeoutMs = opts.inFlightTimeoutMs ?? 15000;
 	const defer = opts.defer ?? ((fn: () => void) => void setImmediate(fn));
 	const resolvedInboxDir = resolve(inboxDir);
-	const selfSession = opts.selfSession ?? basename(resolvedInboxDir);
+	const selfSession = opts.selfSession ?? basename(dirname(resolvedInboxDir));
 	const watchDir = opts.watch ?? fsWatchDir;
 
 	try {

@@ -9,7 +9,7 @@ import { DaemonState } from "../src/daemon/state.ts";
 import { reconcile } from "../src/daemon/reconcile.ts";
 import * as proto from "../src/daemon/protocol.ts";
 import { sendChannel } from "../src/client/send.ts";
-import { inboxRoot } from "../src/sessions/paths.ts";
+import { inboxDir } from "../src/sessions/paths.ts";
 import { selfLease, writeLease } from "../src/sessions/lease.ts";
 import { writeEntry } from "../src/sessions/registry.ts";
 
@@ -45,13 +45,13 @@ async function runningSession(uuid: string): Promise<proto.Requester> {
 		{ uuid, agent: "rev", name: "rev-red-owl", names: [{ name: "rev-red-owl", bound }], home: "/h/rev", transcript: join(dir, `${uuid}.jsonl`), cwd: "/w", created: bound },
 		dir,
 	);
-	const req: proto.Requester = { agent: "rev", session: uuid, name: "rev-red-owl", inbox_path: inboxRoot(dir) };
+	const req: proto.Requester = { agent: "rev", session: uuid, name: "rev-red-owl", inbox_path: inboxDir(uuid, dir) };
 	assert.equal((await handleRegister(proto.register(req, { pid: process.pid }), daemon as never)).type, proto.ACK);
 	return req;
 }
 
 function inboxCount(uuid: string): number {
-	const d = join(inboxRoot(dir), uuid);
+	const d = inboxDir(uuid, dir);
 	return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")).length : 0;
 }
 
@@ -124,7 +124,7 @@ describe("channel names", () => {
 describe("reconcile: presence with no pid", () => {
 	it("drops a pid-0 record with no live lease", () => {
 		daemon.state.presence.register({
-			session_id: UB, agent_name: "rev", inbox_path: inboxRoot(dir), pid: 0,
+			session_id: UB, agent_name: "rev", inbox_path: inboxDir(UB, dir), pid: 0,
 			first_seen_at: "", last_seen_at: "", status: "unknown",
 		});
 		reconcile(daemon.state, dir);
@@ -134,7 +134,7 @@ describe("reconcile: presence with no pid", () => {
 	it("keeps a pid-0 record whose session has a live lease, and takes the lease's pid", () => {
 		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
 		daemon.state.presence.register({
-			session_id: UB, agent_name: "rev", inbox_path: inboxRoot(dir), pid: 0,
+			session_id: UB, agent_name: "rev", inbox_path: inboxDir(UB, dir), pid: 0,
 			first_seen_at: "", last_seen_at: "", status: "unknown",
 		});
 		reconcile(daemon.state, dir);

@@ -39,7 +39,7 @@ const DROPPED: Record<string, string> = {
 	startup: "kl runs no startup commands; use an extension",
 	tools_dir: "kl no longer discovers shell tools",
 	sessions_dir: "session ids live in the kl registry; summaries go to memory/sessions/",
-	inbox_dir: "inboxes live at <kl root>/run/inbox/<uuid>/",
+	inbox_dir: "inboxes live at <kl root>/run/<uuid>/inbox/",
 };
 
 /** Top-level keys that now live inside `prompt:`. */

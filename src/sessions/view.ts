@@ -5,7 +5,7 @@
  * objects as JSON.
  *
  * "doing" is the session's plan goal (+ progress, e.g. 2/5), from
- * run/plans/<uuid>.json. An optional run/status/<uuid>.json, written by
+ * run/<uuid>/plan.json. An optional run/<uuid>/status.json, written by
  * something outside kl, overrides it (status.ts).
  */
 
@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { readPlan, type PlanData } from "../../extensions/kiln-lite/plan.ts";
 import { inboxFiles } from "../client/messages.ts";
 import { liveLeases, type Lease } from "./lease.ts";
-import { inboxDir, klRoot } from "./paths.ts";
+import { inboxDir, klRoot, runDir } from "./paths.ts";
 import { lastSeen, listEntries, visibleEntries, type RegistryEntry } from "./registry.ts";
 import { resolveTarget } from "./resolve.ts";
 import { shortId } from "./resolve.ts";
@@ -134,7 +134,7 @@ const tilde = (p: string): string => {
 export function formatSessionList(list: SessionList, root = klRoot()): string {
 	const { rows, older, hidden } = list;
 	const never = hidden ? `(${hidden} never started a conversation; kl sessions --all)` : "";
-	if (rows.length === 0) return never || `(no sessions in ${join(root, "run", "sessions")})`;
+	if (rows.length === 0) return never || `(no sessions in ${runDir(root)})`;
 	const idWidth = Math.max(8, ...rows.map((r) => r.id.length));
 	const label = (r: SessionRow): string => `${"  ".repeat(r.depth)}${r.depth ? "└ " : ""}${r.name}${r.self ? " (you)" : ""}`;
 	const nameWidth = Math.max(28, ...rows.map((r) => label(r).length));

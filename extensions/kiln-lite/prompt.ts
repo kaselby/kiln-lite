@@ -77,7 +77,7 @@ export interface SessionInfo {
 	/** `provider/id`, or undefined if no model is selected. */
 	model?: string;
 	home: string;
-	/** This session's inbox dir (~/.kl/run/inbox/<uuid>): the one place a UUID reaches the model. */
+	/** This session's inbox dir (~/.kl/run/<uuid>/inbox): the one place a UUID reaches the model. */
 	inbox?: string;
 }
 

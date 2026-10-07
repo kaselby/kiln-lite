@@ -8,7 +8,7 @@
  *
  * File layout:
  *
- *   <kl root>/run/inbox/<recipient uuid>/<YYYYMMDDTHHMMSSZ>-<rand>.md
+ *   <kl root>/run/<recipient uuid>/inbox/<YYYYMMDDTHHMMSSZ>-<rand>.md
  *
  *   ---
  *   from: <sender name>
@@ -48,10 +48,9 @@ function escapeYamlScalar(s: string): string {
 }
 
 export interface WriteInboxOptions {
-    /** Root directory that holds per-recipient inbox dirs. Typically
-     *  `<recipient's agent_home>/inbox`. */
-    inboxRoot: string;
-    /** Recipient inbox dir name (the session UUID). */
+    /** The recipient's inbox dir (paths.ts inboxDir). */
+    dir: string;
+    /** Recipient session UUID. */
     recipient: string;
     /** Shown on `to:`; defaults to `recipient`. */
     recipientName?: string;
@@ -69,7 +68,7 @@ export interface WriteInboxOptions {
 export function writeInboxMessage(opts: WriteInboxOptions): string {
     const priority = opts.priority ?? "normal";
     const now = new Date();
-    const dir = join(opts.inboxRoot, opts.recipient);
+    const dir = opts.dir;
     mkdirSync(dir, { recursive: true });
 
     const id = `${compactTimestamp(now)}-${randomBytes(8).toString("hex")}`;

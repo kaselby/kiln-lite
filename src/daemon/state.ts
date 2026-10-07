@@ -25,8 +25,7 @@ import { validChannel } from "./protocol.ts";
 export interface SessionRecord {
     session_id: string;
     agent_name: string;
-    /** Inbox directory for this session. Messages addressed to session_id
-     *  are written under `<inbox_path>/<session_id>/`. */
+    /** This session's own inbox dir; messages to session_id are written into it. */
     inbox_path: string;
     pid: number;
     first_seen_at: string;

@@ -5,13 +5,14 @@
  * is NOT here (see lease.ts); "last seen" is the transcript's mtime.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
 
 import yaml from "js-yaml";
 
 import { writeAtomic, isoNow } from "./fsutil.ts";
-import { klRoot, sessionsDir, UUID_RE } from "./paths.ts";
+import { entryPath, klRoot, sessionUuids } from "./paths.ts";
+
+export { entryPath };
 
 export interface NameBinding {
 	name: string;
@@ -33,11 +34,6 @@ export interface RegistryEntry {
 	/** Parent session's UUID (never its name). */
 	parent?: string;
 	created: string;
-}
-
-export function entryPath(uuid: string, root = klRoot()): string {
-	if (!UUID_RE.test(uuid)) throw new Error(`not a session uuid: ${uuid}`);
-	return join(sessionsDir(root), `${uuid}.yml`);
 }
 
 export function readEntry(uuid: string, root = klRoot()): RegistryEntry | null {
@@ -107,16 +103,9 @@ export function writeEntry(e: RegistryEntry, root = klRoot()): void {
 }
 
 export function listEntries(root = klRoot()): RegistryEntry[] {
-	let files: string[];
-	try {
-		files = readdirSync(sessionsDir(root));
-	} catch {
-		return [];
-	}
 	const out: RegistryEntry[] = [];
-	for (const f of files) {
-		if (!f.endsWith(".yml") || f.startsWith(".")) continue;
-		const e = readEntry(f.slice(0, -4), root);
+	for (const uuid of sessionUuids(root)) {
+		const e = readEntry(uuid, root);
 		if (e) out.push(e);
 	}
 	return out;

@@ -3,9 +3,9 @@
 #
 # Every session is a Pi session UUID with a name (<agent>-<adj>-<noun>)
 # drawn at launch: unique among running sessions, avoiding names used in
-# the last 3 weeks. The registry is <kl root>/run/sessions/<uuid>.yml;
-# running processes hold a lease in run/leases/. Anything below that takes
-# a <session> accepts a name, name@<id-prefix> (when a name was reused) or
+# the last 3 weeks. Each session has one folder, <kl root>/run/<uuid>/:
+# its registry entry (session.yml), its lease while it runs, its inbox.
+# Anything below that takes a <session> accepts a name, name@<id-prefix> (when a name was reused) or
 # @<id-prefix>. A plain name means the running session with that name, else
 # the one that used it most recently.
 #
@@ -62,8 +62,8 @@
 #   KL_AGENTS_DIR           Parent dir for agent homes (default: <kl root>/agents).
 #   AGENT_HOME              Explicit agent home for `kl run` with no <agent>.
 #   KL_ROOT                 kl root (default: ~/.kl): config.yml, pi/ (the
-#                           kl-wide PI_CODING_AGENT_DIR), run/ (sessions,
-#                           leases, inboxes), daemon/.
+#                           kl-wide PI_CODING_AGENT_DIR), run/ (one folder
+#                           per session), daemon/.
 #   KL_PI                   pi binary (default: the repo's node_modules/.bin/pi
 #                           if present, else pi on PATH).
 #   KL_USER                 Sender name for `kl message` from your own shell
@@ -354,9 +354,9 @@ cmd_agents() {
         [ "$yml_name" != "$name" ] && marker=" (agent.yml name: $yml_name — mismatch)"
         # Sessions count
         # Sessions count: registry entries for this agent.
-        local count=0 reg="${KL_ROOT:-$HOME/.kl}/run/sessions"
-        if [ -d "$reg" ]; then
-            count="$(grep -lx "agent: $yml_name" "$reg"/*.yml 2>/dev/null | wc -l | tr -d ' ')"
+        local count=0 run="${KL_ROOT:-$HOME/.kl}/run"
+        if [ -d "$run" ]; then
+            count="$(grep -lx "agent: $yml_name" "$run"/*/session.yml 2>/dev/null | wc -l | tr -d ' ')"
         fi
         # Description (one-line role, or multi-line block) — blank when unset.
         local desc first rest

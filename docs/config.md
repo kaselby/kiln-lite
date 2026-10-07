@@ -19,14 +19,15 @@ keys of the global `config.yml`. Per-agent settings are in
     sessions/             Pi's transcripts of kl sessions
     APPEND_SYSTEM.md      optional: text added to every kl agent's prompt
   run/
-    sessions/<uuid>.yml   registry entries
-    leases/<uuid>.json    running sessions
-    inbox/<uuid>/         inboxes
-    plans/<uuid>.json     plans
-    status/<uuid>.json    status files
-    schedule/<uuid>/      pending wakes from the schedule tool
+    <uuid>/               one folder per session:
+      session.yml           registry entry
+      lease.json            present while the session runs
+      inbox/                inbox
+      plan.json             plan
+      status.json           status file
+      schedule/             pending wakes from the schedule tool
+      wake.lock/            lock held while starting the stopped session
     names.lock/           lock held while drawing a name
-    wake/<uuid>.lock/     lock held while starting a stopped session
   daemon/                 the messaging daemon's state and log
 ```
 
@@ -49,18 +50,20 @@ file that's already there, never copies, and never writes to
 `sessions/`, and `kl install` installs packages here
 ([install.md](install.md)). Edit `settings.json` as you like.
 
-**`run/sessions/`** and **`run/leases/`**: each session's process writes
-its own registry entry and lease; `kl`, the daemon and the `sessions`
-tool read them. See [sessions.md](sessions.md#names-and-the-registry).
+**`run/<uuid>/`** holds everything kl keeps about one session.
 
-**`run/inbox/`**: the daemon writes messages, the session reads them; see
+**`session.yml`** and **`lease.json`**: the session's process writes its
+own registry entry and lease; `kl`, the daemon and the `sessions` tool read
+them. See [sessions.md](sessions.md#names-and-the-registry).
+
+**`inbox/`**: the daemon writes messages, the session reads them; see
 [messaging.md](messaging.md).
 
-**`run/plans/`**: the `plan` tool writes them; `kl sessions` and the
-`sessions` tool read them. **`run/status/`**: written by tools outside kl,
+**`plan.json`**: the `plan` tool writes it; `kl sessions` and the
+`sessions` tool read it. **`status.json`**: written by tools outside kl,
 read by the same two; see [sessions.md](sessions.md#status-files).
 
-**`run/schedule/`**: the `schedule` tool and its background workers.
+**`schedule/`**: the `schedule` tool and its background workers.
 
 **`daemon/`**: the daemon's pid file, log, channel subscriptions and
 channel history; see [messaging.md](messaging.md).
@@ -70,7 +73,14 @@ channel history; see [messaging.md](messaging.md).
 Nothing here is a cache that kl rebuilds; deleting a file loses what it
 held. With no kl sessions running and the daemon stopped, all of `run/`
 and `daemon/` can go, at the cost of every session's name, mail and plan,
-and all channel history. Piece by piece:
+and all channel history.
+
+A session that isn't running can be deleted with `rm -r run/<uuid>`: its
+name, mail, plan and pending wakes go with it. Its transcript stays in
+`pi/sessions/`. Don't do this to a running session (one with a live
+`lease.json`; `kl sessions` marks it with `*`).
+
+Piece by piece:
 
 - **Plans and status files**: safe. They only feed DOING in
   `kl sessions`.

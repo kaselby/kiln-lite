@@ -4,9 +4,8 @@
  * Messages stay at their original `.md` path forever (the extension's
  * marker-file scheme — see extensions/kiln-lite/inbox.ts). Without a
  * reaper, read messages accumulate indefinitely. The daemon is the
- * natural owner of this sweep: it sees every registered session's
- * `inbox_path`, and its startup is the one guaranteed moment across
- * all sessions' lifetimes.
+ * natural owner of this sweep: its startup is the one guaranteed moment
+ * across all sessions' lifetimes.
  *
  * Policy: delete `<name>.md` + `<name>.read` pairs where the `.read`
  * marker's mtime is older than `maxAgeMs`. Unread messages (no `.read`
@@ -16,73 +15,51 @@
 import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import { inboxDir, sessionUuids } from "../sessions/paths.ts";
+
 export interface InboxCleanupOptions {
-    /** Inbox root paths to sweep. Duplicates are deduped. */
-    inboxRoots: Iterable<string>;
+    /** kl root: every run/<uuid>/inbox under it is swept. */
+    root: string;
     /** Max age of a `.read` marker before its pair is deleted. */
     maxAgeMs: number;
-    /** Called with a one-line summary for each root swept. */
-    log?: (msg: string) => void;
 }
 
 export interface InboxCleanupResult {
-    rootsScanned: number;
     sessionsScanned: number;
     deleted: number;
 }
 
 export function cleanInboxes(opts: InboxCleanupOptions): InboxCleanupResult {
-    const result: InboxCleanupResult = { rootsScanned: 0, sessionsScanned: 0, deleted: 0 };
+    const result: InboxCleanupResult = { sessionsScanned: 0, deleted: 0 };
     const cutoff = Date.now() - opts.maxAgeMs;
 
-    for (const root of new Set(opts.inboxRoots)) {
-        let sessionDirs: string[];
+    for (const uuid of sessionUuids(opts.root)) {
+        const sessionDir = inboxDir(uuid, opts.root);
+        let entries: string[];
         try {
-            sessionDirs = readdirSync(root);
+            entries = readdirSync(sessionDir);
         } catch {
-            continue; // root doesn't exist — nothing to do
+            continue; // no inbox
         }
-        result.rootsScanned++;
+        result.sessionsScanned++;
 
-        let rootDeleted = 0;
-        for (const sid of sessionDirs) {
-            const sessionDir = join(root, sid);
+        for (const name of entries) {
+            if (!name.endsWith(".read")) continue;
+            const markerPath = join(sessionDir, name);
+            let markerStat;
             try {
-                if (!statSync(sessionDir).isDirectory()) continue;
+                markerStat = statSync(markerPath);
             } catch {
                 continue;
             }
-            let entries: string[];
-            try {
-                entries = readdirSync(sessionDir);
-            } catch {
-                continue;
-            }
-            result.sessionsScanned++;
+            if (markerStat.mtimeMs >= cutoff) continue;
 
-            for (const name of entries) {
-                if (!name.endsWith(".read")) continue;
-                const markerPath = join(sessionDir, name);
-                let markerStat;
-                try {
-                    markerStat = statSync(markerPath);
-                } catch {
-                    continue;
-                }
-                if (markerStat.mtimeMs >= cutoff) continue;
-
-                const base = name.slice(0, -".read".length);
-                const mdPath = join(sessionDir, `${base}.md`);
-                // Delete both; either may already be missing.
-                try { unlinkSync(mdPath); } catch { /* missing .md is fine */ }
-                try { unlinkSync(markerPath); } catch { /* missing marker is fine */ }
-                result.deleted++;
-                rootDeleted++;
-            }
-        }
-
-        if (opts.log && rootDeleted > 0) {
-            opts.log(`inbox-cleanup: ${root} — removed ${rootDeleted} stale message(s)`);
+            const base = name.slice(0, -".read".length);
+            const mdPath = join(sessionDir, `${base}.md`);
+            // Delete both; either may already be missing.
+            try { unlinkSync(mdPath); } catch { /* missing .md is fine */ }
+            try { unlinkSync(markerPath); } catch { /* missing marker is fine */ }
+            result.deleted++;
         }
     }
 

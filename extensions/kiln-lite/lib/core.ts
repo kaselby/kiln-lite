@@ -31,7 +31,7 @@ import { registerScheduleTool } from "../schedule.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
 
-import { inboxDir as sessionInboxDir, inboxRoot, klRoot } from "../../../src/sessions/paths.ts";
+import { inboxDir as sessionInboxDir, klRoot } from "../../../src/sessions/paths.ts";
 import { composeToolResultSuffix, appendTextToContent } from "./formatting.ts";
 import { buildPlanToolKit } from "../plan-tool.ts";
 
@@ -166,7 +166,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 
 		// Daemon registration is best-effort: a missing daemon must not block startup.
 		daemon = new DaemonClient({
-			requester: { agent: config.name, session: sessionUuid, name: agentId, inbox_path: inboxRoot() },
+			requester: { agent: config.name, session: sessionUuid, name: agentId, inbox_path: inboxDir },
 		});
 		void daemon.register().catch((err) => warn(`kiln-lite: daemon register failed: ${(err as Error).message}`));
 

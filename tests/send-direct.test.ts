@@ -9,6 +9,7 @@ import { DaemonState, type SessionRecord } from "../src/daemon/state.ts";
 import * as proto from "../src/daemon/protocol.ts";
 import { selfLease, writeLease } from "../src/sessions/lease.ts";
 import { writeEntry, type RegistryEntry } from "../src/sessions/registry.ts";
+import { inboxDir } from "../src/sessions/paths.ts";
 
 interface StubDaemon {
 	state: DaemonState;
@@ -20,9 +21,9 @@ interface StubDaemon {
 let dir: string;
 let daemon: StubDaemon;
 
-// Each session gets its OWN inbox root (multi-home shape), so a misdelivery
+// Each session gets its OWN inbox dir outside the kl root, so a misdelivery
 // into the sender's tree is observable.
-function inboxRootFor(session: string): string {
+function inboxDirFor(session: string): string {
 	return join(dir, "homes", session, "inbox");
 }
 
@@ -31,7 +32,7 @@ function record(session: string): SessionRecord {
 	return {
 		session_id: session,
 		agent_name: session.split("-")[0],
-		inbox_path: inboxRootFor(session),
+		inbox_path: inboxDirFor(session),
 		pid: 0,
 		first_seen_at: now,
 		last_seen_at: now,
@@ -44,7 +45,7 @@ function registerOffline(session: string): void {
 }
 
 function requester(session: string) {
-	return { agent: session.split("-")[0], session, inbox_path: inboxRootFor(session) };
+	return { agent: session.split("-")[0], session, inbox_path: inboxDirFor(session) };
 }
 
 beforeEach(() => {
@@ -84,12 +85,12 @@ function sendByName(to: string): proto.Message {
 		agent: "rev",
 		session: UA,
 		name: "rev-calm-fox",
-		inbox_path: join(dir, "run", "inbox"),
+		inbox_path: inboxDir(UA, dir),
 	});
 }
 
 function inboxFiles(uuid: string): string[] {
-	const d = join(dir, "run", "inbox", uuid);
+	const d = inboxDir(uuid, dir);
 	return existsSync(d) ? readdirSync(d).filter((f) => f.endsWith(".md")) : [];
 }
 
@@ -103,7 +104,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 		assert.equal(res.data.message, "sent to rev-red-owl");
 		const files = inboxFiles(UB);
 		assert.equal(files.length, 1);
-		const text = readFileSync(join(dir, "run", "inbox", UB, files[0]), "utf8");
+		const text = readFileSync(join(inboxDir(UB, dir), files[0]), "utf8");
 		assert.match(text, /^from: rev-calm-fox$/m);
 		assert.match(text, new RegExp(`^from_session: ${UA}$`, "m"));
 		assert.match(text, /^to: rev-red-owl$/m);
@@ -114,7 +115,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 		const msg = proto.sendDirect("rev-red-owl", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" });
 		const res = await handleSendDirect(msg, daemon as never);
 		assert.equal(res.type, proto.ACK);
-		const text = readFileSync(join(dir, "run", "inbox", UB, inboxFiles(UB)[0]), "utf8");
+		const text = readFileSync(join(inboxDir(UB, dir), inboxFiles(UB)[0]), "utf8");
 		assert.match(text, /^from: sam$/m);
 		assert.doesNotMatch(text, /^from_session:/m);
 		assert.equal(daemon.state.presence.get("human-sam"), undefined, "no presence for a human sender");
@@ -137,7 +138,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 		assert.equal(res.type, proto.ERROR);
 		assert.equal(res.data.code, "unknown_recipient");
 		assert.match(String(res.data.message), /unknown session 'ghost-x-9'/);
-		assert.ok(!existsSync(join(dir, "run", "inbox")));
+		assert.ok(!existsSync(join(dir, "run")));
 	});
 
 	it("a reused name goes to the most recent binding with a note; name@prefix reaches the other", async () => {
@@ -161,7 +162,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 
 		assert.equal(res.type, proto.ACK);
 		assert.equal(daemon.state.presence.get(from), undefined, "detached delivery must not register presence");
-		const inbox = join(inboxRootFor(from), from);
+		const inbox = inboxDirFor(from);
 		const files = readdirSync(inbox).filter((f) => f.endsWith(".md"));
 		assert.equal(files.length, 1);
 		assert.doesNotMatch(readFileSync(join(inbox, files[0]), "utf8"), /^from_session:/m, "a self-wake is not agent mail");
@@ -172,12 +173,12 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 			agent: "rev",
 			session: UA,
 			name: "rev-calm-fox",
-			inbox_path: join(dir, "run", "inbox"),
+			inbox_path: inboxDir(UA, dir),
 		});
 		assert.equal((await handleDeliverSelf(msg, daemon as never)).type, proto.ACK);
 		const files = inboxFiles(UA);
 		assert.equal(files.length, 1);
-		const text = readFileSync(join(dir, "run", "inbox", UA, files[0]), "utf8");
+		const text = readFileSync(join(inboxDir(UA, dir), files[0]), "utf8");
 		assert.match(text, /^from: rev-calm-fox$/m);
 		assert.doesNotMatch(text, /^from_session:/m);
 		assert.match(text, /^to: rev-calm-fox$/m);
@@ -190,7 +191,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		});
 		const res = await handleDeliverSelf(msg, daemon as never);
 		assert.equal(res.type, proto.ERROR);
-		assert.ok(!existsSync(inboxRootFor("a-x-1")));
+		assert.ok(!existsSync(inboxDirFor("a-x-1")));
 	});
 
 	it("rejects unsafe session IDs and paths that conflict with known state", async () => {
@@ -216,10 +217,10 @@ describe("handlePublish: channel history", () => {
 	it("channel mail carries to: <session name>, like a DM", async () => {
 		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
 		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
-		daemon.state.presence.register({ ...record(UB), inbox_path: join(dir, "run", "inbox") });
+		daemon.state.presence.register({ ...record(UB), inbox_path: inboxDir(UB, dir) });
 		daemon.state.channels.subscribe("lobby", UB);
 		await handlePublish(proto.publish("lobby", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
-		const text = readFileSync(join(dir, "run", "inbox", UB, inboxFiles(UB)[0]), "utf8");
+		const text = readFileSync(join(inboxDir(UB, dir), inboxFiles(UB)[0]), "utf8");
 		assert.match(text, /^to: rev-red-owl$/m);
 		assert.doesNotMatch(text, new RegExp(`^to: ${UB}$`, "m"));
 	});
@@ -227,7 +228,7 @@ describe("handlePublish: channel history", () => {
 	it("history.jsonl records from: as the sender's name, plus from_session for a kl session", async () => {
 		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
 		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", "normal", who), daemon as never);
-		await pub({ agent: "rev", session: UA, name: "rev-calm-fox", inbox_path: join(dir, "run", "inbox") });
+		await pub({ agent: "rev", session: UA, name: "rev-calm-fox", inbox_path: inboxDir(UA, dir) });
 		await pub({ agent: "human", session: "human-sam", name: "sam" });
 		const lines = readFileSync(join(dir, "daemon", "channels", "lobby", "history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 		assert.equal(lines[0].from, "rev-calm-fox");
