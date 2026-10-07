@@ -488,7 +488,7 @@ export function startInboxWatcher(opts: InboxWatcherOptions): InboxWatcher {
 			if (rel === null) return;
 			if (!rel.endsWith(".md")) return;
 			// Files nested under a subdir are not our messages (we don't use
-			// subdirs; legacy `.read/` leftovers are explicitly not ours).
+			// subdirs).
 			if (rel.includes("/")) return;
 			if (!existsSync(abs)) return;
 			touchMarker(inboxDir, rel, warn);

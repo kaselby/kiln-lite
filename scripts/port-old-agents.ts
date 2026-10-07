@@ -1,8 +1,14 @@
 /**
- * `kl migrate [agent-home…]`: convert an old kiln-lite agent home to the
- * current schema, in place (migrate the data, keep no compat
- * code). With no arguments, <kl root>/config.yml and every agent under
- * $KL_AGENTS_DIR.
+ * One-off script, not part of kl: convert agent homes from the old
+ * kiln-lite to the rewrite's schema, in place. kl itself keeps no
+ * backward compatibility; this exists to port existing agents once.
+ *
+ *   npx tsx scripts/port-old-agents.ts [--dry-run] [agent-home…]
+ *
+ * With no arguments, <kl root>/config.yml and every agent under
+ * $KL_AGENTS_DIR. Old homes at ~/.agent or ~/.kl/agent aren't moved:
+ * mv them to $KL_AGENTS_DIR/<name>/ first. If an old install.sh ran
+ * `pi install` on this repo, undo it with `pi remove <repo path>`.
  *
  * agent.yml (a copy goes to agent.yml.bak first):
  *   system_prompt, harness_prompt, sections, project_context → inside `prompt:`
@@ -27,7 +33,7 @@ import { join, resolve } from "node:path";
 import yaml from "js-yaml";
 
 import { DEFAULT_IDENTITY_FILE, RESERVED_SECTIONS, SECTION_NAME, resolveKlRoot } from "../extensions/kiln-lite/config.ts";
-import { agentsDir, listAgents } from "./sessions/agents.ts";
+import { agentsDir, listAgents } from "../src/sessions/agents.ts";
 
 const DROPPED: Record<string, string> = {
 	startup: "kl runs no startup commands; use an extension",
@@ -471,7 +477,7 @@ function main(argv: string[]): number {
 	const dryRun = argv.includes("--dry-run") || argv.includes("-n");
 	const args = argv.filter((a) => a !== "--dry-run" && a !== "-n");
 	if (args.some((a) => a === "-h" || a === "--help")) {
-		process.stdout.write("usage: kl migrate [--dry-run] [agent-home…]   (default: <kl root>/config.yml and every agent in $KL_AGENTS_DIR)\n");
+		process.stdout.write("usage: npx tsx scripts/port-old-agents.ts [--dry-run] [agent-home…]   (default: <kl root>/config.yml and every agent in $KL_AGENTS_DIR)\n");
 		return 0;
 	}
 	let failed = 0;
@@ -481,12 +487,12 @@ function main(argv: string[]): number {
 			if (g) printResult(g, dryRun);
 		} catch (e) {
 			failed++;
-			process.stderr.write(`kl migrate: config.yml: ${(e as Error).message}\n`);
+			process.stderr.write(`port-old-agents: config.yml: ${(e as Error).message}\n`);
 		}
 	}
 	const homes = args.length ? args : listAgents().map((a) => join(agentsDir(), a.name));
 	if (homes.length === 0) {
-		process.stderr.write(`kl migrate: no agents in ${agentsDir()}\n`);
+		process.stderr.write(`port-old-agents: no agents in ${agentsDir()}\n`);
 		return 1;
 	}
 	for (const h of homes) {
@@ -494,7 +500,7 @@ function main(argv: string[]): number {
 			printResult(migrateHome(h, { dryRun }), dryRun);
 		} catch (e) {
 			failed++;
-			process.stderr.write(`kl migrate: ${h}: ${(e as Error).message}\n`);
+			process.stderr.write(`port-old-agents: ${h}: ${(e as Error).message}\n`);
 		}
 	}
 	return failed ? 1 : 0;

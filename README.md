@@ -27,8 +27,7 @@ git clone <this repo> ~/Git/kiln-lite && cd ~/Git/kiln-lite
 ```
 
 `kl install <pkg>` installs a Pi package for every kl agent (into the kl Pi
-dir, not base Pi). `kl migrate` converts agent folders from an older
-kiln-lite layout.
+dir, not base Pi).
 
 kl logs in with your Pi credentials: `~/.kl/pi/auth.json` is a symlink to
 `~/.pi/agent/auth.json`. Log in once with base `pi` (`/login`) first. Details
@@ -73,8 +72,7 @@ kl doctor                # diagnostics
 - [docs/tools.md](docs/tools.md): the built-in tools and slash commands, and
   adding your own
 - [docs/config.md](docs/config.md): the `~/.kl` layout and global `config.yml`
-- [docs/install.md](docs/install.md): install.sh, `kl install`, `kl migrate`,
-  uninstall
+- [docs/install.md](docs/install.md): install.sh, `kl install`, uninstall
 - [docs/skills.md](docs/skills.md): skills
 - [docs/tmux.md](docs/tmux.md): recommended tmux settings
 

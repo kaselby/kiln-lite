@@ -17,6 +17,6 @@ each other. Start with the [README](../README.md).
   subagent, exit_session), /exit /fq /spawn, adding your own tools
 - [config.md](config.md): the kl folder (`~/.kl`) layout, what's safe to
   delete, global `config.yml`
-- [install.md](install.md): install.sh, `kl install`, `kl migrate`, uninstall
+- [install.md](install.md): install.sh, `kl install`, uninstall
 - [skills.md](skills.md): skills
 - [tmux.md](tmux.md): recommended tmux settings

@@ -56,10 +56,6 @@
 #   kl install <pkg> [flags]
 #                           pi install into the kl-wide pi dir (<kl root>/pi):
 #                           the package loads for every kl agent.
-#   kl migrate [--dry-run] [<agent-home>...]
-#                           Convert old agent homes in place (agent.yml.bak
-#                           kept). Default: <kl root>/config.yml and every
-#                           agent in $KL_AGENTS_DIR.
 #   kl -h | --help          Show this help.
 #
 # Env:
@@ -549,15 +545,6 @@ cmd_doctor() {
             fi
             [ -d "$home/skills" ] && say_ok "skills/ present"
             [ -d "$home/extensions" ] && say_ok "extensions/ present"
-            if [ -e "$home/harness/pre-launch" ]; then
-                say_warn "harness/pre-launch is no longer run — kl has no pre-launch hook"
-            fi
-            if [ -f "$home/harness/index.ts" ]; then
-                say_warn "harness/index.ts is no longer loaded — move it to extensions/"
-            fi
-            if [ -d "$home/tools" ] || [ -d "$home/venv" ]; then
-                say_warn "tools/ or venv/ present — kl no longer puts these on PATH"
-            fi
         else
             say_fail "directory does not exist: $home"
         fi
@@ -578,7 +565,6 @@ main() {
         init|new) shift; cmd_init "$@" ;;
         doctor) shift; cmd_doctor "$@" ;;
         install) shift; cmd_install "$@" ;;
-        migrate) shift; exec "$(tsx_path)" "$REPO_ROOT/src/migrate.ts" "$@" ;;
         -h|--help|help) usage ;;
         # Bare `kl` (optionally with flags) is an alias for `kl run` against
         # the default agent. Empty or flag-leading invocations route to

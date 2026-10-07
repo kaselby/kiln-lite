@@ -39,7 +39,6 @@ kl agents
 kl init <name> [--full]
 kl doctor [<name>]
 kl install <pkg> [pi install flags]
-kl migrate [--dry-run] [<agent-home>...]
 kl -h | --help | help
 ```
 
@@ -111,11 +110,6 @@ if any check fails.
 **install** runs `pi install` with `PI_CODING_AGENT_DIR` set to the kl Pi
 dir (`<kl root>/pi`), so the package loads for every kl agent and base `pi`
 doesn't see it.
-
-**migrate** converts old agent folders in place, keeping `agent.yml.bak`.
-With no arguments it converts `<kl root>/config.yml` (keeping
-`config.yml.bak`) and every agent in `$KL_AGENTS_DIR`. `--dry-run` only
-prints. See [install.md](install.md).
 
 ## `kl message`
 
