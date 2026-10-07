@@ -72,7 +72,7 @@ that should outlast the session, then stop.
 Settings come from two files: `<kl root>/config.yml` (defaults for every
 agent; see [config.md](config.md)), then the agent's `agent.yml`. A
 top-level key in `agent.yml` replaces the global value outright. The
-exceptions are `prompt:` and `external:`, which merge one level down:
+exceptions are `prompt:`, `external:` and `timestamps:`, which merge one level down:
 `agent.yml` can set `include_kl_prompt` and keep the global `identity`. A
 list inside them, like `extra_sections`, still replaces the global list. An unknown key, or a
 value of the wrong type, prints a warning and is ignored (the lower
@@ -110,7 +110,11 @@ message, and during long runs of tool calls a tool result gets the same
 line every `every_calls` calls or `every_minutes` minutes, whichever comes
 first. A mapping overrides any of the defaults
 `{per_turn: true, every_calls: 20, every_minutes: 10}`; `0` turns a
-periodic trigger off.
+periodic trigger off. The mapping is merged over the lower layer's values;
+`true` turns them on as the lower layer set them.
+
+`timestamps` and `session_state_interval` can also be changed for one
+running session with [`kl config`](cli.md#commands).
 
 **external** groups the switches for things that come from outside the
 agent and kl:

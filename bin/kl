@@ -42,6 +42,14 @@
 #   kl sessions <session> [--json]
 #                           One session in full: state, parent and children,
 #                           cwd, transcript, plan, status.
+#   kl config [<session>] [key=value | key= ...]
+#                           A session's runtime settings (timestamps,
+#                           session_state_interval): show the effective values
+#                           and where each comes from, set (YAML value; dotted
+#                           keys like timestamps.every_minutes) or unset (key=).
+#                           Kept in run/<uuid>/config.yml; the session picks up
+#                           changes as it runs. Inside a session, <session>
+#                           defaults to this one.
 #   kl message <command>    Send and read messages: send, subscribe,
 #                           unsubscribe, channels, history, status.
 #                           kl message --help for details.
@@ -550,7 +558,7 @@ cmd_doctor() {
 main() {
     case "${1:-}" in
         run) shift; cmd_run "$@" ;;
-        resume|attach|sessions) sessions_cli "$@" ;;
+        resume|attach|sessions|config) sessions_cli "$@" ;;
         message) shift; exec "$(tsx_path)" "$REPO_ROOT/src/client/cli.ts" "$@" ;;
         agents) shift; cmd_agents "$@" ;;
         init|new) shift; cmd_init "$@" ;;

@@ -34,6 +34,7 @@ kl resume <session>
 kl attach <session> [-d]
 kl sessions [-n N] [--all] [--json]
 kl sessions <session> [--json]
+kl config [<session>] [key=value | key= ...]
 kl message <command> ...
 kl agents
 kl init <name> [--full]
@@ -94,6 +95,22 @@ with `*` on running ones:
   created, parent and children, cwd, home, transcript, inbox counts, UUID,
   every name it has run under, its status, and its plan with every task.
 - `--json`: the same data as JSON.
+
+**config** shows or changes one session's runtime settings
+(`timestamps`, `session_state_interval`), kept in `run/<uuid>/config.yml`
+([config.md](config.md#per-session-settings)). The session picks up a
+change at its next turn or tool result.
+
+- With no `key=...`: each effective value and where it comes from
+  (`session`, `agent.yml`, `config.yml` or `default`), then the files.
+- `key=value` sets; the value is YAML (`timestamps=false`,
+  `session_state_interval=5`). `timestamps.per_turn`,
+  `timestamps.every_calls` and `timestamps.every_minutes` set one timestamp
+  field (over `timestamps: true/false` in the file, they replace it with a
+  mapping, which turns timestamps on).
+- `key=` unsets. A file left empty is removed.
+- An invalid value or unknown key is an error and nothing is written.
+- Inside a kl session `<session>` may be left out: it means this session.
 
 **message**: see [`kl message`](#kl-message) below.
 

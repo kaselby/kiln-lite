@@ -27,6 +27,7 @@ keys of the global `config.yml`. Per-agent settings are in
       status.json           status file
       schedule/             pending wakes from the schedule tool
       wake.lock/            lock held while starting the stopped session
+      config.yml            runtime settings for this session (below)
     names.lock/           lock held while drawing a name
   daemon/                 the messaging daemon's state and log
     kiln-lite.sock          its socket
@@ -65,6 +66,9 @@ read by the same two; see [sessions.md](sessions.md#status-files).
 
 **`schedule/`**: the `schedule` tool and its background workers.
 
+**`config.yml`** (in `run/<uuid>/`): see
+[Per-session settings](#per-session-settings).
+
 **`daemon/`**: the daemon's pid file, log, channel subscriptions and
 channel history; see [messaging.md](messaging.md).
 
@@ -101,7 +105,7 @@ Piece by piece:
 
 `config.yml` takes every `agent.yml` key except `name` and `description`;
 the values are defaults that an agent's own `agent.yml` overrides key by
-key (`prompt:` and `external:` merge one level down). The keys and their defaults are in
+key (`prompt:`, `external:` and `timestamps:` merge one level down). The keys and their defaults are in
 [agents.md](agents.md#agentyml). Relative `prompt.identity` and
 `prompt.extra_sections` paths here are relative to the kl folder; a
 `cleanup` path is always relative to the agent folder.
@@ -123,3 +127,26 @@ prompt:
   extra_sections:
     - {name: house_rules, path: house-rules.md}   # ~/.kl/house-rules.md
 ```
+
+## Per-session settings
+
+`run/<uuid>/config.yml` overrides `agent.yml` and `config.yml` for one
+session, key by key (`timestamps:` merges one level down). It takes only
+runtime settings: `timestamps` and `session_state_interval`, with the same
+values as in [agent.yml](agents.md#agentyml). Settings that shape the
+system prompt never go here; the prompt is built once, at session start.
+
+The session reads the file while it runs, so a change applies from the
+next turn or tool result, no restart. A bad value prints a warning once
+and is ignored. With no file there are no overrides; kl creates it only
+when something is set. Edit it by hand, or with `kl config`
+([cli.md](cli.md#commands)):
+
+```sh
+kl config bob-red-fox                       # effective values and where each comes from
+kl config bob-red-fox timestamps.every_minutes=2 session_state_interval=0
+kl config bob-red-fox timestamps=           # unset: back to agent.yml / config.yml
+```
+
+`agent.yml` and `config.yml` are read when the session starts;
+`kl config` shows what they say now.

@@ -6,8 +6,12 @@
  *                                 (kl root = $KL_ROOT or ~/.kl)
  *   2. `<agent home>/agent.yml` — per agent; any top-level key it sets
  *                                 replaces the global value outright, except
- *                                 `prompt:` and `external:`, merged one
- *                                 level down
+ *                                 `prompt:`, `external:` and `timestamps:`,
+ *                                 merged one level down
+ *
+ * The runtime keys (timestamps, session_state_interval) have a third layer
+ * on top, run/<uuid>/config.yml, read while the session runs
+ * (runtime-config.ts).
  *
  * Relative paths (`prompt.identity`, `prompt.extra_sections[].path`) resolve
  * against the dir of the file that declared them, so a global section can
@@ -217,7 +221,7 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	}
 	if (has("prompt")) applyPromptLayer(config.prompt, obj.prompt, layer);
 	if (has("timestamps")) {
-		const t = parseTimestamps(obj.timestamps, label, warn);
+		const t = parseTimestamps(obj.timestamps, label, warn, config.timestamps);
 		if (t !== undefined) config.timestamps = t;
 	}
 	if (has("cleanup")) {
@@ -226,9 +230,8 @@ function applyLayer(config: AgentConfig, obj: Record<string, unknown>, layer: La
 	}
 	if (has("external")) applyExternalLayer(config.external, obj.external, layer);
 	if (has("session_state_interval")) {
-		const n = obj.session_state_interval;
-		if (typeof n === "number" && Number.isFinite(n) && n >= 0) config.session_state_interval = Math.floor(n);
-		else warn(`kiln-lite: ${label}: session_state_interval must be a number >= 0 — ignoring`);
+		const n = parseStateInterval(obj.session_state_interval, label, warn);
+		if (n !== undefined) config.session_state_interval = n;
 	}
 }
 
@@ -337,21 +340,24 @@ export function parseSections(
 
 /**
  * `timestamps:` accepts `true` / `false`, or a mapping overriding any of
- * per_turn / every_calls / every_minutes on top of the defaults.
+ * per_turn / every_calls / every_minutes on top of the lower layer's values
+ * (`lower`; the defaults when it is off). A mapping or `true` turns them on.
  */
 export function parseTimestamps(
 	raw: unknown,
 	label: string,
 	warn: (msg: string) => void,
+	lower: TimestampConfig | false = DEFAULT_TIMESTAMPS,
 ): TimestampConfig | false | undefined {
+	const base = lower === false ? DEFAULT_TIMESTAMPS : lower;
 	if (raw === false) return false;
-	if (raw === true) return { ...DEFAULT_TIMESTAMPS };
+	if (raw === true) return { ...base };
 	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
 		warn(`kiln-lite: ${label}: timestamps must be true, false, or a mapping — ignoring`);
 		return undefined;
 	}
 	const obj = raw as Record<string, unknown>;
-	const out: TimestampConfig = { ...DEFAULT_TIMESTAMPS };
+	const out: TimestampConfig = { ...base };
 	for (const key of Object.keys(obj)) {
 		if (key === "per_turn") {
 			if (typeof obj.per_turn === "boolean") out.per_turn = obj.per_turn;
@@ -365,4 +371,11 @@ export function parseTimestamps(
 		}
 	}
 	return out;
+}
+
+/** `session_state_interval:` a number >= 0 (floored); undefined (with a warning) otherwise. */
+export function parseStateInterval(raw: unknown, label: string, warn: (msg: string) => void): number | undefined {
+	if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+	warn(`kiln-lite: ${label}: session_state_interval must be a number >= 0 — ignoring`);
+	return undefined;
 }

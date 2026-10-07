@@ -5,6 +5,7 @@
  *   resume <target>
  *   attach <target> [--detach|-d]
  *   sessions [<target>] [-n N] [--all] [--json]
+ *   config [<target>] [key=value | key= ...]
  *
  * <target> is anything resolve.ts takes: a name, name@<id-prefix>, @<id-prefix>.
  * resume and attach are the same thing: resolve, wake if nothing is live,
@@ -15,11 +16,21 @@
  * its own terminal.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import yaml from "js-yaml";
 
+import { defaultConfig, readYamlMapping } from "../../extensions/kiln-lite/config.ts";
+import {
+	applyRuntimeLayer,
+	RUNTIME_KEYS,
+	TIMESTAMP_KEYS,
+	type RuntimeSources,
+	type RuntimeValues,
+} from "../../extensions/kiln-lite/runtime-config.ts";
 import { launchNew, wake } from "./launch.ts";
-import { UUID_RE } from "./paths.ts";
+import { klRoot, sessionConfigPath, UUID_RE } from "./paths.ts";
 import { readEntry } from "./registry.ts";
 import { knownUuids, resolveTarget, ResolveError, shortId } from "./resolve.ts";
 import { enter, guardDetach } from "./tmux.ts";
@@ -189,6 +200,121 @@ function cmdSessions(args: string[]): void {
 	console.log(json ? JSON.stringify(list, null, 2) : formatSessionList(list));
 }
 
+/**
+ * config: show a session's runtime values and where each comes from, or set
+ * (key=value, YAML-parsed; timestamps.<key> for one timestamp field) and
+ * unset (key=) them in run/<uuid>/config.yml. No <session> inside a session
+ * means this one.
+ */
+function cmdConfig(args: string[]): void {
+	let target = "";
+	const edits: Array<[string, string]> = [];
+	for (const a of args) {
+		const eq = a.indexOf("=");
+		if (eq > 0) edits.push([a.slice(0, eq), a.slice(eq + 1)]);
+		else if (!target && edits.length === 0 && !a.startsWith("-")) target = a;
+		else die(`config: unexpected argument '${a}' (config [<session>] [key=value | key= ...])`);
+	}
+	let uuid: string;
+	let home: string | undefined;
+	if (target) {
+		let r;
+		try {
+			r = resolveTarget(target);
+		} catch (e) {
+			if (e instanceof ResolveError) die(e.message);
+			throw e;
+		}
+		if (r.note) info(r.note);
+		uuid = r.uuid;
+		home = r.entry?.home;
+	} else {
+		const self = process.env.SESSION_UUID;
+		if (!self) die("config needs a session (outside a kl session there is no default)");
+		uuid = self;
+		home = readEntry(uuid)?.home;
+	}
+	const path = sessionConfigPath(uuid);
+	const file = readYamlMapping(path, "session config.yml", (m) => die(m.replace(/^kiln-lite: /, ""))) ?? {};
+
+	if (edits.length > 0) {
+		for (const [key, raw] of edits) setRuntimeKey(file, key, raw);
+		const problems: string[] = [];
+		const problem = (m: string) => problems.push(m.replace(/^kiln-lite: session: /, "").replace(/ — ignoring$/, ""));
+		applyRuntimeLayer(runtimeDefaults(), file, "session", problem, { strict: true });
+		if (problems.length > 0) die(`config: not written:\n  ${problems.join("\n  ")}`);
+		if (Object.keys(file).length === 0) rmSync(path, { force: true });
+		else {
+			mkdirSync(join(path, ".."), { recursive: true });
+			const tmp = `${path}.tmp-${process.pid}`;
+			writeFileSync(tmp, yaml.dump(file));
+			renameSync(tmp, path);
+		}
+	}
+
+	// Effective values: defaults, then config.yml, agent.yml, this file.
+	const values = runtimeDefaults();
+	const sources: RuntimeSources = {};
+	const quiet = () => {};
+	const globalPath = join(klRoot(), "config.yml");
+	const agentPath = home ? join(home, "agent.yml") : "";
+	const layers: Array<[string, string, Record<string, unknown> | null]> = [
+		["config.yml", globalPath, readYamlMapping(globalPath, "kl config.yml", quiet)],
+		["agent.yml", agentPath, agentPath ? readYamlMapping(agentPath, "agent.yml", quiet) : null],
+		["session", path, file],
+	];
+	for (const [label, , obj] of layers) if (obj) applyRuntimeLayer(values, obj, label, quiet, { sources });
+	const rows: Array<[string, string, string]> = [];
+	const t = values.timestamps;
+	rows.push(["timestamps", t === false ? "off" : "on", sources.timestamps ?? "default"]);
+	if (t !== false) {
+		for (const k of TIMESTAMP_KEYS) rows.push([`timestamps.${k}`, String(t[k]), sources[`timestamps.${k}`] ?? "default"]);
+	}
+	rows.push(["session_state_interval", String(values.session_state_interval), sources.session_state_interval ?? "default"]);
+	const w0 = Math.max(...rows.map((r) => r[0].length));
+	const w1 = Math.max(...rows.map((r) => r[1].length));
+	for (const [k, v, src] of rows) console.log(`${k.padEnd(w0)}  ${v.padEnd(w1)}  ${src}`);
+	console.log("");
+	for (const [label, p, obj] of layers) if (p) console.log(`${label.padEnd(10)}  ${p}${obj ? "" : " (absent)"}`);
+}
+
+function runtimeDefaults(): RuntimeValues {
+	const d = defaultConfig("");
+	return { timestamps: d.timestamps, session_state_interval: d.session_state_interval };
+}
+
+/** Set (raw = YAML) or unset (raw = "") one key in the session file's mapping. */
+function setRuntimeKey(file: Record<string, unknown>, key: string, raw: string): void {
+	const [top, sub, ...more] = key.split(".");
+	const known = (RUNTIME_KEYS as readonly string[]).includes(top);
+	if (!known || more.length > 0 || (sub !== undefined && (top !== "timestamps" || !(TIMESTAMP_KEYS as readonly string[]).includes(sub)))) {
+		die(`config: unknown key '${key}' (keys: ${RUNTIME_KEYS.join(", ")}, ${TIMESTAMP_KEYS.map((k) => `timestamps.${k}`).join(", ")})`);
+	}
+	let value: unknown;
+	if (raw !== "") {
+		try {
+			value = yaml.load(raw);
+		} catch (e) {
+			die(`config: ${key}: not valid YAML: ${(e as Error).message}`);
+		}
+	}
+	if (sub === undefined) {
+		if (raw === "") delete file[top];
+		else file[top] = value;
+		return;
+	}
+	// timestamps.<key>: into the file's timestamps mapping (true/false there is replaced by one).
+	const cur = file.timestamps;
+	const map = cur && typeof cur === "object" && !Array.isArray(cur) ? (cur as Record<string, unknown>) : null;
+	if (raw === "") {
+		if (!map) return;
+		delete map[sub];
+		if (Object.keys(map).length === 0) delete file.timestamps;
+		return;
+	}
+	file.timestamps = { ...map, [sub]: value };
+}
+
 async function main(argv: string[]): Promise<void> {
 	const [cmd, ...rest] = argv;
 	switch (cmd) {
@@ -199,6 +325,8 @@ async function main(argv: string[]): Promise<void> {
 			return cmdResume(cmd, rest);
 		case "sessions":
 			return cmdSessions(rest);
+		case "config":
+			return cmdConfig(rest);
 		default:
 			die(`unknown session command '${cmd ?? ""}'`);
 	}
