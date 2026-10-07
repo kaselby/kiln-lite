@@ -12,7 +12,6 @@ import { wake as wakeSession } from "../sessions/launch.ts";
 import type { DaemonClient } from "./index.ts";
 
 export interface SendOptions {
-	priority?: "normal" | "high";
 	/** DMs only: start the recipient if it isn't running. */
 	wake?: boolean;
 	/** kl root (tests). */
@@ -30,9 +29,8 @@ export interface SendResult {
 
 /** `#name` → channel send; anything else → DM by session name. */
 export async function send(client: DaemonClient, to: string, summary: string, body: string, opts: SendOptions = {}): Promise<SendResult> {
-	const priority = opts.priority ?? "normal";
 	if (to.startsWith("#")) return sendChannel(client, to, summary, body, opts);
-	const r = await client.sendDirect(to, summary, body, priority);
+	const r = await client.sendDirect(to, summary, body);
 	if (r.live || !opts.wake) return { text: r.message, ok: true };
 	const note = r.note ? `\n${r.note}` : "";
 	try {
@@ -49,6 +47,6 @@ export async function sendChannel(client: DaemonClient, channel: string, summary
 	const name = channelName(channel);
 	if (opts.wake) throw new Error("wake works only for a message to a session, not a channel");
 	if (!validChannel(name)) throw new Error(`bad channel name '${channel}': use letters, digits, '.', '_' and '-'`);
-	const n = await client.publish(name, summary, body, opts.priority ?? "normal");
+	const n = await client.publish(name, summary, body);
 	return { text: `sent to #${name} (${n} recipient${n === 1 ? "" : "s"})`, ok: true };
 }

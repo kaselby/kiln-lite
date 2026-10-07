@@ -181,7 +181,6 @@ export async function handlePublish(
 ): Promise<proto.Message> {
     const summary = typeof msg.data.summary === "string" ? msg.data.summary : "";
     const body = typeof msg.data.body === "string" ? msg.data.body : "";
-    const priority = (msg.data.priority === "high" ? "high" : "normal") as "normal" | "high";
     const arg = channelArg(msg, "publish");
     if ("error" in arg) return proto.error(msg.ref!, arg.error);
     const { channel } = arg;
@@ -209,7 +208,6 @@ export async function handlePublish(
             recipientName: sessionName(sub_id, daemon.config.klRoot),
             summary,
             body,
-            priority,
             channel,
         });
         delivered++;
@@ -222,7 +220,6 @@ export async function handlePublish(
         senderSession: agentSession(daemon, req),
         summary,
         body,
-        priority,
     });
 
     return proto.ack(msg.ref!, { recipient_count: delivered });
@@ -262,7 +259,6 @@ export async function handleSendDirect(
     const to = typeof msg.data.to === "string" ? msg.data.to : "";
     const summary = typeof msg.data.summary === "string" ? msg.data.summary : "";
     const body = typeof msg.data.body === "string" ? msg.data.body : "";
-    const priority = (msg.data.priority === "high" ? "high" : "normal") as "normal" | "high";
     if (!to) return proto.error(msg.ref!, "send_direct requires 'to'");
     const req = requireRequester(msg);
     if (!req) return proto.error(msg.ref!, "send_direct requires requester identity");
@@ -284,7 +280,6 @@ export async function handleSendDirect(
         recipientName: target.name,
         summary,
         body,
-        priority,
     });
 
     let text: string;
@@ -319,7 +314,6 @@ export async function handleDeliverSelf(
 ): Promise<proto.Message> {
     const summary = typeof msg.data.summary === "string" ? msg.data.summary : "";
     const body = typeof msg.data.body === "string" ? msg.data.body : "";
-    const priority = (msg.data.priority === "high" ? "high" : "normal") as "normal" | "high";
     const req = requireRequester(msg);
     if (!req?.inbox_path) {
         return proto.error(msg.ref!, "deliver_self requires requester identity and inbox_path");
@@ -344,7 +338,6 @@ export async function handleDeliverSelf(
         recipientName: req.name || undefined,
         summary,
         body,
-        priority,
     });
     return proto.ack(msg.ref!, { message: `delivered to ${req.session}` });
 }

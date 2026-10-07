@@ -183,10 +183,9 @@ export class DaemonClient {
         channel: string,
         summary: string,
         body: string,
-        priority: "normal" | "high" = "normal",
     ): Promise<number> {
         const res = this.expect(
-            await this.call(proto.publish(channel, summary, body, priority, this.requester)),
+            await this.call(proto.publish(channel, summary, body, this.requester)),
         );
         return typeof res.data.recipient_count === "number"
             ? (res.data.recipient_count as number)
@@ -202,10 +201,9 @@ export class DaemonClient {
         to: string,
         summary: string,
         body: string,
-        priority: "normal" | "high" = "normal",
     ): Promise<DirectSendResult> {
         const res = this.expect(
-            await this.call(proto.sendDirect(to, summary, body, priority, this.requester)),
+            await this.call(proto.sendDirect(to, summary, body, this.requester)),
         );
         const d = res.data;
         return {
@@ -221,10 +219,9 @@ export class DaemonClient {
     async deliverSelf(
         summary: string,
         body: string,
-        priority: "normal" | "high" = "normal",
     ): Promise<void> {
         this.expect(
-            await this.call(proto.deliverSelf(summary, body, priority, this.requester)),
+            await this.call(proto.deliverSelf(summary, body, this.requester)),
         );
     }
 

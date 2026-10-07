@@ -544,7 +544,6 @@ interface ParsedMessage {
 	from: string;
 	fromSession: string;
 	summary: string;
-	priority: string;
 	channel: string;
 	timestamp: string;
 	source: string;
@@ -572,7 +571,6 @@ function parseMessageText(text: string, path: string): ParsedMessage | null {
 		from: "",
 		fromSession: "",
 		summary: "",
-		priority: "normal",
 		channel: "",
 		timestamp: "",
 		source: "",
@@ -620,9 +618,6 @@ function parseMessageText(text: string, path: string): ParsedMessage | null {
 			case "summary":
 				result.summary = val;
 				break;
-			case "priority":
-				result.priority = val;
-				break;
 			case "channel":
 				result.channel = val;
 				break;
@@ -644,7 +639,7 @@ function parseMessageText(text: string, path: string): ParsedMessage | null {
  * for mail from another agent session (the same test as the disclaimer),
  * "MESSAGE from X" for the rest (the user, a self-wake).
  */
-export function formatMessageSource(msg: Pick<ParsedMessage, "from" | "channel" | "priority" | "timestamp">, fromAgent: boolean): string {
+export function formatMessageSource(msg: Pick<ParsedMessage, "from" | "channel" | "timestamp">, fromAgent: boolean): string {
 	const sender = msg.from || "unknown";
 	const parts: string[] = [`${fromAgent ? "AGENT MESSAGE" : "MESSAGE"} from ${sender}`];
 
@@ -653,10 +648,6 @@ export function formatMessageSource(msg: Pick<ParsedMessage, "from" | "channel" 
 		parts.push(`source: kiln-lite/${ch}`);
 	} else {
 		parts.push("source: kiln-lite/dm");
-	}
-
-	if (msg.priority && msg.priority !== "normal") {
-		parts.push(`priority: ${msg.priority}`);
 	}
 
 	const sent = msg.timestamp ? sentClock(msg.timestamp) : "";

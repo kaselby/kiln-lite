@@ -15,7 +15,6 @@ works is in [messaging.md](messaging.md).
 | `to` | send, history | a session ([name forms](cli.md#session-names)) |
 | `channel` | send, subscribe, unsubscribe, history | channel name, `#` optional ([rules](messaging.md#sending)) |
 | `summary`, `body` | send | both required |
-| `priority` | send | `normal` (default) or `high` |
 | `wake` | send with `to` | `true`: start the session if it isn't running |
 | `limit` | history | newest messages to show, default 20 |
 

@@ -5,7 +5,7 @@
  * DaemonClient). Without SESSION_UUID it acts as the human: "user", or
  * $KL_USER / `user_name:` in <kl root>/config.yml.
  *
- *   kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
+ *   kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--wake]
  *   kl message subscribe <channel>
  *   kl message unsubscribe <channel>
  *   kl message channels [--json]
@@ -45,7 +45,7 @@ import {
 const USAGE = `kl message: send and read messages between sessions
 
 Usage:
-  kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
+  kl message send <session|#channel> <summary> [--body <text> | --body-stdin] [--wake]
   kl message subscribe <channel>
   kl message unsubscribe <channel>
   kl message channels [--json]
@@ -150,20 +150,17 @@ async function main(argv: string[]): Promise<void> {
 
 	switch (cmd) {
 		case "send": {
-			const { positional, flags } = parseArgs(rest, { "--body": "string", "--body-stdin": "bool", "--priority": "string", "--wake": "bool" });
+			const { positional, flags } = parseArgs(rest, { "--body": "string", "--body-stdin": "bool", "--wake": "bool" });
 			const [to, ...words] = positional;
 			const summary = words.join(" ");
 			if (!to || !summary) die("send needs <session|#channel> <summary>");
 			const body = flags["--body-stdin"] ? readFileSync(0, "utf8") : ((flags["--body"] as string | undefined) ?? "");
-			const p = flags["--priority"];
-			if (p !== undefined && p !== "normal" && p !== "high") die(`--priority must be normal or high, not '${p}'`);
-			const priority = p === "high" ? "high" : "normal";
 			const wake = !!flags["--wake"];
 			if (to.startsWith("#")) {
 				if (wake) die("--wake works only for a message to a session, not a channel");
 				if (!validChannel(channelName(to))) die(`bad channel name '${to}'`);
 			}
-			const r = await send(makeClient(cmd), to, summary, body, { priority, wake });
+			const r = await send(makeClient(cmd), to, summary, body, { wake });
 			out(r.text);
 			if (!r.ok) process.exit(1);
 			return;

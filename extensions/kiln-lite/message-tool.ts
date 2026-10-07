@@ -63,11 +63,6 @@ const MessageParams = Type.Object({
 	body: Type.Optional(
 		Type.String({ description: "Full message body (for action=send)." }),
 	),
-	priority: Type.Optional(
-		Type.Union([Type.Literal("normal"), Type.Literal("high")], {
-			description: "Message priority (for action=send). Default normal.",
-		}),
-	),
 	wake: Type.Optional(
 		Type.Boolean({
 			description:
@@ -142,7 +137,6 @@ async function dispatchSend(
 	params: MessageParamsType,
 ): Promise<AgentToolResult<unknown>> {
 	const { to, channel, summary, body } = params;
-	const priority = params.priority ?? "normal";
 
 	if (!summary || !body) {
 		return err("send requires both 'summary' and 'body'.");
@@ -160,8 +154,8 @@ async function dispatchSend(
 	let r;
 	try {
 		r = to
-			? await send(daemon, to, summary, body, { priority, wake: params.wake })
-			: await sendChannel(daemon, channel!, summary, body, { priority });
+			? await send(daemon, to, summary, body, { wake: params.wake })
+			: await sendChannel(daemon, channel!, summary, body);
 	} catch (e) {
 		return err(`send failed: ${(e as Error).message}`);
 	}

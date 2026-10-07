@@ -118,7 +118,7 @@ session. From your own shell it acts as the user; see
 [messaging.md](messaging.md#sending-from-your-shell).
 
 ```
-kl message send <session|#channel> <summary...> [--body <text> | --body-stdin] [--priority normal|high] [--wake]
+kl message send <session|#channel> <summary...> [--body <text> | --body-stdin] [--wake]
 kl message subscribe <channel>
 kl message unsubscribe <channel>
 kl message channels [--json]
@@ -150,7 +150,7 @@ kl message status [--json]
 - **--json**: `channels` prints an array and `status` an object. `history`
   prints one object per line (also with `--follow`), with `id`, `ts`,
   `from`, `from_session` (when the sender is a kl session), `to`, `read`
-  and `path` (inbox mail), `channel`, `summary`, `body`, `priority`.
+  and `path` (inbox mail), `channel`, `summary`, `body`.
 
 Channel names are letters, digits, `.`, `_` and `-`, starting with a
 letter or digit, up to 128 characters. Usage errors exit with 2, other

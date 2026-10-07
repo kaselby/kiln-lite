@@ -13,7 +13,6 @@
  *   to:   <recipient name, or uuid>
  *   summary: "..."
  *   timestamp: YYYY-MM-DDTHH:MM:SSZ
- *   priority: normal|high
  *   channel: <optional — present for channel messages>
  *   ---
  *
@@ -57,13 +56,11 @@ export interface WriteInboxOptions {
     senderSession?: string;
     summary: string;
     body: string;
-    priority?: "normal" | "high";
     channel?: string;
 }
 
 /** Write a single message file to a recipient's inbox. Returns the file path. */
 export function writeInboxMessage(opts: WriteInboxOptions): string {
-    const priority = opts.priority ?? "normal";
     const now = new Date();
     const dir = opts.dir;
     mkdirSync(dir, { recursive: true });
@@ -78,7 +75,6 @@ export function writeInboxMessage(opts: WriteInboxOptions): string {
         `to: ${opts.recipientName ?? opts.recipient}`,
         `summary: "${escapeYamlScalar(opts.summary)}"`,
         `timestamp: ${isoTimestamp(now)}`,
-        `priority: ${priority}`,
     ];
     if (opts.channel) frontmatter.push(`channel: ${opts.channel}`);
     frontmatter.push("---", "");
@@ -97,7 +93,6 @@ export interface AppendHistoryOptions {
     senderSession?: string;
     summary: string;
     body: string;
-    priority?: "normal" | "high";
 }
 
 /**
@@ -106,7 +101,6 @@ export interface AppendHistoryOptions {
  * was posted.
  */
 export function appendChannelHistory(opts: AppendHistoryOptions): void {
-    const priority = opts.priority ?? "normal";
     const channelDir = join(opts.channelsDir, opts.channel);
     mkdirSync(channelDir, { recursive: true });
     const entry = {
@@ -115,7 +109,6 @@ export function appendChannelHistory(opts: AppendHistoryOptions): void {
         ...(opts.senderSession ? { from_session: opts.senderSession } : {}),
         summary: opts.summary,
         body: opts.body,
-        priority,
     };
     appendFileSync(join(channelDir, "history.jsonl"), JSON.stringify(entry) + "\n");
 }

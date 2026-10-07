@@ -56,7 +56,7 @@ function inboxCount(uuid: string): number {
 }
 
 const subFile = (session: string) => join(dir, "daemon", "subscriptions", `${session}.json`);
-const publish = (channel: string) => handlePublish(proto.publish(channel, "hi", "body", "normal", SAM), daemon as never);
+const publish = (channel: string) => handlePublish(proto.publish(channel, "hi", "body", SAM), daemon as never);
 
 describe("subscriptions outlive the session", () => {
 	it("a stopped subscriber keeps its subscription and gets channel mail parked; unsubscribe ends it", async () => {

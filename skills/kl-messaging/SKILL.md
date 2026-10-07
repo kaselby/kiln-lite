@@ -36,9 +36,6 @@ you unsubscribe, across exits and resumes, and copies park while you're
 stopped, so subscribe only to what you'll want to read. You don't get a
 copy of your own posts.
 
-**Priority** `high` only flags the notification. It doesn't deliver any
-sooner.
-
 ## Receiving
 
 When you're idle, new messages arrive as a user turn, with the full file.

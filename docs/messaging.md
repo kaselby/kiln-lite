@@ -52,10 +52,6 @@ are kept on disk, so they outlive both the session's process and the
 daemon. A subscriber that isn't running still gets its copy, parked in its
 inbox like a DM, and reads it when it next starts.
 
-**Priority** is `normal` (default) or `high`. It's recorded in the file and
-shown in the mid-turn notification. It doesn't change how or when the
-message is delivered.
-
 ## Receiving
 
 A running session watches its inbox. What happens to a new file depends on
@@ -69,14 +65,14 @@ whether the agent is busy:
   file's path. Read the file when convenient:
 
   ```
-  [Notification | AGENT MESSAGE from scout-bright-raven | source: kiln-lite/dm | priority: high | sent 14:02]
+  [Notification | AGENT MESSAGE from scout-bright-raven | source: kiln-lite/dm | sent 14:02]
   /Users/sam/.kl/run/<uuid>/inbox/20261006T180200Z-61d000a966b14ee1.md
   ```
 
-  `source` is `kiln-lite/#<channel>` for a channel copy. `priority` appears
-  only when it's high, and `sent` is local time. The header says `AGENT
-  MESSAGE` for mail from another kl session and `MESSAGE` for the rest
-  (from your shell, a scheduled wake, the session itself).
+  `source` is `kiln-lite/#<channel>` for a channel copy, and `sent` is local
+  time. The header says `AGENT MESSAGE` for mail from another kl session
+  and `MESSAGE` for the rest (from your shell, a scheduled wake, the
+  session itself).
 - Messages that arrive during a turn with no tool result left go into a
   user turn when the turn ends. When the session is about to shut down
   (cleanup turn or exit), they wait for its next start.
@@ -123,7 +119,6 @@ from_session: 01a10db3-5b00-72fe-b16b-590abb4b8d91
 to: boss-green-lane
 summary: "found it"
 timestamp: 2026-10-06T18:02:00Z
-priority: normal
 channel: reviews
 ---
 
@@ -142,7 +137,7 @@ The body, as sent.
 
 Channel history is `<kl root>/daemon/channels/<name>/history.jsonl`, one
 JSON object per line: `ts`, `from`, `from_session` (when a kl session sent
-it), `summary`, `body`, `priority`. It is never trimmed.
+it), `summary`, `body`. It is never trimmed.
 
 ## The daemon
 

@@ -81,7 +81,7 @@ function regEntry(uuid: string, name: string, bound: string): RegistryEntry {
 }
 
 function sendByName(to: string): proto.Message {
-	return proto.sendDirect(to, "hi", "body", "normal", {
+	return proto.sendDirect(to, "hi", "body", {
 		agent: "rev",
 		session: UA,
 		name: "rev-calm-fox",
@@ -112,7 +112,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 
 	it("a sender that is no registered session (kl message by a human) gets no from_session", async () => {
 		writeEntry(regEntry(UB, "rev-red-owl", "2026-10-05T10:00:00Z"), dir);
-		const msg = proto.sendDirect("rev-red-owl", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" });
+		const msg = proto.sendDirect("rev-red-owl", "hi", "body", { agent: "human", session: "human-sam", name: "sam" });
 		const res = await handleSendDirect(msg, daemon as never);
 		assert.equal(res.type, proto.ACK);
 		const text = readFileSync(join(inboxDir(UB, dir), inboxFiles(UB)[0]), "utf8");
@@ -157,7 +157,7 @@ describe("handleSendDirect: name resolution, parking", () => {
 describe("handleDeliverSelf — detached self-delivery", () => {
 	it("writes to the requester's own inbox without creating presence", async () => {
 		const from = "a-x-1";
-		const msg = proto.deliverSelf("Scheduled wake", "check the build", "normal", requester(from));
+		const msg = proto.deliverSelf("Scheduled wake", "check the build", requester(from));
 		const res = await handleDeliverSelf(msg, daemon as never);
 
 		assert.equal(res.type, proto.ACK);
@@ -169,7 +169,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 	});
 
 	it("headers carry the session name, not the uuid", async () => {
-		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
+		const msg = proto.deliverSelf("Scheduled wake", "body", {
 			agent: "rev",
 			session: UA,
 			name: "rev-calm-fox",
@@ -185,7 +185,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 	});
 
 	it("rejects a requester without an inbox path", async () => {
-		const msg = proto.deliverSelf("Scheduled wake", "body", "normal", {
+		const msg = proto.deliverSelf("Scheduled wake", "body", {
 			agent: "a",
 			session: "a-x-1",
 		});
@@ -195,7 +195,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 	});
 
 	it("rejects unsafe session IDs and paths that conflict with known state", async () => {
-		const unsafe = proto.deliverSelf("Scheduled wake", "body", "normal", {
+		const unsafe = proto.deliverSelf("Scheduled wake", "body", {
 			agent: "a",
 			session: "../../escape",
 			inbox_path: join(dir, "inbox"),
@@ -203,7 +203,7 @@ describe("handleDeliverSelf — detached self-delivery", () => {
 		assert.equal((await handleDeliverSelf(unsafe, daemon as never)).type, proto.ERROR);
 
 		registerOffline("a-x-1");
-		const conflicting = proto.deliverSelf("Scheduled wake", "body", "normal", {
+		const conflicting = proto.deliverSelf("Scheduled wake", "body", {
 			agent: "a",
 			session: "a-x-1",
 			inbox_path: join(dir, "different-home", "inbox"),
@@ -219,7 +219,7 @@ describe("handlePublish: channel history", () => {
 		writeLease(selfLease(UB, "rev-red-owl", "rev-red-owl"), dir);
 		daemon.state.presence.register({ ...record(UB), inbox_path: inboxDir(UB, dir) });
 		daemon.state.channels.subscribe("lobby", UB);
-		await handlePublish(proto.publish("lobby", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
+		await handlePublish(proto.publish("lobby", "hi", "body", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
 		const text = readFileSync(join(inboxDir(UB, dir), inboxFiles(UB)[0]), "utf8");
 		assert.match(text, /^to: rev-red-owl$/m);
 		assert.doesNotMatch(text, new RegExp(`^to: ${UB}$`, "m"));
@@ -228,13 +228,13 @@ describe("handlePublish: channel history", () => {
 	it("a subscriber whose folder was deleted gets nothing, and the folder isn't recreated", async () => {
 		daemon.state.knownSessions.upsert({ ...record(UC), inbox_path: inboxDir(UC, dir) });
 		daemon.state.channels.subscribe("lobby", UC);
-		await handlePublish(proto.publish("lobby", "hi", "body", "normal", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
+		await handlePublish(proto.publish("lobby", "hi", "body", { agent: "human", session: "human-sam", name: "sam" }), daemon as never);
 		assert.equal(existsSync(join(dir, "run", UC)), false);
 	});
 
 	it("history.jsonl records from: as the sender's name, plus from_session for a kl session", async () => {
 		writeEntry(regEntry(UA, "rev-calm-fox", "2026-10-05T09:00:00Z"), dir);
-		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", "normal", who), daemon as never);
+		const pub = (who: proto.Requester) => handlePublish(proto.publish("lobby", "hi", "body", who), daemon as never);
 		await pub({ agent: "rev", session: UA, name: "rev-calm-fox", inbox_path: inboxDir(UA, dir) });
 		await pub({ agent: "human", session: "human-sam", name: "sam" });
 		const lines = readFileSync(join(dir, "daemon", "channels", "lobby", "history.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));

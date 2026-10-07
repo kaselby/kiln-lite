@@ -35,7 +35,6 @@ export interface MessageRecord {
 	channel?: string;
 	summary: string;
 	body: string;
-	priority: "normal" | "high";
 	/** Inbox mail only: delivered to the session (a .read marker exists). */
 	read?: boolean;
 	/** Inbox mail only: the message file. */
@@ -162,7 +161,6 @@ function parseHistoryLine(line: string, channel: string, lineNo: number): Messag
 		channel,
 		summary: str(raw.summary),
 		body: str(raw.body),
-		priority: raw.priority === "high" ? "high" : "normal",
 	};
 }
 
@@ -207,7 +205,6 @@ export function readInboxMessage(dir: string, file: string): MessageRecord | nul
 		...(fields.channel ? { channel: fields.channel } : {}),
 		summary: fields.summary ?? "",
 		body,
-		priority: fields.priority === "high" ? "high" : "normal",
 		read: existsSync(join(dir, `${id}.read`)),
 		path,
 	};
@@ -334,7 +331,7 @@ function clock(ts: string): string {
 /** Header line plus the body indented by four spaces. */
 export function formatMessage(m: MessageRecord, opts: { showRead?: boolean } = {}): string {
 	const where = m.to ? `${m.from} -> ${m.to}` : m.from;
-	const tags = [m.channel && m.to ? `#${m.channel}` : "", m.priority === "high" ? "high" : "", opts.showRead && m.read === false ? "new" : ""]
+	const tags = [m.channel && m.to ? `#${m.channel}` : "", opts.showRead && m.read === false ? "new" : ""]
 		.filter(Boolean)
 		.join(", ");
 	const head = `${clock(m.ts)}  ${where}${tags ? ` [${tags}]` : ""}: ${m.summary}`;

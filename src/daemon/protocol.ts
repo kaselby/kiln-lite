@@ -152,13 +152,12 @@ export function publish(
     channel: string,
     summary: string,
     body: string,
-    priority: "normal" | "high",
     requester: Requester,
 ): Message {
     return {
         type: PUBLISH,
         ref: makeRef(),
-        data: withRequester({ channel, summary, body, priority }, requester),
+        data: withRequester({ channel, summary, body }, requester),
     };
 }
 
@@ -166,13 +165,12 @@ export function sendDirect(
     to: string,
     summary: string,
     body: string,
-    priority: "normal" | "high",
     requester: Requester,
 ): Message {
     return {
         type: SEND_DIRECT,
         ref: makeRef(),
-        data: withRequester({ to, summary, body, priority }, requester),
+        data: withRequester({ to, summary, body }, requester),
     };
 }
 
@@ -185,13 +183,12 @@ export function sendDirect(
 export function deliverSelf(
     summary: string,
     body: string,
-    priority: "normal" | "high",
     requester: Requester,
 ): Message {
     return {
         type: DELIVER_SELF,
         ref: makeRef(),
-        data: withRequester({ summary, body, priority }, requester),
+        data: withRequester({ summary, body }, requester),
     };
 }
 
