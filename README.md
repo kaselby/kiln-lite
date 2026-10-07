@@ -13,9 +13,8 @@ kl is a Pi extension plus a launcher. It doesn't replace anything Pi does. It ad
 - **Messaging.** Sessions send each other direct messages and channel
   broadcasts through a small daemon. Every inbox is a plain directory of
   markdown files.
-- **Subagents, wakes, resets.** Built-in tools let a session start a child
-  agent, schedule a wake for itself, and reset its own context to continue in
-  the same session.
+- **Subagents and wakes.** Built-in tools let a session start a child agent
+  and schedule a wake for itself.
 
 Requires Pi 1.0.3 or newer, Node 20+, and tmux.
 
@@ -42,8 +41,8 @@ $EDITOR ~/.kl/agents/scout/IDENTITY.md
 kl run scout               # starts scout-<adj>-<noun> in tmux and attaches
 ```
 
-Inside the session, `/exit` runs the agent's cleanup turn (if it has one) and
-quits. `/fq` quits immediately.
+Inside the session, `/cleanup` runs the agent's cleanup turn (if it has one)
+and quits. Pi's `/quit` quits immediately.
 
 ## Day to day
 
@@ -62,7 +61,7 @@ kl doctor                # diagnostics
 - [docs/agents.md](docs/agents.md): what an agent and a session are, the
   agent folder, `kl init`, `agent.yml`, hooks
 - [docs/sessions.md](docs/sessions.md): names, starting and resuming,
-  subagents, exiting and resets, plans and status files
+  subagents, exiting, plans and status files
 - [docs/messaging.md](docs/messaging.md): sending and delivery, parked mail,
   channels, message files, the daemon
 - [docs/cli.md](docs/cli.md): every `kl` and `kl message` command and flag,

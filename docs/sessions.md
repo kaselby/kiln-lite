@@ -107,36 +107,24 @@ successfully sending its parent a message, it gets one visible reminder
 and keeps going; the reminder doesn't fire during its cleanup turn.
 
 **When the parent ends**, it sends SIGTERM to each of its children that's
-still running. Children are not stopped when the parent resets its
-context, and not if the parent's process dies without shutting down. A
+still running. Children are not stopped if the parent's process dies
+without shutting down. A
 stopped child keeps its transcript and parent link, and can be resumed.
 
 ## Exiting
 
-- **`/exit`** runs the cleanup turn, if the agent has a
-  [`cleanup:` prompt](agents.md#agentyml), then exits. A second `/exit`
+- **`/cleanup`** runs the cleanup turn, if the agent has a
+  [`cleanup:` prompt](agents.md#agentyml), then exits. A second `/cleanup`
   while the cleanup turn is running exits at once.
-- **`/fq`** exits without the cleanup turn. So do Pi's `/quit`, Ctrl+C
-  twice and Ctrl+D, which Pi handles before kl sees them.
-- **`exit_session`** is the tool form of `/exit`, for an agent working on
+- **Pi's `/quit`**, Ctrl+C twice and Ctrl+D exit without the cleanup turn.
+- **`exit_session`** is the tool form of `/cleanup`, for an agent working on
   its own. `skip_cleanup: true` skips the cleanup turn.
 
 The cleanup turn is the cleanup prompt sent as a user message once the
 current turn ends. The prompt is read when it's used, so edits during the
 session apply; a `path` is relative to the agent folder, and an empty or
-missing prompt means no cleanup turn. The session exits when that turn ends. Messages that
-arrive meanwhile stay in the inbox for the next start (or, for a reset,
-until the reset is done).
-
-**Resets.** `exit_session` with `continue: true` resets the context instead
-of exiting. After the cleanup turn (if any), the model sees only the system
-prompt, the `handoff` text, and whatever comes next. `handoff` is text, or
-an absolute or `~/` path to a file whose contents are used. With
-`autonomous: true` the session starts a new turn right away with a short
-user message from kl, visible in the transcript, telling the model to carry
-on from the handoff; otherwise it waits for the next message. The session keeps its name, UUID, transcript, inbox, plan
-and children. The reset rereads the identity, baseline and extra sections,
-so the new context sees what the cleanup turn wrote.
+missing prompt means no cleanup turn. The session exits when that turn
+ends. Messages that arrive meanwhile stay in the inbox for the next start.
 
 ## What a session is doing
 

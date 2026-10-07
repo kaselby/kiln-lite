@@ -93,22 +93,15 @@ in [sessions.md](sessions.md).
 
 ## exit_session
 
-`{skip_cleanup?, continue?, handoff?, autonomous?}`. Exit the session, or
-reset its context and keep going in the same session. All default to false.
-
-- `skip_cleanup`: skip the agent's cleanup turn, if it has one.
-- `continue`: reset instead of exiting. Only `handoff` stays in context.
-- `handoff`: text, or an absolute or `~/` path whose contents are read.
-- `autonomous`: after the reset, start working on the handoff right away
-  instead of waiting for the next message.
-
-See [sessions.md](sessions.md#exiting) for the cleanup turn and resets.
+`{skip_cleanup?}`. Exit the session, after the agent's cleanup turn if it
+has one. `skip_cleanup: true` (default false) skips the cleanup turn. See
+[sessions.md](sessions.md#exiting).
 
 ## Commands
 
-- `/exit`: run the cleanup turn (if the agent has one), then exit. A second
-  `/exit` while the cleanup turn runs exits at once.
-- `/fq`: exit now, with no cleanup turn.
+- `/cleanup`: run the cleanup turn (if the agent has one), then exit. A
+  second `/cleanup` while the cleanup turn runs exits at once. Pi's `/quit`
+  exits with no cleanup turn.
 - `/spawn`: pick one of your earlier messages and fork the session at that
   point into a new session of the same agent, in its own tmux session. The
   fork has everything before that message. It's a separate session, not a

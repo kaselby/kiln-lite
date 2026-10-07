@@ -156,9 +156,8 @@ HTML comments are stripped from the identity prompt and the baseline, so
 use them for notes to yourself. kl edits Pi's prompt options rather than
 replacing the prompt, which is why other extensions' sections survive.
 
-kl reads the identity, the baseline and the extra sections when the
-session starts or resumes, and again at each reset (`exit_session` with
-`continue`).
+kl reads the identity, the baseline and the extra sections once, when the
+session starts or resumes.
 
 **Baseline placeholders.** The baseline can use `{{kl_docs}}` (this
 `docs/` folder), `{{pi_readme}}`, `{{pi_docs}}` and `{{pi_examples}}` (in
