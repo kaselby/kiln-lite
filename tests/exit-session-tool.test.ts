@@ -107,3 +107,33 @@ test("no exit under way: agent_end lets the inbox drain", () => {
 	assert.equal(t.lc.handleAgentEnd(t.ctx, []), false);
 	t.done();
 });
+
+test("/cleanup: cleanup turn, then quit when its run ends", async () => {
+	const t = setup("wrap up");
+	await t.f.commands.get("cleanup")!.handler("", t.ctx);
+	assert.equal(t.f.sent.length, 1);
+	assert.equal(t.shutdowns(), 0);
+	assert.equal(t.lc.handleAgentEnd(t.ctx, [{ role: "user", content: t.f.sent[0] }]), true);
+	assert.equal(t.shutdowns(), 1);
+	t.done();
+});
+
+test("/cleanup without a cleanup prompt quits at once", async () => {
+	const t = setup("");
+	await t.f.commands.get("cleanup")!.handler("", t.ctx);
+	assert.equal(t.f.sent.length, 0);
+	assert.equal(t.shutdowns(), 1);
+	t.done();
+});
+
+test("a second /cleanup while the cleanup turn runs quits at once", async () => {
+	const t = setup("wrap up");
+	await t.f.commands.get("cleanup")!.handler("", t.ctx);
+	await t.f.commands.get("cleanup")!.handler("", t.ctx);
+	assert.equal(t.f.sent.length, 1, "no second cleanup prompt");
+	assert.equal(t.shutdowns(), 1);
+	// The abandoned cleanup turn's run ending doesn't shut down again.
+	t.lc.handleAgentEnd(t.ctx, [{ role: "user", content: t.f.sent[0] }]);
+	assert.equal(t.shutdowns(), 1);
+	t.done();
+});

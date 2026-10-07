@@ -1,17 +1,10 @@
 /**
  * Cleanup-on-exit flow.
  *
- * Slash commands:
- *   /exit    — run the cleanup turn, then shut down (primary). Pi has no
- *              built-in /exit slash command, so this routes through our
- *              extension handler normally.
- *   /fq      — force quit: skip cleanup, shut down immediately (escape hatch)
- *
- * Note: we do NOT register /quit. Pi's interactive mode hardcodes
- * `if (text === "/quit") shutdown()` in its editor submit handler, which runs
- * before extension command dispatch, so an extension /quit handler is never
- * invoked. Ctrl+C (double) and Ctrl+D also call shutdown() directly and
- * bypass extension commands. Users who want cleanup must use /exit.
+ * `/cleanup` runs the agent's cleanup turn, then quits. A second `/cleanup`
+ * while the cleanup turn runs quits at once (for a stuck cleanup turn).
+ * Pi's own `/quit` (and Ctrl+C twice, Ctrl+D) is the plain quit: Pi handles
+ * those before extension commands, so they never run the cleanup turn.
  *
  * The cleanup turn is core: every agent gets it, and it runs only if
  * the agent configures a `cleanup:` prompt. Agents without one exit plainly.
@@ -26,9 +19,6 @@
  *
  * If the cleanup source is empty, unset, missing, or unreadable: skip the
  * cleanup turn and shut down normally after surfacing any resolution warning.
- *
- * Escape hatch: a second /exit while cleanup is in flight
- * force-exits — same effect as /fq.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -128,53 +118,18 @@ export function createCleanupDispatcher(
 	};
 }
 
-/**
- * Register /exit (cleanup then shutdown) and /fq (pure exit, skips cleanup).
- *
- * /quit is intentionally NOT registered — see the file-level comment. Pi's
- * interactive mode intercepts /quit before extension dispatch, so registering
- * it only produces a misleading autocomplete-conflict warning without ever
- * firing our handler.
- *
- * Second invocation of /exit during in-flight cleanup force-exits (escape
- * hatch for an agent stuck in a bad cleanup turn).
- */
-export interface ExitCommandOptions {
-	/** Called before any force-exit (via /fq or the second-/exit escape hatch). */
-	onForceExit?: () => void;
-}
-
-export function registerExitCommands(
-	pi: ExtensionAPI,
-	dispatcher: CleanupDispatcher,
-	opts?: ExitCommandOptions,
-): void {
-	const beforeForceExit = opts?.onForceExit ?? (() => {});
-
-	// /exit is not a pi built-in slash command (pi only binds it as a
-	// keybinding action name for Ctrl+D), so registering it here routes
-	// through the normal extension command dispatcher. This lets users
-	// reach for the conventional /exit and still get cleanup.
-	pi.registerCommand("exit", {
-		description: "Run the cleanup flow (summary, memory updates) then exit",
+/** Register `/cleanup`: the cleanup turn, then quit; a second `/cleanup` during it quits at once. */
+export function registerCleanupCommand(pi: ExtensionAPI, dispatcher: CleanupDispatcher): void {
+	pi.registerCommand("cleanup", {
+		description: "Run the cleanup turn (if the agent has one), then quit",
 		handler: async (_args, ctx) => {
 			if (dispatcher.inProgress()) {
-				ctx.ui.notify("kiln-lite: cleanup already in flight — force-exiting", "warning");
-				beforeForceExit();
+				ctx.ui.notify("kiln-lite: cleanup turn already running — quitting now", "warning");
 				dispatcher.exitNow(ctx);
 				return;
 			}
+			if (!dispatcher.hasPrompt()) ctx.ui.notify("kiln-lite: no cleanup prompt — quitting", "info");
 			dispatcher.dispatch(ctx);
-		},
-	});
-
-	// Force quit — no cleanup, no summary. For when cleanup is broken or
-	// you just want out.
-	pi.registerCommand("fq", {
-		description: "Force quit — skip cleanup, exit immediately",
-		handler: async (_args, ctx) => {
-			beforeForceExit();
-			dispatcher.exitNow(ctx);
 		},
 	});
 }

@@ -3,7 +3,7 @@
  *
  * Everything a kl agent needs: config, session id + env, prompt composition
  *, timestamps, messaging (daemon, inbox, message tool), /spawn,
- * the subagent and schedule tools, and the lifecycle (cleanup turn, /exit, /fq,
+ * the subagent and schedule tools, and the lifecycle (cleanup turn, /cleanup,
  * exit_session; ../lifecycle.ts).
  *
  * There is no persistence code: a "persistent" agent is one whose

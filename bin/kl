@@ -315,14 +315,14 @@ MD
     if [ "$full" = 1 ]; then
         mkdir -p "$target"/{memory/sessions,scratch,extensions,skills,prompts}
         cat > "$target/prompts/cleanup.md" <<'MD'
-<!-- Cleanup turn: runs on /exit and exit_session. -->
+<!-- Cleanup turn: runs on /cleanup and exit_session. -->
 You're wrapping up. Write a short summary of this session (what you did,
 what's still open) to memory/sessions/<today's date>-<your session name>.md,
 update anything in memory/ that should outlast it, then stop.
 MD
         cat >> "$target/agent.yml" <<'YML'
 
-# Cleanup turn on /exit and exit_session; memory injected every session.
+# Cleanup turn on /cleanup and exit_session; memory injected every session.
 cleanup: { path: prompts/cleanup.md }
 prompt:
   extra_sections:

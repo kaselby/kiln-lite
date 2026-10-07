@@ -1,6 +1,6 @@
 /**
- * Session lifecycle (core, every agent): the cleanup turn, /exit and
- * /fq, and the exit_session tool.
+ * Session lifecycle (core, every agent): the cleanup turn, /cleanup,
+ * and the exit_session tool.
  *
  * The cleanup turn runs only if the agent configures a `cleanup:` prompt;
  * agents without one exit plainly. "Persistent" agents differ only in what
@@ -9,7 +9,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { createCleanupDispatcher, registerExitCommands, type CleanupDispatcher } from "./cleanup.ts";
+import { createCleanupDispatcher, registerCleanupCommand, type CleanupDispatcher } from "./cleanup.ts";
 import { buildExitSessionTool } from "./exit-session-tool.ts";
 import type { SessionState } from "./types.ts";
 
@@ -47,7 +47,7 @@ export function installLifecycle(pi: ExtensionAPI): Lifecycle {
 	};
 
 	pi.registerTool(buildExitSessionTool({ getDispatcher: () => (dispatcher ? facade : null) }));
-	registerExitCommands(pi, facade);
+	registerCleanupCommand(pi, facade);
 
 	return {
 		start(state, warn) {

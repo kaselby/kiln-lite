@@ -121,7 +121,7 @@ const STALE_COMMENTS: Array<[RegExp, string]> = [
 		/^# project_context: true     # false drops AGENTS.md\/CLAUDE.md from the prompt\n(# timestamps: true .*\n)# sections:                 # rendered once at session start, after <session>\n#   - \{name: notes, path: notes.md\}\n#   - \{name: today, command: "date \+%A"\}$/m,
 		`$1${INIT_PROMPT_COMMENTS}`,
 	],
-	[/^# Cleanup turn dispatched when the session wraps via \/exit or \/wrapup\.$/m, "# Cleanup turn on /exit and the exit_session tool."],
+	[/^# Cleanup turn dispatched when the session wraps via \/exit or \/wrapup\.$/m, "# Cleanup turn on /cleanup and the exit_session tool."],
 	[/^# Supports template vars: \{today\} \{agent_id\} \{session_uuid\} \{summary_path\}$/m, "# Plain text: kl expands no {placeholders}."],
 ];
 

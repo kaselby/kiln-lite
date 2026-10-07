@@ -77,7 +77,7 @@ export interface AgentConfig {
 	// --- Keys read by modules outside this slice (messaging / lifecycle). ---
 	// Recognized so they don't warn; not part of the minimal schema.
 
-	/** Cleanup prompt (inline or `{ path }`) for /exit and exit_session. Empty = no cleanup turn. */
+	/** Cleanup prompt (inline or `{ path }`) for /cleanup and exit_session. Empty = no cleanup turn. */
 	cleanup: PromptSource;
 	/** Tool calls between `[Session state]` suffixes; 0 disables. */
 	session_state_interval: number;
