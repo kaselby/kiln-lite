@@ -17,7 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
-import { applyPrompt, loadPromptParts, type PromptParts } from "../prompt.ts";
+import { applyPrompt, loadPromptParts, type PromptParts, type SessionInfo } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildSessionsTool } from "../sessions-tool.ts";
@@ -44,7 +44,12 @@ export interface CoreHandle {
 export function installCore(pi: ExtensionAPI): CoreHandle {
 	let state: SessionState | null = null;
 	let bound: BoundSession | null = null;
-	let promptParts: PromptParts | null = null;
+	/**
+	 * kl's prompt for this process, read from the files once at session start.
+	 * Only the model (in <session>) and the active tools (<tools>/<rules>) are
+	 * filled in per run. Never cleared: see the before_agent_start hook.
+	 */
+	let klPrompt: { parts: PromptParts; session: Omit<SessionInfo, "model"> } | null = null;
 	let watcher: InboxWatcher | null = null;
 	let daemon: DaemonClient | null = null;
 	let sessionState: SessionStateHook | null = null;
@@ -116,6 +121,14 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		const env = buildEnv({ agentHome, agentId, sessionUuid, config, inboxDir });
 		applyEnv(env);
 
+		// The prompt first, so nothing later in startup can leave it unset.
+		// Warnings surface at startup. On a resume Pi compares the prompt built
+		// from these with the one in the transcript and appends only what changed.
+		klPrompt = {
+			parts: loadPromptParts(config, env, warn),
+			session: { agentName: config.name, sessionId: agentId, home: agentHome, inbox: env.KL_INBOX },
+		};
+
 		// One-time orientation for forks (/spawn) and resumes. A resume is a
 		// start on a transcript that already had a registry entry.
 		let sessionOrigin: SessionState["sessionOrigin"];
@@ -136,11 +149,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 			sessionOrigin,
 		};
 		lifecycle.start(state, warn);
-
-		// Prompt parts, read from the files now (warnings surface at startup).
-		// On a resume Pi compares the prompt built from them with the one in the
-		// transcript and appends only what changed.
-		promptParts = loadPromptParts(config, env, warn);
 
 		periodicTime =
 			config.timestamps === false
@@ -182,8 +190,11 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 
 	// --- before_agent_start: prompt composition (never returns systemPrompt) ---
+	// Pi starts every run from its default prompt options, so this must apply
+	// kl's prompt on EVERY run: a skipped run shows the model kl's sections as
+	// removed. It depends on nothing but klPrompt, which is never cleared.
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (!state || !promptParts) return;
+		if (!klPrompt) return; // session_start never got this far: no kl session
 		const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 		let active: string[] | undefined;
 		try {
@@ -191,19 +202,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		} catch {
 			active = undefined;
 		}
-		applyPrompt(
-			event.systemPromptOptions,
-			promptParts,
-			{
-				agentName: state.config.name,
-				sessionId: state.agentId,
-				model,
-				home: state.agentHome,
-				inbox: state.env.KL_INBOX,
-			},
-			active,
-		);
-		return;
+		applyPrompt(event.systemPromptOptions, klPrompt.parts, { ...klPrompt.session, model }, active);
 	});
 
 	// --- before_agent_start: per-turn timestamp (hidden custom message) ---
@@ -288,7 +287,6 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		}
 		lifecycle.stop();
 		state = null;
-		promptParts = null;
 	});
 
 	return { getState: () => state, getDaemon: () => daemon, getWatcher: () => watcher };
