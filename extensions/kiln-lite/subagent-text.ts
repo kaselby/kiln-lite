@@ -24,14 +24,6 @@ export function buildDescription(agents: AgentInfo[], defaultAgent: string): str
 	return lines.join("\n");
 }
 
-/** What the child sees first. Pure. */
-export function childPrompt(parentName: string, parentUuid: string, prompt: string): string {
-	return (
-		`You were launched as a subagent by ${parentName} (session ${parentUuid}). ` +
-		`Send your results with the message tool, to: "${parentName}".\n\n${prompt}`
-	);
-}
-
 /** `from:` value of an inbox message's frontmatter, or null. Pure. */
 export function messageFrom(text: string): string | null {
 	if (!text.startsWith("---")) return null;

@@ -60,7 +60,10 @@ own tmux session and attaches to it.
 - `--prompt-file F`: the first message, read from a file and passed to Pi
   as its last argument, so it never goes through a shell.
 - `--parent S`: the session that launched this one (any `<session>` form,
-  or a full UUID). Stored as a UUID; `kl sessions` shows the tree.
+  or a full UUID). Stored as a UUID; `kl sessions` shows the tree. The new
+  session is a subagent, as if from the `subagent` tool: its first turn is
+  told to report to S, and it is stopped when S exits (see
+  [sessions.md](sessions.md)).
 - Everything else, and everything after `--`, goes to `pi`.
 
 Bare `kl`, or `kl` followed by a flag, is `kl run` with the default agent.

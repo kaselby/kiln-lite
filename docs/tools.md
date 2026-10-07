@@ -76,8 +76,9 @@ tried 3 times, after which the error is kept and shown by `list`.
 tool description lists up to 15 of them, and names the default agent used
 when `agent` is omitted; see [config.md](config.md) `default_agent`), in its own tmux session, as a
 child of this one, in this session's working directory. Its first message
-is `prompt`, after a line telling it who launched it and to send results
-back with the `message` tool.
+is `prompt`, as is. Being a child, its first turn also gets a hidden note
+naming this session and telling it to send results back with the
+`message` tool (see [sessions.md](sessions.md)).
 
 - Returns `Launched subagent <name> (agent <agent>). It will message you
   when done.` at once.

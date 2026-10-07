@@ -114,8 +114,9 @@ export interface SessionState {
 	/** Env vars exported to spawned processes. */
 	env: Record<string, string>;
 	/**
-	 * How this process was launched (fork via /spawn, or `kl resume`).
-	 * Drives a one-time orientation reminder.
+	 * How this process was launched (fork via /spawn, `kl resume`, or new),
+	 * and the parent's name if the registry gives it one. Drives a one-time
+	 * orientation reminder; unset for a new session without a parent.
 	 */
-	sessionOrigin?: { kind: "fork" | "resume"; parentAgentId?: string };
+	sessionOrigin?: { kind: "new" | "fork" | "resume"; parentAgentId?: string; subagentOf?: string };
 }

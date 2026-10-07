@@ -13,9 +13,11 @@ import {
 	loadIdentity,
 	defaultIdentity,
 	loadPromptParts,
+	originReminder,
 	renderSections,
 	renderSessionSection,
 	renderToolRules,
+	sessionOriginFor,
 	stripComments,
 	type PromptOptionsLike,
 	type PromptParts,
@@ -96,6 +98,31 @@ test("renderSessionSection: agent, session, model, home — no uuid, no cwd", ()
 	const s = renderSessionSection(SESSION);
 	assert.equal(s, "agent: scout\nsession: scout-quiet-fox\nmodel: openai-codex/gpt-5.6-luna\nhome: /agents/scout");
 	assert.equal(renderSessionSection({ ...SESSION, model: undefined }).includes("model: (none)"), true);
+	assert.match(renderSessionSection({ ...SESSION, parent: "lead-grey-reef" }), /^session: scout-quiet-fox\nparent: lead-grey-reef$/m);
+});
+
+test("start note: a session with a parent is told to report to it, however it was launched or started", () => {
+	const note = (o: Parameters<typeof sessionOriginFor>[0]) => {
+		const origin = sessionOriginFor(o);
+		return origin ? originReminder(origin, "scout-quiet-fox") : null;
+	};
+	const base = { reason: "startup", resumed: false, forked: false };
+	// New session with a parent (subagent tool or `kl run --parent`): the parent line only.
+	const child = note({ ...base, parent: "lead-grey-reef" });
+	assert.match(child ?? "", /^<system-reminder>You are a subagent of lead-grey-reef\b.*to: "lead-grey-reef"\.<\/system-reminder>$/);
+	// No parent, nothing special: no note.
+	assert.equal(note(base), null);
+	// Resumed child: resume orientation plus the parent line.
+	const resumed = note({ ...base, resumed: true, parent: "lead-grey-reef" }) ?? "";
+	assert.match(resumed, /resumed via `kl resume`/);
+	assert.match(resumed, /subagent of lead-grey-reef/);
+	assert.doesNotMatch(note({ ...base, resumed: true }) ?? "", /subagent/);
+	// A /spawn fork has no parent link of its own: fork note, no parent line.
+	const fork = note({ ...base, forked: true }) ?? "";
+	assert.match(fork, /forked via \/spawn/);
+	assert.doesNotMatch(fork, /subagent/);
+	// Reload: same process, already oriented.
+	assert.equal(note({ ...base, reason: "reload", parent: "lead-grey-reef" }), null);
 });
 
 test("stripComments drops HTML comments and outer whitespace", () => {

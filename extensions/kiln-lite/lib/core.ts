@@ -17,7 +17,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveAgentHomeDetailed, loadConfig } from "../config.ts";
 import { buildEnv, applyEnv } from "../env.ts";
-import { applyPrompt, loadPromptParts, type PromptParts, type SessionInfo } from "../prompt.ts";
+import { applyPrompt, loadPromptParts, originReminder, sessionOriginFor, type PromptParts, type SessionInfo } from "../prompt.ts";
 import { startInboxWatcher, type InboxWatcher } from "../inbox.ts";
 import { buildMessageTool } from "../message-tool.ts";
 import { buildSessionsTool } from "../sessions-tool.ts";
@@ -26,7 +26,7 @@ import { createSessionStateHook, type SessionStateHook } from "../session-state.
 import { createTimestampInjector, createPeriodicTimestamp, type PeriodicTimestamp } from "../timestamp.ts";
 import { claimSession, releaseSession, setLeaseState, NAME_ENTRY, type BoundSession } from "../session.ts";
 import { installLifecycle } from "../lifecycle.ts";
-import { installSubagent } from "../subagent.ts";
+import { installSubagent, parentHandles } from "../subagent.ts";
 import { registerScheduleTool } from "../schedule.ts";
 import type { SessionState } from "../types.ts";
 import { DaemonClient } from "../../../src/client/index.ts";
@@ -120,25 +120,27 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		const inboxDir = sessionInboxDir(sessionUuid);
 		const env = buildEnv({ agentHome, agentId, sessionUuid, config, inboxDir });
 		applyEnv(env);
+		// A session with a parent link is a subagent, whoever launched it.
+		const parent = bound.entry.parent ? parentHandles(bound.entry.parent).name : undefined;
 
 		// The prompt first, so nothing later in startup can leave it unset.
 		// Warnings surface at startup. On a resume Pi compares the prompt built
 		// from these with the one in the transcript and appends only what changed.
 		klPrompt = {
 			parts: loadPromptParts(config, env, warn),
-			session: { agentName: config.name, sessionId: agentId, home: agentHome, inbox: env.KL_INBOX },
+			session: { agentName: config.name, sessionId: agentId, parent, home: agentHome, inbox: env.KL_INBOX },
 		};
 
-		// One-time orientation for forks (/spawn) and resumes. A resume is a
-		// start on a transcript that already had a registry entry.
-		let sessionOrigin: SessionState["sessionOrigin"];
+		// One-time orientation for forks (/spawn), resumes, and sessions with a
+		// parent. A resume is a start on a transcript that already had a
+		// registry entry.
 		const resumed = bound.entry.created !== bound.entry.names[bound.entry.names.length - 1]?.bound;
-		if (event.reason === "resume" || (event.reason === "startup" && resumed)) {
-			sessionOrigin = { kind: "resume" };
-		} else if (event.reason === "fork" || event.reason === "startup") {
-			const header = ctx.sessionManager.getHeader?.();
-			if (header?.parentSession) sessionOrigin = { kind: "fork" };
-		}
+		const sessionOrigin = sessionOriginFor({
+			reason: event.reason,
+			resumed,
+			forked: !!ctx.sessionManager.getHeader?.()?.parentSession,
+			parent,
+		});
 
 		state = {
 			agentHome,
@@ -226,7 +228,7 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 		return {
 			message: {
 				customType: "kiln-session-origin",
-				content: buildOriginReminder(state.sessionOrigin, state.agentId),
+				content: originReminder(state.sessionOrigin, state.agentId),
 				display: false,
 			},
 		};
@@ -290,19 +292,4 @@ export function installCore(pi: ExtensionAPI): CoreHandle {
 	});
 
 	return { getState: () => state, getDaemon: () => daemon, getWatcher: () => watcher };
-}
-
-function buildOriginReminder(origin: NonNullable<SessionState["sessionOrigin"]>, agentId: string): string {
-	if (origin.kind === "fork") {
-		const from = origin.parentAgentId ? `parent session ${origin.parentAgentId}` : "a parent session";
-		return (
-			`<system-reminder>You are a new session (${agentId}) forked via /spawn from ${from} ` +
-			`at this point in the conversation. Context above this point is shared with the parent; ` +
-			`from here the two diverge independently.</system-reminder>`
-		);
-	}
-	return (
-		`<system-reminder>This session was resumed via \`kl resume\` in a fresh process; ` +
-		`time may have passed since the last message. You continue as the same agent (${agentId}).</system-reminder>`
-	);
 }
